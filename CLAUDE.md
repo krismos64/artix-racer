@@ -77,6 +77,9 @@ roule.
 | `src/landmarks.js` | Bâtiments remarquables modélisés à la main (mairie, châteaux d'eau) |
 | `src/streetlights.js`, `src/accotements.js`, `src/poi.js` | Mobilier urbain, bas-côtés, points d'intérêt |
 | `src/audio.js` | Synthèse moteur, bruits de roulement, musique générative |
+| `src/quality.js` | Profils graphiques et résolution dynamique |
+| `src/spatial.js` | Découpage spatial des maillages instanciés |
+| `src/minimap.js` | Dessin de la minicarte du HUD |
 
 ## Contraintes de rendu
 
@@ -143,34 +146,56 @@ supprimé le 18/08/2026. Anticrénelage **SMAA** sous la touche `A`. Ni feu
 tricolore ni panneau de sens interdit, les uns comme les autres inventés et
 retirés le même jour.
 
-Performances mesurées, ombres et occlusion ambiante activées, en 1600 x 900 :
-46 à 60 fps le jour selon le lieu, 50 fps la nuit. Le rendu dessin animé
-(touche `K`) coûte 2,6 fps de plus, SMAA de 0 à 3. Le fps varie fortement avec l'heure du
-cycle, un soleil bas étendant les ombres : toute comparaison doit forcer
-l'heure à chaque mesure. Elle doit aussi relever `renderer.domElement.width`,
-le `setPixelRatio` de 1,5 pouvant porter le rendu bien au-delà du 1600 x 900 de
-référence sans que rien ne le signale à l'écran.
+**Profils graphiques** (`quality.js`) : Performance, Équilibré, Qualité sous
+la touche `J`, Équilibré par défaut. Ils règlent ensemble pixel ratio, échelle
+du GTAO, ombres, brouillard, lampadaires calculés, passants et anticrénelage.
+Résolution dynamique sous la touche `U`. Le profil Équilibré reprend les
+valeurs qui étaient en dur auparavant : le comportement par défaut est
+inchangé.
+
+Performances mesurées le 18/08/2026, profil Équilibré, 2400 x 1024, ombres et
+occlusion ambiante activées : **16,9 ms en roulage (59,2 fps)**, 16,6 ms à
+l'arrêt. Les trois profils tiennent 60 fps à l'arrêt, Qualité compris alors
+qu'il rend quatre fois plus de pixels que Performance : à l'arrêt, la
+résolution n'est pas le facteur limitant.
+
+Trois pièges de mesure, tous rencontrés :
+
+- **mesurer sur une page sans sonde.** Un chronomètre GPU par requête ou une
+  enveloppe sur `composer.render` coûtent 3 ms et font conclure à 45 fps là où
+  le jeu en tient 60. Le compteur du HUD dit vrai
+- **comparer à vitesse égale.** Un roulage à 51 km/h contre 72,6 fait paraître
+  un gain deux fois plus grand qu'il n'est
+- relever `renderer.domElement.width` à chaque série : le `setPixelRatio` peut
+  porter le rendu bien au-delà de la fenêtre sans que rien ne le signale
 
 ### Restant à traiter
 
-1. **Rapier consomme 18,2 % du temps en roulage**, avec 1 243 colliders
+1. **Les à-coups n'ont pas de cause identifiée.** 17,4 % des frames dépassent
+   20 ms en roulage, et le p99 reste à 28,8 ms, inchangé par le découpage
+   spatial comme par la suppression des allocations. C'est ce qui se sent le
+   plus au volant, la médiane étant déjà bonne. Pistes non vérifiées : la
+   reconstruction de la carte d'ombre, et les `InstancedMesh` non découpés
+   (5 600 instances de fenêtres, 2 800 de mobilier)
+2. **Rapier consomme 18,2 % du temps en roulage**, avec 1 243 colliders
    statiques pour 4 corps rigides. Optimisable, mais toucher à la physique
    risque de modifier le comportement de conduite
-2. **Panoramax plafonne à 46,9 % des bâtiments** (1 661 sur 3 542) : les autres
+3. **Panoramax plafonne à 46,9 % des bâtiments** (1 661 sur 3 542) : les autres
    sont en fond de parcelle, hors de vue depuis la voirie. Aucun traitement ne
    changera cette limite
-3. **Attribution du modèle Audi à retrouver.** Le fichier a été retraité par
+4. **Attribution du modèle Audi à retrouver.** Le fichier a été retraité par
    glTF-Transform et ne porte plus ni auteur ni licence ; le crédit de l'écran
-   d'accueil dit « attribution à compléter » en attendant
-4. **Chaussée à 0,281 de la clarté d'une façade**, pour une cible
+   d'accueil dit « attribution à compléter » en attendant. Il est désormais
+   compressé en Meshopt (1,65 Mo contre 7,54)
+5. **Chaussée à 0,281 de la clarté d'une façade**, pour une cible
    photographique de 0,47. Pousser plus loin la rendrait plus claire que le
    trottoir : à trancher à l'oeil si le sujet revient
-5. **Pertes silencieuses entre donnée et rendu** : 328 arbres plantés sur 415
+6. **Pertes silencieuses entre donnée et rendu** : 328 arbres plantés sur 415
    relevés, 5 panneaux de priorité, 45 équipements sur 102. Détail et causes
    dans le journal
-6. **Les 57 panonceaux d'équipements n'existent pas dans la rue** : choix de
+7. **Les 57 panonceaux d'équipements n'existent pas dans la rue** : choix de
    lisibilité, à trancher si la fidélité prime
-7. **Caméra intérieure dégradée** depuis le passage à l'Audi, qui n'a pas
+8. **Caméra intérieure dégradée** depuis le passage à l'Audi, qui n'a pas
    d'habitacle. Jamais vérifiée à l'écran
 
 ### Bâtiments modélisés un par un
