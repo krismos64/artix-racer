@@ -752,6 +752,25 @@ async function init() {
   const camPos = new THREE.Vector3();
   const camLook = new THREE.Vector3();
   let camInit = false;
+  // Objets de travail du bloc caméra, alloués une fois. Le calcul de cadrage
+  // tourne à chaque frame et créait une douzaine de Vector3 par passage.
+  const camP = new THREE.Vector3();       // position du véhicule
+  const camFwd = new THREE.Vector3();     // axe avant du véhicule
+  const camUp = new THREE.Vector3();      // axe haut du véhicule
+  const camSide = new THREE.Vector3();    // axe latéral du véhicule
+  const camCible = new THREE.Vector3();   // position visée par la caméra
+  const camVise = new THREE.Vector3();    // point regardé
+  const camDepuis = new THREE.Vector3();  // origine du rayon anti-traversée
+  const camVers = new THREE.Vector3();    // direction de ce rayon
+  // Vecteurs de la boucle de simulation.
+  const velTmp = new THREE.Vector3();     // vitesse courante
+  const deltaTmp = new THREE.Vector3();   // écart de vitesse, détection de choc
+  const eulerTmp = new THREE.Euler();     // conversions de cap
+  const posTmp = new THREE.Vector3();     // position du véhicule, lue une fois par frame
+  // Structures brutes réutilisées pour le rayon Rapier de la caméra.
+  const camRayOrig = { x: 0, y: 0, z: 0 };
+  const camRayDir = { x: 0, y: 0, z: 0 };
+  const camRay = new RAPIER.Ray(camRayOrig, camRayDir);
 
   // --- Minicarte ----------------------------------------------------------
   const mapCanvas = el('minimap');
@@ -763,7 +782,7 @@ async function init() {
 
   function drawMinimap() {
     const p = car.position;
-    const yaw = new THREE.Euler().setFromQuaternion(car.quaternion, 'YXZ').y;
+    const yaw = eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y;
     mctx.save();
     mctx.clearRect(0, 0, MAP_SIZE, MAP_SIZE);
     mctx.beginPath();
@@ -1040,6 +1059,12 @@ async function init() {
   // --- Boucle -------------------------------------------------------------
   let last = performance.now();
   let accumulator = 0;
+  // Pas fixe à 60 Hz, comme le timestep du monde Rapier : les deux doivent
+  // rester accordés, sinon la physique n'avance pas du temps qu'on lui donne.
+  const PAS_PHYSIQUE = 1 / 60;
+  // Plafond de rattrapage : au-delà, on préfère perdre du temps simulé plutôt
+  // que d'enchaîner les pas et de faire chuter encore le framerate.
+  const MAX_PAS = 5;
   let paused = false;
   let fpsTimer = 0, frames = 0;
   const fpsTxt = el('fps');
@@ -1123,20 +1148,31 @@ async function init() {
       // Pas de temps fixe : la physique reste stable quel que soit le framerate.
       accumulator += dt;
       let steps = 0;
-      while (accumulator >= 1 / 60 && steps < 5) {
-        car.update(1 / 60, input);
+      while (accumulator >= PAS_PHYSIQUE && steps < MAX_PAS) {
+        car.update(PAS_PHYSIQUE, input);
         world.step();
-        accumulator -= 1 / 60;
+        accumulator -= PAS_PHYSIQUE;
         steps++;
       }
+      // Après une chute de framerate, le retard accumulé peut dépasser ce que
+      // le plafond de pas permet de rattraper. Le conserver ferait tourner la
+      // simulation à fond pendant les frames suivantes : le jeu paraîtrait
+      // accéléré, puis reprendrait son rythme. On abandonne donc le retard
+      // au-delà d'un pas, ce qui revient à ralentir imperceptiblement le temps
+      // simulé plutôt qu'à le rendre saccadé.
+      //
+      // Le seuil laisse passer le report normal d'une frame sur l'autre (un
+      // écran à 60 Hz ne tombe jamais pile sur 1/60) et ne coupe que le retard
+      // franc.
+      if (accumulator > PAS_PHYSIQUE) accumulator = PAS_PHYSIQUE;
       if (car.gear !== prevGear) audio.shift();
       car.checkSanity(spawn);
 
       // --- Choc ---
       crashCooldown = Math.max(0, crashCooldown - dt);
       const lv = car.body.linvel();
-      const vel = new THREE.Vector3(lv.x, lv.y, lv.z);
-      const delta = vel.clone().sub(lastVel).length();
+      const vel = velTmp.set(lv.x, lv.y, lv.z);
+      const delta = deltaTmp.copy(vel).sub(lastVel).length();
       if (delta > 4.5 && crashCooldown <= 0 && !car.airborne) {
         audio.impact(delta);
         crashCooldown = 0.25;
@@ -1144,12 +1180,14 @@ async function init() {
       lastVel.copy(vel);
 
       // --- Synchro du modèle 3D ---
-      carMesh.position.copy(car.position);
+      // Une seule lecture de position pour tout le bloc : chaque accès à
+      // `car.position` alloue un vecteur.
+      const cp = car.lirePosition(posTmp);
+      carMesh.position.copy(cp);
       carMesh.quaternion.copy(car.quaternion);
 
       // L'ombre de contact suit la voiture, à plat, orientée selon son cap.
-      const cp = car.position;
-      const yaw = new THREE.Euler().setFromQuaternion(car.quaternion, 'YXZ').y;
+      const yaw = eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y;
       blob.position.set(cp.x, (terrain ? terrain.hauteurEn(cp.x, cp.z) : 0) + ROAD_Y + 0.02, cp.z);
       blob.rotation.set(-Math.PI / 2, 0, -yaw);
       // Elle s'estompe quand la voiture décolle.
@@ -1176,7 +1214,7 @@ async function init() {
 
         // Traces au sol quand la roue glisse.
         if (w.grounded && w.slip > 0.28 && car.speed > 3) {
-          const yaw = new THREE.Euler().setFromQuaternion(car.quaternion, 'YXZ').y;
+          const yaw = eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y;
           addSkid(w.contactPoint, yaw);
         }
       });
@@ -1216,7 +1254,7 @@ async function init() {
       // même à pleine vitesse la voiture reste largement au centre entre deux
       // recalages. À 134 km/h (37 m/s) cela déclenche environ 6 recalculs par
       // seconde au lieu de 60.
-      const sp = car.position;
+      const sp = cp;
       const bougeAssez = Math.hypot(sp.x - ombreAncre.x, sp.z - ombreAncre.z) > 6;
       // Le soleil tourne avec l'heure : même à l'arrêt, la carte doit suivre
       // sa course, sans quoi les ombres resteraient figées au fil de la journée.
@@ -1241,38 +1279,49 @@ async function init() {
     // d'accroche reste dans signage.js si une commune en comportant devait
     // être chargée un jour.
 
+    // Position du véhicule pour tout ce qui suit, y compris en pause : ces
+    // trois consommateurs tournent hors du bloc de simulation.
+    const posVoiture = car.lirePosition(posTmp);
+
     // Passants : animation continue, y compris en pause pour que la ville
     // reste vivante quand le joueur observe.
-    if (pietons?.effectif) pietons.update(Math.min(dt, 0.1), now / 1000, car.position);
+    if (pietons?.effectif) pietons.update(Math.min(dt, 0.1), now / 1000, posVoiture);
 
     // Le dôme de ciel accompagne le véhicule : il doit rester à distance
     // constante, sinon on finirait par en sortir.
-    sky.position.copy(car.position);
+    sky.position.copy(posVoiture);
 
     const night = updateSky();
 
     // Les lampadaires proches de la voiture s'allument réellement : le pool de
     // lumières est réaffecté à chaque frame aux foyers les plus proches.
-    eclairage.update(car.position, nuitFacteur);
+    eclairage.update(posVoiture, nuitFacteur);
     el('night-badge').classList.toggle('hidden', !night);
 
     // --- Caméra -------------------------------------------------------------
-    const p = car.position;
+    // Tout ce bloc écrit dans des vecteurs réutilisés : `camCible` porte la
+    // position visée, `camVise` le point regardé. Les deux restent distincts,
+    // les partager confondrait cadrage et visée.
+    const p = car.lirePosition(camP);
     const q = car.quaternion;
-    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const fwd = camFwd.set(0, 0, 1).applyQuaternion(q);
+    const up = camUp.set(0, 1, 0).applyQuaternion(q);
     const speedT = Math.min(1, car.speed / 50);
 
-    let targetPos, targetLook, fov = 64;
+    const targetPos = camCible;
+    const targetLook = camVise;
+    let fov = 64;
     if (camMode === 0) {        // Poursuite
       const dist = 8.6 + speedT * 2.6;
       const height = 3.4 + speedT * 0.6;
-      targetPos = p.clone().add(fwd.clone().multiplyScalar(-dist)).add(new THREE.Vector3(0, height, 0));
-      targetLook = p.clone().add(fwd.clone().multiplyScalar(7)).add(new THREE.Vector3(0, 0.9, 0));
+      targetPos.copy(p).addScaledVector(fwd, -dist);
+      targetPos.y += height;
+      targetLook.copy(p).addScaledVector(fwd, 7);
+      targetLook.y += 0.9;
       fov = 62 + speedT * 16;
     } else if (camMode === 1) { // Capot
-      targetPos = p.clone().add(fwd.clone().multiplyScalar(1.3)).add(up.clone().multiplyScalar(0.28));
-      targetLook = p.clone().add(fwd.clone().multiplyScalar(18)).add(up.clone().multiplyScalar(0.15));
+      targetPos.copy(p).addScaledVector(fwd, 1.3).addScaledVector(up, 0.28);
+      targetLook.copy(p).addScaledVector(fwd, 18).addScaledVector(up, 0.15);
       fov = 72 + speedT * 10;
     } else if (camMode === 2) { // Intérieur
       // Position des yeux du conducteur. Le modèle importé fournit les cotes
@@ -1282,22 +1331,25 @@ async function init() {
       const lat = s ? s.x : -0.36;
       const haut = s ? s.y - 0.66 : 0.46;
       const avant = s ? s.z : 0.10;
-      targetPos = p.clone().add(fwd.clone().multiplyScalar(avant))
-        .add(up.clone().multiplyScalar(haut))
-        .add(new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(lat));
+      camSide.set(1, 0, 0).applyQuaternion(q);
+      targetPos.copy(p).addScaledVector(fwd, avant)
+        .addScaledVector(up, haut)
+        .addScaledVector(camSide, lat);
       // Regard à l'horizontale depuis la hauteur des yeux : viser plus bas
       // cadre le capot au lieu de la route.
-      targetLook = p.clone().add(fwd.clone().multiplyScalar(16)).add(up.clone().multiplyScalar(haut));
+      targetLook.copy(p).addScaledVector(fwd, 16).addScaledVector(up, haut);
       fov = 76;
     } else if (camMode === 3) { // Cinématique : recule et s'incline
-      const side = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-      targetPos = p.clone().add(fwd.clone().multiplyScalar(-9)).add(side.multiplyScalar(5.5))
-        .add(new THREE.Vector3(0, 2.2, 0));
-      targetLook = p.clone().add(new THREE.Vector3(0, 0.7, 0));
+      camSide.set(1, 0, 0).applyQuaternion(q);
+      targetPos.copy(p).addScaledVector(fwd, -9).addScaledVector(camSide, 5.5);
+      targetPos.y += 2.2;
+      targetLook.copy(p);
+      targetLook.y += 0.7;
       fov = 52;
     } else {                    // Aérienne
-      targetPos = p.clone().add(new THREE.Vector3(0, 58, -26));
-      targetLook = p.clone();
+      targetPos.copy(p);
+      targetPos.y += 58; targetPos.z += -26;
+      targetLook.copy(p);
       fov = 60;
     }
 
@@ -1305,16 +1357,17 @@ async function init() {
     // poursuite, on rapproche la caméra jusqu'au point de contact. Sans cela,
     // la caméra passe au travers des façades en rue étroite.
     if (camMode === 0 || camMode === 3) {
-      const depuis = p.clone().add(new THREE.Vector3(0, 1.2, 0));
-      const vers = targetPos.clone().sub(depuis);
+      const depuis = camDepuis.copy(p);
+      depuis.y += 1.2;
+      const vers = camVers.copy(targetPos).sub(depuis);
       const dist = vers.length();
       if (dist > 0.5) {
         vers.divideScalar(dist);
-        const ray = new RAPIER.Ray(
-          { x: depuis.x, y: depuis.y, z: depuis.z },
-          { x: vers.x, y: vers.y, z: vers.z },
-        );
-        const hit = world.castRay(ray, dist, true, undefined, undefined, undefined, car.body);
+        camRayOrig.x = depuis.x; camRayOrig.y = depuis.y; camRayOrig.z = depuis.z;
+        camRayDir.x = vers.x; camRayDir.y = vers.y; camRayDir.z = vers.z;
+        camRay.origin = camRayOrig;
+        camRay.dir = camRayDir;
+        const hit = world.castRay(camRay, dist, true, undefined, undefined, undefined, car.body);
         if (hit && hit.timeOfImpact < dist) {
           // On garde une marge pour ne pas coller au mur.
           targetPos.copy(depuis).addScaledVector(vers, Math.max(1.6, hit.timeOfImpact - 0.4));

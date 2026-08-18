@@ -103,6 +103,9 @@ export class Car {
       worldPos: new THREE.Vector3(),
     }));
 
+    // Traction avant : deux roues motrices. Fixe pour toute la vie du véhicule.
+    this._driveWheels = this.wheels.filter((w) => w.drive).length;
+
     this.steer = 0;
     this.gear = 2;          // index dans SPEC.gears (2 = première)
     this.rpm = SPEC.idleRpm;
@@ -120,14 +123,53 @@ export class Car {
     this._fwd = new THREE.Vector3();
     this._right = new THREE.Vector3();
     this._q = new THREE.Quaternion();
-    this._v = new THREE.Vector3();
+
+    // Vecteurs de travail de `update`, alloués une fois pour toutes. La boucle
+    // des roues tourne quatre fois par pas de physique, soixante fois par
+    // seconde : les objets temporaires qu'elle créait représentaient
+    // l'essentiel des 99 Ko alloués par frame mesurés avant ce chantier.
+    //
+    // Chacun porte un rôle unique et ne sert qu'à ce rôle. Deux valeurs
+    // vivantes en même temps ne doivent jamais partager le même vecteur,
+    // sinon la seconde écrase la première et le résultat change.
+    this._pos = new THREE.Vector3();        // position du corps
+    this._vel = new THREE.Vector3();        // vitesse linéaire
+    this._rayDir = new THREE.Vector3();     // direction du rayon de suspension
+    this._anchorVec = new THREE.Vector3();  // ancrage relatif au centre
+    this._contactVec = new THREE.Vector3(); // contact relatif au centre
+    this._suspForce = new THREE.Vector3();  // force de suspension
+    this._pointVel = new THREE.Vector3();   // vitesse au point de contact
+    this._crossTmp = new THREE.Vector3();   // produit vectoriel intermédiaire
+    this._wFwd = new THREE.Vector3();       // axe longitudinal de la roue
+    this._wRight = new THREE.Vector3();     // axe transversal de la roue
+    this._tireForce = new THREE.Vector3();  // effort pneu résultant
+    this._tireVec = new THREE.Vector3();    // point d'application de cet effort
+    this._latTmp = new THREE.Vector3();     // composante latérale
+    this._drag = new THREE.Vector3();       // traînée aérodynamique
+    this._kmhFwd = new THREE.Vector3();     // axe avant, lecture de vitesse
+    this._kmhVel = new THREE.Vector3();     // vitesse, lecture de vitesse
+    this._euler = new THREE.Euler();        // conversions de cap
+    // Structures brutes passées à Rapier, qui les lit sans les retenir.
+    this._forceArg = { x: 0, y: 0, z: 0 };
+    this._pointArg = { x: 0, y: 0, z: 0 };
+    // Rayon de suspension réutilisé d'un pas à l'autre : ses champs `origin`
+    // et `dir` sont réécrits avant chaque lancer.
+    this._ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   }
 
   // Renvoie un nouveau vecteur : un vecteur partagé serait écrasé dès qu'on
-  // enchaîne deux lectures dans la même expression.
+  // enchaîne deux lectures dans la même expression. Les appelants qui lisent
+  // la position à chaque frame (caméras, HUD) passent par `lirePosition`.
   get position() {
     const t = this.body.translation();
     return new THREE.Vector3(t.x, t.y, t.z);
+  }
+
+  // Écrit la position dans un vecteur fourni : aucune allocation. À préférer
+  // dans tout code appelé à chaque frame.
+  lirePosition(cible) {
+    const t = this.body.translation();
+    return cible.set(t.x, t.y, t.z);
   }
 
   get quaternion() {
@@ -144,13 +186,13 @@ export class Car {
     this.body.resetTorques(true);
 
     const rot = this.quaternion;
-    const pos = this.position.clone();
+    const pos = this.lirePosition(this._pos);
     this._up.set(0, 1, 0).applyQuaternion(rot);
     this._fwd.set(0, 0, 1).applyQuaternion(rot);
     this._right.set(1, 0, 0).applyQuaternion(rot);
 
     const lv = this.body.linvel();
-    const vel = new THREE.Vector3(lv.x, lv.y, lv.z);
+    const vel = this._vel.set(lv.x, lv.y, lv.z);
     const fwdSpeed = vel.dot(this._fwd);
     this.speed = vel.length();
     // Vitesse signée dans l'axe du véhicule : négative en marche arrière.
@@ -258,18 +300,25 @@ export class Car {
 
     // --- Suspension + adhérence, roue par roue -----------------------------
     let groundedCount = 0;
-    const driveWheels = this.wheels.filter((w) => w.drive).length;
+    // Le nombre de roues motrices ne change jamais : le compter à chaque pas
+    // allouait un tableau intermédiaire soixante fois par seconde.
+    const driveWheels = this._driveWheels;
 
     for (const w of this.wheels) {
       // Position monde de l'ancrage de suspension
       w.worldPos.copy(w.pos).applyQuaternion(rot).add(pos);
-      const rayDir = this._up.clone().negate();
+      const rayDir = this._rayDir.copy(this._up).negate();
       const maxDist = SPEC.suspensionRest + SPEC.wheelRadius;
 
-      const ray = new this.RAPIER.Ray(
-        { x: w.worldPos.x, y: w.worldPos.y, z: w.worldPos.z },
-        { x: rayDir.x, y: rayDir.y, z: rayDir.z },
-      );
+      // Un seul rayon réutilisé : en construire un par roue allouait quatre
+      // objets Rapier et huit littéraux par pas de physique.
+      const ray = this._ray;
+      ray.origin.x = w.worldPos.x;
+      ray.origin.y = w.worldPos.y;
+      ray.origin.z = w.worldPos.z;
+      ray.dir.x = rayDir.x;
+      ray.dir.y = rayDir.y;
+      ray.dir.z = rayDir.z;
       // Le corps du véhicule est exclu via son handle, sinon le rayon touche
       // la caisse elle-même dès le premier mètre.
       const hit = this.world.castRay(
@@ -318,20 +367,20 @@ export class Car {
       // La force de ressort s'applique à l'ancrage de suspension sur le châssis,
       // pas au sol : appliquée au point de contact elle créerait un bras de
       // levier qui fait basculer la voiture.
-      const anchorVec = w.worldPos.clone().sub(pos);
-      const contactVec = w.contactPoint.clone().sub(pos);
-      this.applyForceAt(this._up.clone().multiplyScalar(f), anchorVec);
+      const anchorVec = this._anchorVec.copy(w.worldPos).sub(pos);
+      const contactVec = this._contactVec.copy(w.contactPoint).sub(pos);
+      this.applyForceAt(this._suspForce.copy(this._up).multiplyScalar(f), anchorVec);
 
       // Vitesse au point de contact
       const av = this.body.angvel();
-      const pointVel = vel.clone().add(
-        new THREE.Vector3(av.x, av.y, av.z).cross(contactVec),
+      const pointVel = this._pointVel.copy(vel).add(
+        this._crossTmp.set(av.x, av.y, av.z).cross(contactVec),
       );
 
       // Repère de la roue (avec braquage)
       const steerAngle = w.steer ? this.steer : 0;
-      const wFwd = this._fwd.clone().applyAxisAngle(this._up, -steerAngle).normalize();
-      const wRight = this._right.clone().applyAxisAngle(this._up, -steerAngle).normalize();
+      const wFwd = this._wFwd.copy(this._fwd).applyAxisAngle(this._up, -steerAngle).normalize();
+      const wRight = this._wRight.copy(this._right).applyAxisAngle(this._up, -steerAngle).normalize();
 
       const vLong = pointVel.dot(wFwd);
       const vLat = pointVel.dot(wRight);
@@ -374,12 +423,14 @@ export class Car {
       // Vitesse de rotation de la roue, pour l'affichage
       w.spin = vLong / SPEC.wheelRadius;
 
-      const force = wFwd.clone().multiplyScalar(longForce)
-        .add(wRight.clone().multiplyScalar(latForce));
+      // `wFwd` et `wRight` restent nécessaires ensuite : on compose dans des
+      // vecteurs distincts plutôt que de les écraser.
+      const force = this._tireForce.copy(wFwd).multiplyScalar(longForce)
+        .add(this._latTmp.copy(wRight).multiplyScalar(latForce));
       // Les efforts pneu naissent au sol, mais on remonte le point
       // d'application à la hauteur du centre de gravité : le bras de levier
       // complet ferait tonneau au premier virage un peu appuyé.
-      const tireVec = contactVec.clone();
+      const tireVec = this._tireVec.copy(contactVec);
       tireVec.y += SPEC.cgHeight * 0.75;
       this.applyForceAt(force, tireVec);
     }
@@ -388,7 +439,7 @@ export class Car {
 
     // --- Traînée aérodynamique + appui ------------------------------------
     if (this.speed > 0.5) {
-      const drag = vel.clone().multiplyScalar(-SPEC.dragCoef * this.speed);
+      const drag = this._drag.copy(vel).multiplyScalar(-SPEC.dragCoef * this.speed);
       this.body.addForce({ x: drag.x, y: drag.y, z: drag.z }, true);
       // Appui aéro : plaque la voiture au sol à haute vitesse. Toujours dirigé
       // vers le bas du monde, jamais suivant l'axe de la caisse : sinon la
@@ -413,11 +464,14 @@ export class Car {
     // diverger toute la simulation : on filtre à la source.
     if (!Number.isFinite(force.x) || !Number.isFinite(force.y) || !Number.isFinite(force.z)) return;
     const t = this.body.translation();
-    this.body.addForceAtPoint(
-      { x: force.x, y: force.y, z: force.z },
-      { x: t.x + relPoint.x, y: t.y + relPoint.y, z: t.z + relPoint.z },
-      true,
-    );
+    // Rapier lit ces deux structures pendant l'appel et n'en garde pas la
+    // référence : les réutiliser est sûr et évite deux objets par appel, soit
+    // huit par pas de physique.
+    const f = this._forceArg;
+    f.x = force.x; f.y = force.y; f.z = force.z;
+    const p = this._pointArg;
+    p.x = t.x + relPoint.x; p.y = t.y + relPoint.y; p.z = t.z + relPoint.z;
+    this.body.addForceAtPoint(f, p, true);
   }
 
   // Détecte une simulation partie en vrille et remet le véhicule d'aplomb.
@@ -447,10 +501,12 @@ export class Car {
     return String(this.gear - 1);
   }
 
+  // Lu à chaque frame par le HUD et l'audio : sans vecteurs réutilisés, ce
+  // seul accesseur allouait deux Vector3 par lecture.
   get speedKmh() {
     const lv = this.body.linvel();
-    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(this.quaternion);
-    return new THREE.Vector3(lv.x, lv.y, lv.z).dot(fwd) * 3.6;
+    const fwd = this._kmhFwd.set(0, 0, 1).applyQuaternion(this.quaternion);
+    return this._kmhVel.set(lv.x, lv.y, lv.z).dot(fwd) * 3.6;
   }
 
   reset(spawn) {
@@ -472,7 +528,7 @@ export class Car {
   flip() {
     const p = this.body.translation();
     this.body.setTranslation({ x: p.x, y: p.y + 1.4, z: p.z }, true);
-    const yaw = new THREE.Euler().setFromQuaternion(this.quaternion, 'YXZ').y;
+    const yaw = this._euler.setFromQuaternion(this.quaternion, 'YXZ').y;
     this.body.setRotation(quatFromYaw(yaw), true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
