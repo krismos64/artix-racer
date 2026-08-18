@@ -2,14 +2,14 @@
 // moteur est un banc d'oscillateurs harmoniques piloté par le régime, approche
 // utilisée par les simulateurs pour un rendu continu sans boucle audible.
 //
-// La MUSIQUE, elle, est un fichier lu en boucle (`public/audio/music1.mp3`).
+// La MUSIQUE, elle, est un fichier lu en boucle (`public/audio/music1.m4a`).
 // Elle passe par le même bus que la musique générative qu'elle remplace, donc
 // la touche M et la coupure du son continuent de la piloter. La boucle
 // générative reste dans le code, en secours : si le fichier est absent ou
 // illisible, elle reprend la main plutôt que de laisser le jeu muet.
 
 // Fichier de musique. Mettre à `null` pour revenir à la boucle générative.
-const MUSIQUE = 'audio/music1.mp3';
+const MUSIQUE = 'audio/music1.m4a';
 
 export class AudioEngine {
   constructor() {
@@ -278,8 +278,9 @@ export class AudioEngine {
     const load = state.throttle;
     const rpmNorm = (state.rpm - 850) / 6350;
 
-    // Volume moteur : audible au ralenti, plus fort en charge.
-    set(this.engineBus.gain, 0.13 + rpmNorm * 0.24 + load * 0.28);
+    // Volume moteur : audible au ralenti, plus fort en charge. Baissé d'un
+    // tiers environ, il couvrait la musique à pleine charge.
+    set(this.engineBus.gain, 0.09 + rpmNorm * 0.16 + load * 0.18);
     // Le filtre s'ouvre largement en montée en régime : c'est ce qui donne la
     // sensation de moteur qui « prend ses tours ».
     set(this.engineFilter.frequency, 480 + load * 3400 + rpmNorm * rpmNorm * 4200);
@@ -524,7 +525,10 @@ export class AudioEngine {
       // il hérite ainsi de la touche M et de la coupure générale, sans passer
       // par le filtre et la réverbération réglés pour la boucle générative.
       this.gainFichier = this.ctx.createGain();
-      this.gainFichier.gain.value = 0.55;
+      // Relevé de 0,55 à 1,4 : à l'oreille, le morceau passait sous le moteur
+      // dès qu'on accélérait. Le bus musique est lui-même à 0,32, donc ce
+      // gain le compense en partie.
+      this.gainFichier.gain.value = 1.4;
       src.connect(this.gainFichier).connect(this.musicBus);
       src.start();
       this.sourceMusique = src;
