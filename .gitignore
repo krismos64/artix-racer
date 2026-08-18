@@ -1,0 +1,14 @@
+# Dépendances, reconstruites par npm install
+node_modules/
+
+# Sortie de build, régénérée par npm run build
+dist/
+
+# Captures de travail : journal visuel local, hors du dépôt
+shots/
+
+# Références Panoramax : servent au calage, jamais chargées par le jeu
+refs/
+
+# macOS
+.DS_Store

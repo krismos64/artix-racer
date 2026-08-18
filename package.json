@@ -1,0 +1,23 @@
+{
+  "name": "artix-racer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "fetch-osm": "node tools/fetch-osm.mjs",
+    "fetch-bdtopo": "node tools/fetch-bdtopo.mjs",
+    "fetch-poi": "node tools/fetch-poi.mjs",
+    "fetch-lidar": "node tools/fetch-lidar.mjs",
+    "fetch-facades": "node tools/fetch-facades.mjs"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "@dimforge/rapier3d-compat": "^0.14.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Artix Racer — Artix (64170)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --hud-bg: rgba(10, 14, 20, 0.72);
+    --hud-border: rgba(255, 255, 255, 0.12);
+    --accent: #3ee08a;
+    --accent2: #4ac0ff;
+    --warn: #ff9500;
+  }
+  html, body {
+    height: 100%; overflow: hidden; background: #05070a;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #eef2f6; user-select: none;
+  }
+  #game { display: block; width: 100vw; height: 100vh; }
+
+  /* ---------- Chargement ---------- */
+  #loader {
+    position: fixed; inset: 0; z-index: 100;
+    background: radial-gradient(ellipse at 50% 40%, #16233a 0%, #05070a 70%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 22px; transition: opacity .6s ease;
+  }
+  #loader.done { opacity: 0; pointer-events: none; visibility: hidden; }
+  #loader h1 { font-size: 40px; font-weight: 800; letter-spacing: -1px; }
+  #loader h1 span { color: var(--accent); }
+  #loader p { color: #8b98a8; font-size: 14px; }
+  #loader-track {
+    width: 340px; height: 5px; border-radius: 3px;
+    background: rgba(255, 255, 255, .1); overflow: hidden;
+  }
+  #loader-bar {
+    height: 100%; width: 0%; border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    transition: width .35s ease;
+  }
+
+  /* ---------- Écran de départ ---------- */
+  #start-screen {
+    position: fixed; inset: 0; z-index: 90;
+    background: rgba(5, 8, 12, .82); backdrop-filter: blur(10px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+  }
+  #start-screen.hidden { display: none; }
+  .title { font-size: 52px; font-weight: 800; letter-spacing: -2px; }
+  .title span { color: var(--accent); }
+  .subtitle { color: #93a2b3; font-size: 15px; max-width: 560px; text-align: center; line-height: 1.65; }
+  .subtitle b { color: #dfe7ef; font-weight: 600; }
+  /* Crédits des sources et du modèle : la licence CC BY impose de citer
+     l'auteur, et les licences ouvertes IGN la source. */
+  .credits { color: #6b7787; font-size: 12px; max-width: 560px; text-align: center;
+    line-height: 1.6; margin-top: -6px; }
+  .credits b { color: #93a2b3; font-weight: 600; }
+  #start-btn {
+    padding: 15px 46px; font-size: 17px; font-weight: 700; color: #05221a;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none; border-radius: 10px; cursor: pointer;
+    box-shadow: 0 8px 30px rgba(62, 224, 138, .3); transition: transform .15s ease;
+  }
+  #start-btn:hover { transform: translateY(-2px); }
+
+  .keys {
+    display: grid; grid-template-columns: repeat(2, auto); gap: 9px 34px;
+    background: var(--hud-bg); border: 1px solid var(--hud-border);
+    border-radius: 12px; padding: 20px 28px; font-size: 13px;
+  }
+  .keys div { display: flex; align-items: center; gap: 10px; color: #a9b6c4; }
+  kbd {
+    background: #1c2431; border: 1px solid #2f3d4f; border-bottom-width: 2px;
+    border-radius: 5px; padding: 2px 8px; font-family: ui-monospace, monospace;
+    font-size: 11px; color: #dfe7ef; min-width: 24px; text-align: center;
+  }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
+  #hud.hidden { display: none; }
+
+  /* Compteur */
+  #cluster {
+    position: absolute; right: 26px; bottom: 24px;
+    width: 210px; height: 210px;
+  }
+  #dial {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: radial-gradient(circle at 50% 45%, rgba(22,30,42,.92), rgba(8,11,16,.94));
+    border: 1px solid var(--hud-border);
+    box-shadow: 0 10px 40px rgba(0,0,0,.5), inset 0 0 30px rgba(0,0,0,.6);
+  }
+  #ticks { position: absolute; inset: 0; }
+  #needle {
+    position: absolute; left: 50%; bottom: 50%;
+    width: 3px; height: 78px; margin-left: -1.5px;
+    background: linear-gradient(180deg, #ff3b30, #ff9500);
+    border-radius: 2px; transform-origin: 50% 100%;
+    transform: rotate(-120deg); transition: transform .09s linear;
+    box-shadow: 0 0 12px rgba(255,59,48,.6);
+  }
+  #hub {
+    position: absolute; left: 50%; top: 50%; width: 15px; height: 15px;
+    margin: -7.5px 0 0 -7.5px; border-radius: 50%;
+    background: #2b3543; border: 2px solid #47566b;
+  }
+  #speed-wrap {
+    position: absolute; left: 0; right: 0; bottom: 38px; text-align: center;
+  }
+  #speed { font-size: 42px; font-weight: 800; letter-spacing: -2px; line-height: 1; }
+  #speed-unit { font-size: 11px; color: #7e8c9c; letter-spacing: 2px; }
+  #gear-wrap {
+    position: absolute; left: 50%; top: 46px; transform: translateX(-50%);
+    text-align: center;
+  }
+  #gear {
+    font-size: 26px; font-weight: 800; color: var(--accent);
+    text-shadow: 0 0 14px rgba(62,224,138,.55);
+  }
+  #gearbox-mode { font-size: 9px; color: #6d7c8c; letter-spacing: 1.5px; }
+
+  /* Barre de régime */
+  #rpm {
+    position: absolute; right: 26px; bottom: 246px; width: 210px; height: 7px;
+    background: rgba(10,14,20,.75); border: 1px solid var(--hud-border);
+    border-radius: 4px; overflow: hidden;
+  }
+  #rpm-fill { height: 100%; width: 0%; transition: width .05s linear; }
+
+  /* Bandeau info haut-gauche */
+  .panel {
+    background: var(--hud-bg); border: 1px solid var(--hud-border);
+    border-radius: 11px; padding: 11px 15px; backdrop-filter: blur(8px);
+  }
+  #info { position: absolute; left: 24px; top: 22px; display: flex; flex-direction: column; gap: 9px; }
+  #street-panel { min-width: 210px; }
+  #street-label { font-size: 9px; color: #7e8c9c; letter-spacing: 2px; margin-bottom: 3px; }
+  #street { font-size: 16px; font-weight: 600; }
+  /* Panneau du lieu remarquable le plus proche */
+  #lieu-panel { min-width: 210px; border-color: rgba(62,224,138,.28); }
+  #lieu-panel.hidden { display: none; }
+  #lieu-label { font-size: 9px; color: var(--accent); letter-spacing: 2px; margin-bottom: 3px; }
+  #lieu { font-size: 14px; font-weight: 600; }
+  /* Panneau de limitation, dessiné comme le vrai : disque blanc cerclé rouge */
+  #limite-panel {
+    width: 62px; height: 62px; border-radius: 50%;
+    background: #f6f4ef; border: 7px solid #c1272d;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 20px rgba(0,0,0,.45);
+    transition: border-color .2s ease, transform .2s ease;
+  }
+  #limite-panel.hidden { display: none; }
+  /* Ligne réunissant le panneau de limitation et la nature de la voie */
+  #voie-row { display: flex; align-items: center; gap: 10px; }
+  #nature-panel.hidden { display: none; }
+  #nature-panel { font-size: 12px; }
+  #limite { font-size: 25px; font-weight: 800; color: #16202c; line-height: 1; }
+  /* Excès de vitesse : le panneau pulse pour alerter le conducteur */
+  #limite-panel.exces { animation: pulseLimite .7s ease-in-out infinite; }
+  @keyframes pulseLimite {
+    0%, 100% { transform: scale(1); border-color: #c1272d; }
+    50% { transform: scale(1.12); border-color: #ff5b4d; }
+  }
+  #meta { display: flex; gap: 9px; }
+  .chip {
+    background: var(--hud-bg); border: 1px solid var(--hud-border);
+    border-radius: 8px; padding: 6px 11px; font-size: 11px; color: #a9b6c4;
+    backdrop-filter: blur(8px);
+  }
+  .chip b { color: #eef2f6; font-weight: 700; }
+  #night-badge { color: #ffd479; border-color: rgba(255,212,121,.35); }
+  #night-badge.hidden { display: none; }
+
+  /* Minicarte */
+  #map-wrap { position: absolute; left: 24px; bottom: 24px; }
+  #minimap {
+    width: 190px; height: 190px; border-radius: 50%;
+    border: 1px solid var(--hud-border);
+    box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  }
+  #map-label {
+    position: absolute; left: 0; right: 0; bottom: -20px; text-align: center;
+    font-size: 10px; color: #6d7c8c; letter-spacing: 1.5px;
+  }
+
+  /* Aide */
+  #help {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  #help.hidden { display: none; }
+
+  #paused {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(5,8,12,.6); font-size: 40px; font-weight: 800; letter-spacing: 3px;
+  }
+  #paused.hidden { display: none; }
+
+  #hint {
+    position: absolute; right: 26px; top: 22px; font-size: 11px; color: #7e8c9c;
+    text-align: right; line-height: 1.7;
+  }
+  #hint b { color: #c6d2de; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- Chargement -->
+<div id="loader">
+  <h1>ARTIX <span>RACER</span></h1>
+  <p id="loader-text">Initialisation...</p>
+  <div id="loader-track"><div id="loader-bar"></div></div>
+  <p style="font-size:11px;color:#5e6b7a">
+    Données © OpenStreetMap contributors (ODbL) · BD TOPO® © IGN
+  </p>
+</div>
+
+<!-- Écran de départ -->
+<div id="start-screen" class="hidden">
+  <div class="title">ARTIX <span>RACER</span></div>
+  <p class="subtitle">
+    Ville d'<b>Artix (64170)</b>, Pyrénées-Atlantiques, modélisée à partir de données
+    cartographiques réelles : <b>1 210 routes</b> au tracé exact (OpenStreetMap) et
+    <b>3 542 bâtiments</b> avec leur hauteur mesurée, leurs matériaux de façade et de
+    toiture, et le relief de la commune (BD TOPO, IGN).<br>
+    Départ : <b id="spawn-street">centre-bourg</b>.
+  </p>
+  <p class="credits">
+    Toitures relevées au LiDAR HD (IGN, 2025) et teintes de façade mesurées sur
+    les photographies de rue Panoramax (IGN, Licence Ouverte 2.0).<br>
+    Véhicule : <b>Audi R8</b>, modèle glTF (attribution à compléter).
+  </p>
+  <div class="keys">
+    <div><kbd>↑</kbd><kbd>Z</kbd> Accélérer</div>
+    <div><kbd>C</kbd> Changer de caméra</div>
+    <div><kbd>↓</kbd><kbd>S</kbd> Freiner / marche arrière</div>
+    <div><kbd>R</kbd> Réapparaître au départ</div>
+    <div><kbd>←</kbd><kbd>→</kbd> Diriger</div>
+    <div><kbd>F</kbd> Remettre sur les roues</div>
+    <div><kbd>Espace</kbd> Frein à main (drift)</div>
+    <div><kbd>G</kbd> Boîte auto / manuelle</div>
+    <div><kbd>E</kbd><kbd>X</kbd> Monter / descendre (manuel)</div>
+    <div><kbd>T</kbd> Accélérer le temps</div>
+    <div><kbd>B</kbd> Klaxon</div>
+    <div><kbd>M</kbd> Musique &nbsp; <kbd>N</kbd> Son</div>
+    <div><kbd>P</kbd> Pause</div>
+    <div><kbd>O</kbd> Qualité des ombres</div>
+    <div><kbd>K</kbd> Contours (rendu dessin animé)</div>
+    <div><kbd>A</kbd> Anticrénelage</div>
+    <div><kbd>H</kbd> Aide à l'écran</div>
+  </div>
+  <button id="start-btn">Prendre le volant</button>
+</div>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <div id="info">
+    <div class="panel" id="street-panel">
+      <div id="street-label">POSITION</div>
+      <div id="street">Artix</div>
+    </div>
+    <div class="panel hidden" id="lieu-panel">
+      <div id="lieu-label">ÉQUIPEMENT</div>
+      <div id="lieu">—</div>
+    </div>
+    <div id="voie-row">
+      <div class="hidden" id="limite-panel">
+        <div id="limite">50</div>
+      </div>
+      <div class="chip hidden" id="nature-panel"><b id="nature">—</b></div>
+    </div>
+    <div id="meta">
+      <div class="chip">🕐 <b id="clock">10:30</b></div>
+      <div class="chip"><b id="dist">0.00</b> km</div>
+      <div class="chip"><b id="fps">60</b> fps</div>
+      <div class="chip hidden" id="night-badge">🌙 Phares</div>
+    </div>
+  </div>
+
+  <div id="hint">
+    Caméra : <b id="cam-mode">Poursuite</b><br>
+    Musique : <b id="music-state">ON</b> &nbsp; Son : <b id="sound-state">ON</b><br>
+    Ombres : <b id="shadow-state">DÉSACTIVÉES</b><br>
+    Dessin animé : <b id="cartoon-state">DÉSACTIVÉ</b><br>
+    Anticrénelage : <b id="aa-state">ACTIVÉ</b><br>
+    <b>H</b> pour l'aide
+  </div>
+
+  <div id="rpm"><div id="rpm-fill"></div></div>
+
+  <div id="cluster">
+    <div id="dial"></div>
+    <svg id="ticks" viewBox="0 0 210 210">
+      <!-- Graduations du compteur, générées à la main pour 0-260 km/h -->
+      <g stroke="#5a6a7c" stroke-width="2">
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(-120 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(-96 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(-72 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(-48 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(-24 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(0 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(24 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(48 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(72 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(96 105 105)"/>
+        <line x1="105" y1="14" x2="105" y2="24" transform="rotate(120 105 105)"/>
+      </g>
+      <g fill="#78889a" font-size="10" font-family="ui-monospace,monospace" text-anchor="middle">
+        <text x="33" y="163">0</text>
+        <text x="22" y="112">50</text>
+        <text x="48" y="55">100</text>
+        <text x="105" y="35">130</text>
+        <text x="162" y="55">160</text>
+        <text x="188" y="112">210</text>
+        <text x="177" y="163">260</text>
+      </g>
+    </svg>
+    <div id="needle"></div>
+    <div id="hub"></div>
+    <div id="gear-wrap">
+      <div id="gear">1</div>
+      <div id="gearbox-mode">AUTO</div>
+    </div>
+    <div id="speed-wrap">
+      <div id="speed">0</div>
+      <div id="speed-unit">KM / H</div>
+    </div>
+  </div>
+
+  <div id="map-wrap">
+    <canvas id="minimap"></canvas>
+    <div id="map-label">ARTIX · 64170</div>
+  </div>
+
+  <div id="help" class="hidden">
+    <div class="keys">
+      <div><kbd>↑</kbd><kbd>Z</kbd> Accélérer</div>
+      <div><kbd>C</kbd> Caméra</div>
+      <div><kbd>↓</kbd><kbd>S</kbd> Freiner</div>
+      <div><kbd>R</kbd> Réapparaître</div>
+      <div><kbd>←</kbd><kbd>→</kbd> Diriger</div>
+      <div><kbd>F</kbd> Sur les roues</div>
+      <div><kbd>Espace</kbd> Frein à main</div>
+      <div><kbd>G</kbd> Boîte auto/manu</div>
+      <div><kbd>E</kbd><kbd>X</kbd> Vitesses</div>
+      <div><kbd>T</kbd> Temps ×35</div>
+      <div><kbd>B</kbd> Klaxon</div>
+      <div><kbd>M</kbd>/<kbd>N</kbd> Musique/Son</div>
+      <div><kbd>O</kbd> Ombres</div>
+      <div><kbd>P</kbd> Pause</div>
+    </div>
+  </div>
+
+  <div id="paused" class="hidden">PAUSE</div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
