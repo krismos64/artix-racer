@@ -86,8 +86,10 @@ Le budget de frame est la contrainte dominante : 3 500 bâtiments, 415 arbres,
 - la ville est construite en **maillages fusionnés par matériau**. Ajouter des
   objets un par un ruine les performances : passer par la fusion ou
   l'instanciation (`InstancedMesh`)
-- les **ombres portées sont désactivées par défaut** (touche `O`) : elles
-  coûtent les deux tiers du budget de frame sur la ville entière
+- les **ombres portées sont activées par défaut** (touche `O` pour les couper).
+  Mesurées au chronomètre GPU le 18/08/2026 : 0,6 ms sur 10 à 12 ms de frame au
+  centre-bourg, le volume d'ombre restant resserré autour du véhicule. Le
+  « deux tiers du budget » qui figurait ici datait d'avant ce resserrement
 - `setPixelRatio` est plafonné à 1.5
 - l'anticrénelage passe par **SMAA** (touche `A`), pas par le MSAA. Le
   `antialias: true` du renderer est sans effet à travers le composer, qui rend

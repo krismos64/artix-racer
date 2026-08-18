@@ -38,6 +38,14 @@ const el = (id) => document.getElementById(id);
 const loaderText = el('loader-text');
 const loaderBar = el('loader-bar');
 
+// Journal de construction : ce qui a été lu, ce qui a été posé. Ces relevés
+// servent à comparer la donnée au rendu (un compteur dit ce qui est posé, pas
+// ce qui a été lu) et n'ont d'intérêt qu'en développement. Les avertissements
+// et les erreurs, eux, restent affichés en production.
+const diag = import.meta.env.DEV
+  ? (...a) => console.log(...a)
+  : () => {};
+
 function progress(pct, text) {
   loaderBar.style.width = pct + '%';
   if (text) loaderText.textContent = text;
@@ -73,21 +81,40 @@ async function init() {
   await RAPIER.init();
 
   await progress(15, "Chargement des données cartographiques d'Artix...");
+
+  // `fetch` ne rejette pas sur un 404 : sans contrôle du statut, un fichier
+  // absent remonte une erreur d'analyse JSON qui ne dit pas lequel manque.
+  async function charger(nom, { requis = false } = {}) {
+    try {
+      const r = await fetch(`data/${nom}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    } catch (err) {
+      if (requis) throw new Error(`données indispensables illisibles (${nom}) : ${err.message}`);
+      // Une source facultative illisible dégrade la ville en silence : sans ce
+      // message, on cherche longtemps pourquoi les toits sont plats ou les
+      // façades grises.
+      console.warn(`Source facultative ignorée (${nom}) : ${err.message}`);
+      return null;
+    }
+  }
+
   const [raw, rawBati, rawPoi, rawToits, rawToitsLidar, rawFacades] = await Promise.all([
-    fetch('data/artix-osm.json').then((r) => r.json()),
+    // Sans le réseau OSM il n'y a ni route ni ville : seule source obligatoire.
+    charger('artix-osm.json', { requis: true }),
     // BD TOPO : hauteurs mesurées et matériaux réels des bâtiments d'Artix.
-    fetch('data/artix-bdtopo.json').then((r) => r.json()).catch(() => null),
+    charger('artix-bdtopo.json'),
     // Signalisation et équipements : cartographiés en nœuds OSM, ils
     // n'apparaissent pas dans la requête des surfaces.
-    fetch('data/artix-poi.json').then((r) => r.json()).catch(() => null),
+    charger('artix-poi.json'),
     // Toitures relevées au LiDAR HD : forme réelle de la couverture, que ni
     // OSM ni la BD TOPO ne fournissent.
-    fetch('data/artix-toitures.json').then((r) => r.json()).catch(() => null),
+    charger('artix-toitures.json'),
     // Relevé LiDAR détaillé : forme, gouttière et faîtage mesurés par
     // bâtiment. Prend le pas sur le classement en trois catégories ci-dessus.
-    fetch('data/artix-toits-lidar.json').then((r) => r.json()).catch(() => null),
+    charger('artix-toits-lidar.json'),
     // Teintes de façade relevées sur les photographies de rue Panoramax.
-    fetch('data/artix-facades.json').then((r) => r.json()).catch(() => null),
+    charger('artix-facades.json'),
   ]);
 
   // Le relevé détaillé remplace l'ancien classement quand il est présent.
@@ -104,14 +131,14 @@ async function init() {
     if (toitsRetenus?.toits?.length) {
       const f = { 0: 0, 1: 0, 2: 0 };
       for (const t of toitsRetenus.toits) f[t.f]++;
-      console.log(`Toitures LiDAR : ${toitsRetenus.toits.length} mesurées `
+      diag(`Toitures LiDAR : ${toitsRetenus.toits.length} mesurées `
         + `(${f[0]} plates, ${f[1]} monopentes, ${f[2]} à deux pans)`);
     } else if (toitsRetenus?.toitures?.length) {
-      console.log(`Toitures LiDAR : ${toitsRetenus.toitures.length} relevées`);
+      diag(`Toitures LiDAR : ${toitsRetenus.toitures.length} relevées`);
     }
     if (rawFacades?.facades?.length) {
       const retenues = bdt.batiments.filter((b) => b.teinteMur != null).length;
-      console.log(`Façades Panoramax : ${rawFacades.facades.length} relevées, `
+      diag(`Façades Panoramax : ${rawFacades.facades.length} relevées, `
         + `${retenues} appliquées`);
     }
     if (bdt.batiments.length > 200) {
@@ -153,7 +180,7 @@ async function init() {
         terrain.terrasser(data.roads, GARDE_SOL);
         data.terrain = terrain;
       }
-      console.log(`BD TOPO : ${bdt.batiments.length} bâtiments, `
+      diag(`BD TOPO : ${bdt.batiments.length} bâtiments, `
         + `${pts.length} points d'altitude`);
     }
   }
@@ -166,9 +193,9 @@ async function init() {
   // visuel faible en jeu. 1,5x est le bon compromis netteté / fluidité.
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.setSize(innerWidth, innerHeight);
-  // Ombres désactivées par défaut : sur une ville de 200 000 triangles, la
-  // passe d'ombre coûte les deux tiers du budget de frame. La touche O les
-  // rallume pour les machines qui le supportent.
+  // Les ombres sont réglées plus bas, une fois la ville construite : c'est là
+  // que se décide quels maillages les projettent. Elles sont actives par
+  // défaut, la touche O les coupe.
   renderer.shadowMap.enabled = false;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -360,7 +387,7 @@ async function init() {
     // Exposé pour la boucle de jeu et les bascules au clavier. Fusion et non
     // remplacement : `smaa` y a déjà été déposé plus haut.
     composer.userData = { ...(composer.userData ?? {}), contours, majContours };
-    console.log('Occlusion ambiante : active');
+    diag('Occlusion ambiante : active');
   } catch (err) {
     console.warn('Occlusion ambiante indisponible, rendu direct :', err.message);
   }
@@ -435,7 +462,7 @@ async function init() {
   // Éclairage public : les lanternes projettent réellement de la lumière sur
   // la chaussée à la tombée du jour.
   const eclairage = new EclairagePublic(scene, foyers);
-  console.log(`Éclairage public : ${foyers.length} foyers`);
+  diag(`Éclairage public : ${foyers.length} foyers`);
 
   // Signalisation et panonceaux d'équipements, posés après la ville pour
   // disposer du relief définitif.
@@ -443,7 +470,7 @@ async function init() {
   if (data.poi) {
     signage = buildSignage(data, data.terrain ?? null, ROAD_Y);
     scene.add(signage.group);
-    console.log('Signalisation :', JSON.stringify(signage.stats));
+    diag('Signalisation :', JSON.stringify(signage.stats));
   }
 
   // Point d'apparition calculé dès maintenant : il sert à dégager la zone de
@@ -462,7 +489,7 @@ async function init() {
   const accotements = new Accotements(data, data.terrain ?? null, ROAD_Y);
   if (accotements.effectif) {
     scene.add(accotements.group);
-    console.log(`Accotements : ${accotements.effectif} bandes, `
+    diag(`Accotements : ${accotements.effectif} bandes, `
       + JSON.stringify(accotements.stats));
   }
 
@@ -470,7 +497,7 @@ async function init() {
   // places marquées le long des voies desservant les barres d'immeubles.
   const parkings = new ParkingsEpi(scene, data, data.terrain ?? null, ROAD_Y);
   if (parkings.effectif) {
-    console.log(`Parkings en épi : ${parkings.effectif} places occupées`);
+    diag(`Parkings en épi : ${parkings.effectif} places occupées`);
   }
 
   // Véhicules en stationnement le long des rues du bourg. Sur les photographies
@@ -485,24 +512,22 @@ async function init() {
     scene, data, data.terrain ?? null, ROAD_Y, data.poi?.passages ?? [], spawn,
     [...(parkings.places ?? []), ...(placesEpi ?? [])],
   );
-  if (garees.effectif) console.log(`Véhicules stationnés : ${garees.effectif}`);
+  if (garees.effectif) diag(`Véhicules stationnés : ${garees.effectif}`);
 
   // Passants : ils marchent sur les cheminements piétons réels du bourg,
   // s'arrêtent pour discuter et donnent vie aux rues.
   const pietons = new Pietons(data, data.terrain ?? null, ROAD_Y, 140);
   if (pietons.effectif) {
     scene.add(pietons.group);
-    console.log(`Passants : ${pietons.effectif} sur ${pietons.noeuds.length} nœuds piétons`);
+    diag(`Passants : ${pietons.effectif} sur ${pietons.noeuds.length} nœuds piétons`);
   }
 
   // Bâtiments remarquables modélisés d'après les photographies du bourg.
   if (data.landmarkSources?.length) {
     const lm = buildLandmarks(data, data.terrain ?? null, ROAD_Y);
     scene.add(lm.group);
-    console.log(`Repères modélisés : ${lm.traites.length}`);
+    diag(`Repères modélisés : ${lm.traites.length}`);
   }
-  // Ombres légères par défaut : sur une ville entière, la passe d'ombre
-  // complète divise le framerate par trois.
   // Ombres actives par défaut : c'est ce qui sépare le plus nettement un
   // rendu de jeu d'une maquette. Le volume d'ombre suit le véhicule et reste
   // resserré, ce qui borne le coût ; la touche O permet de les couper sur une
@@ -595,7 +620,7 @@ async function init() {
     if (ok) for (let k = 0; k < 9; k++) clean.push(collisionTris[i + k]);
     else rejected++;
   }
-  console.log(`Collisions : ${clean.length / 9} triangles retenus, ${rejected} rejetés`);
+  diag(`Collisions : ${clean.length / 9} triangles retenus, ${rejected} rejetés`);
 
   const verts = new Float32Array(clean);
   const indices = new Uint32Array(verts.length / 3);
@@ -624,7 +649,7 @@ async function init() {
         gareesBody,
       );
     }
-    console.log(`Collisions véhicules garés : ${garees.obstacles.length} cuboïdes`);
+    diag(`Collisions véhicules garés : ${garees.obstacles.length} cuboïdes`);
   }
 
   // --- Véhicule -----------------------------------------------------------
@@ -655,7 +680,9 @@ async function init() {
   // Véhicule : un modèle glTF fourni prend le pas sur le modèle procédural.
   // En cas d'absence ou d'erreur de chargement, on retombe sur ce dernier
   // plutôt que de laisser le jeu sans voiture.
-  let carMesh, wheelMeshes, headMat, tailMat, bodyMat;
+  // `headMat` et `tailMat` pilotent les feux du modèle procédural au fil du
+  // cycle jour/nuit ; le modèle importé porte les siens dans sa texture.
+  let carMesh, wheelMeshes, headMat, tailMat;
   let modeleImporte = false;
   // Éléments animés du modèle importé : roues, volant, rayon de roulement et
   // position du siège conducteur pour la caméra intérieure.
@@ -673,14 +700,14 @@ async function init() {
     rayonRoueImporte = importe.rayonRoue;
     siegeImporte = importe.siege;
     modeleImporte = true;
-    console.log(`Modèle importé : échelle ${importe.echelle.toFixed(3)}, `
+    diag(`Modèle importé : échelle ${importe.echelle.toFixed(3)}, `
       + `${importe.roues.length} roues, rayon ${importe.rayonRoue.toFixed(3)} m, `
       + `volant ${importe.volant ? 'oui' : 'non'}`);
   } catch (err) {
     console.warn('Modèle glTF indisponible, modèle procédural utilisé :', err.message);
     const proc = buildCarMesh(0x1c2b4a);
     carMesh = proc.car; wheelMeshes = proc.wheels;
-    headMat = proc.headMat; tailMat = proc.tailMat; bodyMat = proc.bodyMat;
+    headMat = proc.headMat; tailMat = proc.tailMat;
   }
   carMesh.castShadow = true;
   scene.add(carMesh);
@@ -890,8 +917,6 @@ async function init() {
   }
 
   // --- Traces de pneus ----------------------------------------------------
-  const skidMarks = new THREE.Group();
-  scene.add(skidMarks);
   const skidGeo = new THREE.PlaneGeometry(0.24, 0.6);
   const skidMat = new THREE.MeshBasicMaterial({
     color: 0x0a0a0a, transparent: true, opacity: 0.42, depthWrite: false,
@@ -903,19 +928,29 @@ async function init() {
   skidPool.frustumCulled = false;
   scene.add(skidPool);
   let skidIndex = 0;
+  // Nombre d'empreintes réellement écrites : il plafonne à MAX_SKIDS une fois
+  // l'anneau bouclé. Distinct de skidIndex, qui repart à zéro.
+  let skidEcrites = 0;
   const skidMatrix = new THREE.Matrix4();
-  const flatQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+  // Objets temporaires réutilisés : addSkid est appelé jusqu'à quatre fois par
+  // frame en glissade, une fois par roue.
+  const skidPos = new THREE.Vector3();
+  const skidQuat = new THREE.Quaternion();
+  const skidEuler = new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ');
+  const skidEchelle = new THREE.Vector3(1, 1, 1);
 
   function addSkid(pos, yaw) {
-    skidMatrix.compose(
-      new THREE.Vector3(pos.x, 0.12, pos.z),
-      new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, -yaw, 'XYZ')),
-      new THREE.Vector3(1, 1, 1),
-    );
+    skidPos.set(pos.x, 0.12, pos.z);
+    skidEuler.set(-Math.PI / 2, 0, -yaw, 'XYZ');
+    skidQuat.setFromEuler(skidEuler);
+    skidMatrix.compose(skidPos, skidQuat, skidEchelle);
     skidPool.setMatrixAt(skidIndex, skidMatrix);
     skidIndex = (skidIndex + 1) % MAX_SKIDS;
-    skidPool.count = Math.max(skidPool.count, skidIndex);
-    if (skidPool.count < MAX_SKIDS) skidPool.count = Math.min(MAX_SKIDS, skidPool.count + 1);
+    // Une seule progression du compteur : les deux lignes cumulées d'avant
+    // affichaient une instance de plus que d'empreintes écrites, laissée à la
+    // matrice identité, soit un carré parasite posé à l'origine du monde.
+    skidEcrites = Math.min(MAX_SKIDS, skidEcrites + 1);
+    skidPool.count = skidEcrites;
     skidPool.instanceMatrix.needsUpdate = true;
   }
 
@@ -1049,7 +1084,7 @@ async function init() {
       if (c) {
         c.enabled = !c.enabled;
         el('cartoon-state').textContent = c.enabled ? 'ACTIVÉ' : 'DÉSACTIVÉ';
-        console.log(`Rendu dessin animé : ${c.enabled ? 'activé' : 'désactivé'}`);
+        diag(`Rendu dessin animé : ${c.enabled ? 'activé' : 'désactivé'}`);
       }
     }
     if (tapped('a')) {
@@ -1057,7 +1092,7 @@ async function init() {
       if (s) {
         s.enabled = !s.enabled;
         el('aa-state').textContent = s.enabled ? 'ACTIVÉ' : 'DÉSACTIVÉ';
-        console.log(`Anticrénelage : ${s.enabled ? 'activé' : 'désactivé'}`);
+        diag(`Anticrénelage : ${s.enabled ? 'activé' : 'désactivé'}`);
       }
     }
     if (tapped('g')) {

@@ -37,7 +37,7 @@ npm run build && npm run preview
 | T | Accélérer l'écoulement du temps (cycle jour/nuit) |
 | B | Klaxon |
 | M / N | Musique / son |
-| O | Ombres portées (coûteuses, désactivées par défaut) |
+| O | Ombres portées (activées par défaut, coûteuses) |
 | K | Rendu dessin animé : contours de silhouette et ombrage en paliers |
 | A | Anticrénelage (SMAA, activé par défaut) |
 | P | Pause |

@@ -113,7 +113,6 @@ export class Car {
     this.shiftTimer = 0;
     this.speed = 0;
     this.autoGearbox = true;
-    this.lateralG = 0;
     this.onRoad = true;
     this.airborne = false;
     this.odometer = 0;
@@ -153,14 +152,12 @@ export class Car {
     const lv = this.body.linvel();
     const vel = new THREE.Vector3(lv.x, lv.y, lv.z);
     const fwdSpeed = vel.dot(this._fwd);
-    const latSpeed = vel.dot(this._right);
     this.speed = vel.length();
     // Vitesse signée dans l'axe du véhicule : négative en marche arrière.
     // C'est elle qui donne le sens de rotation des roues, et non le rapport
     // engagé, qui reste sur la marche arrière pendant une poussée en descente.
     this.fwdSpeed = fwdSpeed;
     this.odometer += Math.abs(fwdSpeed) * dt;
-    this.lateralG = latSpeed / 9.81;
 
     // --- Direction : braquage réduit à haute vitesse (assistance variable) --
     const speedKmh = Math.abs(fwdSpeed) * 3.6;
