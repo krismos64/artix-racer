@@ -28,7 +28,10 @@ et fluidité à 60 fps sur MacBook Air M4.
 - **Three.js** 0.170 : rendu 3D, aucun framework par-dessus
 - **Rapier** 0.14 (WASM) : physique du véhicule
 - **Vite** 6 : serveur de dev sur le port **5180**
-- Web Audio API : tout le son est synthétisé, aucun fichier audio
+- Web Audio API : tous les bruits sont synthétisés. La musique est un fichier
+  lu en boucle (`public/audio/music1.mp3`, 8 Mo), branché sur le même bus que
+  la boucle générative qu'il remplace ; celle-ci reste en secours si le fichier
+  manque. `MUSIQUE` dans `audio.js` pointe le fichier, `null` y revient
 - JavaScript ES modules, pas de build step autre que Vite
 
 ## Lancer et vérifier

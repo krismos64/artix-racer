@@ -217,7 +217,10 @@ l'asphalte), ce qui se sent immédiatement au volant.
 
 ### Son
 
-Aucun fichier audio : tout est synthétisé.
+Tous les bruits sont synthétisés, aucun n'est un enregistrement. La musique,
+elle, est un fichier lu en boucle (`public/audio/music1.mp3`). La boucle
+générative décrite plus bas reste dans le code et reprend la main si le
+fichier est absent ou illisible, plutôt que de laisser le jeu muet.
 
 - **Moteur** : une table d'onde périodique contenant les **quatre explosions
   d'un cycle quatre temps**, avec attaque raide et décroissance exponentielle,
@@ -234,7 +237,7 @@ Aucun fichier audio : tout est synthétisé.
 - **Crissements** : bruit résonant proportionnel au glissement réel des pneus
 - **Chocs** : composante métallique filtrée plus un grave de tôle, l'amplitude
   suivant la violence de l'impact
-- **Musique** : boucle électronique générative à 128 BPM sur une grille
+- **Musique de secours** : boucle électronique générative à 128 BPM sur une grille
   Am - F - C - G, avec basse, nappe, arpège et batterie
 
 ### Rendu
