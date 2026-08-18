@@ -93,6 +93,7 @@ const RAYON_MAX = 1800;   // au-delà, les bâtiments ne sont jamais vus de prè
 // déduit pas d'une emprise et d'une hauteur moyenne. Indices BD TOPO.
 export const BATIMENTS_MODELISES = new Set([
   2150,   // barre de logements « Pyrénées », avenue Edmond Rostand
+  1128,   // Leclerc Express du centre-bourg, dans les murs de l'ancien Intermarché
 ]);
 
 export function parseBDTopo(raw, toitures = null, facades = null) {

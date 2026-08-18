@@ -203,11 +203,146 @@ function trouverPlaces(data, relief, roadY, passages = []) {
           couleur: COULEURS[Math.floor(hash(graine + 13.1) * COULEURS.length)],
           // Trois gabarits : citadine, berline, utilitaire.
           gabarit: hash(graine + 19.3),
+          graine,
+          // Stationnement le long d'une voie, par opposition aux places
+          // marquées d'un parking réel. C'est cette distinction que la passe
+          // d'éclaircissement utilise pour décider quoi retirer.
+          rue: true,
         });
       }
     }
   }
   return places;
+}
+
+// Éclaircissement du stationnement de rue.
+//
+// Le placement d'origine remplissait les voies au point d'aligner des files
+// quasi continues sur toute la longueur d'une rue, ce qu'on ne voit nulle part
+// à Artix : une rue de bourg a des trous, des entrées de garage, des tronçons
+// vides. On retire donc une part des véhicules de rue, les places marquées des
+// parkings étant conservées en entier : elles correspondent à un aménagement
+// réel, et un parking à moitié vide se remarque plus qu'une rue clairsemée.
+//
+// Le tri est déterministe : il ne dépend que des coordonnées de chaque place,
+// donc deux lancements donnent exactement la même ville.
+function eclaircir(places) {
+  // Chaînage des files : deux véhicules garés le long de la même rive se
+  // suivent à un pas d'environ 6,2 m. On relie ceux qui sont à portée et
+  // à peu près dans le même axe, ce qui reconstitue les files réelles sans
+  // avoir à repasser par les segments de voie dont elles sont issues.
+  const rue = places.filter((p) => p.rue);
+  const autres = places.filter((p) => !p.rue);
+  if (!rue.length) return places;
+
+  const CELL = 10;
+  const grille = new Map();
+  rue.forEach((p, i) => {
+    const k = `${Math.floor(p.x / CELL)},${Math.floor(p.z / CELL)}`;
+    if (!grille.has(k)) grille.set(k, []);
+    grille.get(k).push(i);
+  });
+
+  // Voisin suivant dans la file : le plus proche devant, dans l'axe du
+  // véhicule et à moins de 9 m. Au-delà, la file est rompue par une entrée de
+  // garage ou un carrefour, et le trou est déjà là.
+  const PORTEE = 9;
+  const suivant = new Int32Array(rue.length).fill(-1);
+  const precedent = new Int32Array(rue.length).fill(-1);
+  rue.forEach((p, i) => {
+    const ax = Math.sin(p.cap), az = Math.cos(p.cap);
+    const cx = Math.floor(p.x / CELL), cz = Math.floor(p.z / CELL);
+    let meilleur = -1, meilleureD = PORTEE * PORTEE;
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oz = -1; oz <= 1; oz++) {
+        const c = grille.get(`${cx + ox},${cz + oz}`);
+        if (!c) continue;
+        for (const j of c) {
+          if (j === i) continue;
+          const q = rue[j];
+          const dx = q.x - p.x, dz = q.z - p.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= meilleureD) continue;
+          // Devant, et pas sur la rive d'en face : le voisin doit être dans
+          // l'axe du véhicule, non à côté de lui.
+          const along = dx * ax + dz * az;
+          if (along <= 0) continue;
+          const travers = Math.abs(dx * az - dz * ax);
+          if (travers > 1.6) continue;
+          meilleur = j; meilleureD = d2;
+        }
+      }
+    }
+    suivant[i] = meilleur;
+    if (meilleur >= 0) precedent[meilleur] = i;
+  });
+
+  // Parcours de chaque file depuis sa tête, et retrait par blocs plutôt qu'un
+  // véhicule sur deux : une alternance régulière se lit aussi mal qu'une file
+  // pleine. On garde des grappes de deux à quatre voitures séparées par des
+  // trous d'une à trois places, la longueur des unes comme des autres étant
+  // tirée de la position de la tête de file.
+  const garde = new Uint8Array(rue.length);
+  const vu = new Uint8Array(rue.length);
+  for (let tete = 0; tete < rue.length; tete++) {
+    if (precedent[tete] >= 0) continue;   // pas une tête de file
+    const p = rue[tete];
+    let s = hash(Math.abs(p.x * 7.3 + p.z * 11.9));
+    // Une file commence pleine ou vide selon la graine : sinon toutes les
+    // rues démarrent par une voiture, ce qui se voit aux carrefours.
+    let plein = s > 0.46;
+    let reste = plein ? 1 + Math.floor(s * 3) : 2 + Math.floor(s * 3);
+    // `vus` borne le parcours : le chaînage se referme sur lui-même quand une
+    // rue boucle, et la file serait alors parcourue sans fin.
+    for (let i = tete; i >= 0 && !vu[i]; i = suivant[i]) {
+      vu[i] = 1;
+      if (plein) garde[i] = 1;
+      if (--reste <= 0) {
+        s = hash(s * 97.3 + i * 1.7);
+        plein = !plein;
+        reste = plein ? 1 + Math.floor(s * 3) : 2 + Math.floor(s * 3);
+      }
+    }
+  }
+
+  // Files refermées sur elles-mêmes : une rue qui boucle n'a aucune tête, donc
+  // aucun de ses véhicules n'a été visité. On les traite en repartant d'un
+  // point quelconque de la boucle.
+  for (let depart = 0; depart < rue.length; depart++) {
+    if (vu[depart]) continue;
+    const p = rue[depart];
+    let s = hash(Math.abs(p.x * 7.3 + p.z * 11.9));
+    let plein = s > 0.46;
+    let reste = plein ? 1 + Math.floor(s * 3) : 2 + Math.floor(s * 3);
+    for (let i = depart; i >= 0 && !vu[i]; i = suivant[i]) {
+      vu[i] = 1;
+      if (plein) garde[i] = 1;
+      if (--reste <= 0) {
+        s = hash(s * 97.3 + i * 1.7);
+        plein = !plein;
+        reste = plein ? 1 + Math.floor(s * 3) : 2 + Math.floor(s * 3);
+      }
+    }
+  }
+
+  // Le centre-bourg reste un peu plus dense que la périphérie : c'est là que
+  // le joueur passe le plus, et les photographies de rue y montrent
+  // effectivement des voitures partout. On y rend une petite part de ce que la
+  // passe précédente vient d'enlever.
+  //
+  // La distance est mesurée sur la PLACE elle-même. Une première version la
+  // prenait au premier point de la voie : une rue longue partant du bourg
+  // voyait alors toutes ses places classées « centre », jusqu'au bout, et le
+  // rattrapage réinjectait presque tout ce qui venait d'être retiré.
+  for (let i = 0; i < rue.length; i++) {
+    if (garde[i]) continue;
+    const p = rue[i];
+    if (p.x * p.x + p.z * p.z > 260 * 260) continue;
+    if (hash(Math.abs(p.x * 3.1 + p.z * 5.7) + 41.3) < 0.18) garde[i] = 1;
+  }
+
+  const retenues = rue.filter((_, i) => garde[i]);
+  return [...retenues, ...autres];
 }
 
 // Silhouette de véhicule simplifiée : une caisse, un habitacle trapézoïdal et
@@ -270,11 +405,17 @@ export class VoituresGarees {
   // Le plafond n'existe que pour borner le coût des colliders physiques : le
   // rendu, entièrement instancié, ne coûte que trois appels de dessin quel que
   // soit l'effectif.
+  //
+  // Ramené de 1 400 à 880. À 1 400, il tranchait AVANT que l'éclaircissement
+  // ne se voie : la ville en comptant 3 063 possibles et 2 100 après passe, le
+  // chiffre affiché restait bloqué au plafond et le travail d'éclaircissement
+  // ne changeait rien à l'écran. C'est lui, et non la passe d'éclaircissement,
+  // qui fixait l'effectif réel.
   // `supplement` : places venues d'ailleurs (parkings en épi notamment), qui
   // partagent le même rendu instancié plutôt que d'ouvrir un second lot de
   // maillages pour les mêmes véhicules.
   constructor(scene, data, relief, roadY, passages = [], spawn = null,
-    supplement = [], maximum = 1400) {
+    supplement = [], maximum = 880) {
     this.group = new THREE.Group();
     // Les places d'appoint n'apportent que leur position : teinte et gabarit
     // sont tirés ici, avec la même distribution que le reste du parc.
@@ -313,6 +454,11 @@ export class VoituresGarees {
       );
     }
     if (!places.length) { this.effectif = 0; return; }
+
+    const avantEclaircissement = places.length;
+    places = eclaircir(places);
+    this.avant = avantEclaircissement;
+    this.apresEclaircissement = places.length;
 
     // Plafond : on garde en priorité les places du centre-bourg, là où le
     // joueur passe et où le stationnement est réellement dense.

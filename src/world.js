@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { couleurMur, couleurToit } from './bdtopo.js';
 import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce,
+  texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage,
+  texturerNormalesEau, bruit,
   relief as carteRelief } from './textures.js';
 import { TAILLE as TERRAIN_TAILLE, RESOLUTION as TERRAIN_RES } from './terrain.js';
 
@@ -229,58 +231,79 @@ function meshFromArrays(positions, uvs, normals, material) {
   return m;
 }
 
-// Texture d'asphalte procédurale (granulométrie + usure), évite tout asset externe.
-function asphaltTexture() {
-  const size = 512;
+// Herbe du sol général.
+//
+// La version précédente semait 9 000 carrés de 2 px au hasard sur un aplat :
+// à la répétition de 60, un carré mesurait une dizaine de centimètres au sol,
+// donc invisible en conduite, et le motif se lisait comme un bruit uniforme.
+// Le sol paraissait plat et d'un vert unique sur toute la commune.
+//
+// Ici, quatre échelles superposées. Les deux plus lentes portent l'essentiel
+// de la lecture : ce sont elles qui font des zones plus rases, plus sèches ou
+// plus fournies, ce qu'on voit réellement sur un pré. Le brin d'herbe fin ne
+// sert qu'à empêcher les aplats.
+//
+// La saturation est volontairement contenue : un vert franc donne un rendu de
+// gazon synthétique, alors que la prairie béarnaise en été tire vers le
+// vert-jaune grisé.
+function grassTexture() {
+  const taille = 256;
   const c = document.createElement('canvas');
-  c.width = c.height = size;
+  c.width = c.height = taille;
   const ctx = c.getContext('2d');
-  // Gris clair : la texture est multipliée par la couleur du matériau, puis
-  // encore assombrie par le tone mapping. Un gris moyen finit quasi noir.
-  ctx.fillStyle = '#c4c4ca';
-  ctx.fillRect(0, 0, size, size);
-  const img = ctx.getImageData(0, 0, size, size);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const n = (Math.random() - 0.5) * 30;
-    img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+  const img = ctx.createImageData(taille, taille);
+  const d = img.data;
+  const brins = bruit(taille, taille, 96, 11);
+  const touffes = bruit(taille, taille, 26, 37);
+  const plaques = bruit(taille, taille, 7, 59);
+  const lent = bruit(taille, taille, 3, 89);
+  for (let y = 0; y < taille; y++) {
+    for (let x = 0; x < taille; x++) {
+      const i = (y * taille + x) * 4;
+      // Clarté : les plaques et l'ondulation lente dominent, le brin ne fait
+      // que casser l'aplat.
+      const v = 150
+        + (plaques(x, y) - 0.5) * 46
+        + (lent(x, y) - 0.5) * 34
+        + (touffes(x, y) - 0.5) * 24
+        + (brins(x, y) - 0.5) * 16;
+      // Les zones claires sont aussi les plus sèches, donc les plus jaunes :
+      // faire varier la teinte avec la clarté évite le vert uniforme éclairci
+      // par endroits, qui trahit une simple carte de gris.
+      const sec = Math.max(0, Math.min(1, (v - 150) / 55));
+      const base = Math.max(0, Math.min(255, v));
+      d[i] = Math.max(0, Math.min(255, base * (0.70 + sec * 0.16)));
+      d[i + 1] = base;
+      d[i + 2] = Math.max(0, Math.min(255, base * (0.50 - sec * 0.08)));
+      d[i + 3] = 255;
+    }
   }
   ctx.putImageData(img, 0, 0);
-  // Traces de roulement plus sombres.
-  ctx.fillStyle = 'rgba(40,40,44,0.16)';
-  ctx.fillRect(size * 0.18, 0, size * 0.13, size);
-  ctx.fillRect(size * 0.69, 0, size * 0.13, size);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.anisotropy = 8;
-  // Sans cet espace colorimétrique, Three.js traite la texture comme linéaire
-  // et l'asphalte ressort presque noir à l'écran.
+  // Répétition abaissée de 60 à 34 : les motifs de plaque, qui portent la
+  // lecture, mesurent alors une dizaine de mètres au sol plutôt que trois, ce
+  // qui correspond à ce qu'on voit sur un pré. Plus haut, ils redeviennent du
+  // bruit ; plus bas, la répétition du carré se remarque.
+  t.repeat.set(34, 34);
   t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
-function grassTexture() {
-  const size = 256;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#5c7a42';
-  ctx.fillRect(0, 0, size, size);
-  for (let i = 0; i < 9000; i++) {
-    const g = 60 + Math.random() * 60;
-    ctx.fillStyle = `rgba(${g * 0.62},${g},${g * 0.42},0.5)`;
-    ctx.fillRect(Math.random() * size, Math.random() * size, 2, 2);
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(60, 60);
-  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
   return t;
 }
 
 export function buildWorld(scene, data) {
   const group = new THREE.Group();
   const collisionTris = []; // triangles envoyés au moteur physique
-  const asphalt = asphaltTexture();
+  const asphalt = texturerEnrobe(512);
+  // Rugosité variable de la chaussée, partagée par tous les maillages
+  // d'enrobé : une seule texture en mémoire.
+  const asphaltRug = texturerRugositeEnrobe(256);
+  // Usure de la peinture routière, partagée par le marquage et les places.
+  const usureMarquage = texturerUsureMarquage(128);
+  usureMarquage.repeat.set(1, 1);
+  // Normales de surface d'eau, créées à la demande plus bas : inutile de la
+  // générer quand la commune ne porte aucun cours d'eau.
+  let eauNormales = null;
   // Grain de crépi, partagé par tous les bâtiments : une seule texture en
   // mémoire, répétée sur les UV déjà calculées à l'échelle du mètre.
   const enduit = texturerEnduit(256);
@@ -378,7 +401,13 @@ export function buildWorld(scene, data) {
   // premier essai à -0,35 m a produit : 94 % de la surface enfouie.
   const AFFLEUREMENT_EAU = 0.06;
   const altEau = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + AFFLEUREMENT_EAU;
-  const waterPos = [];
+  // UV de l'eau, en mètres divisés par 12 : la carte de normales couvre alors
+  // une douzaine de mètres, échelle d'une ondulation de ruisseau. Sans UV, la
+  // carte de normales n'a rien où s'appliquer.
+  const waterPos = [], waterUv = [];
+  // Matériau de la nappe, exposé pour que la boucle de jeu fasse dériver ses
+  // normales : c'est ce lent glissement qui fait lire l'eau comme un courant.
+  let materiauEau = null;
   for (const w of data.water) {
     if (w.river) {
       const h = w.width / 2;
@@ -428,8 +457,17 @@ export function buildWorld(scene, data) {
     }
   }
   if (waterPos.length) {
+    // UV par projection planaire, une passe après coup : la nappe étant
+    // quasi horizontale, projeter sur X et Z suffit et évite d'avoir à
+    // synchroniser deux tableaux dans les quatre sites qui écrivent des
+    // sommets. Le pas de 12 m donne une ondulation à l'échelle d'un ruisseau.
+    for (let i = 0; i < waterPos.length; i += 3) {
+      waterUv.push(waterPos[i] / 12, waterPos[i + 2] / 12);
+    }
+    eauNormales = texturerNormalesEau(256);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(waterPos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(waterUv, 2));
     g.computeVertexNormals();
     // L'eau n'est pas un métal : sa réflectivité vient de son indice de
     // réfraction, pas d'une conductivité. Un `metalness` de 0,6 la faisait
@@ -439,10 +477,30 @@ export function buildWorld(scene, data) {
     //
     // FrontSide : la nappe est vue du dessus, sa face inférieure n'est jamais
     // visible en conduite.
-    group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0x3d6b85, roughness: 0.12, metalness: 0.0, side: THREE.FrontSide,
-      transparent: true, opacity: 0.82,
-    })));
+    //
+    // Opaque. La transparence à 0,82 faisait passer l'eau par le tri des
+    // faces transparentes, avec les défauts habituels : selon l'angle, la
+    // nappe se dessinait avant ou après le terrain qu'elle borde, et le pont
+    // qui la franchit apparaissait par transparence à travers elle. Un
+    // ruisseau du Béarn n'est de toute façon pas limpide : on n'en voit pas le
+    // fond, donc la transparence ne montrait rien qui vaille ces défauts.
+    //
+    // Le relief de surface passe par une carte de normales animée très
+    // lentement, ce qui suffit à faire vivre la nappe sans réflexion temps
+    // réel : le reflet vient de la carte d'environnement de la scène.
+    const matEau = new THREE.MeshStandardMaterial({
+      // Bleu-vert peu saturé, comme le Luy de Béarn : une eau de plaine
+      // charrie des limons et tire vers le vert-gris, jamais vers le bleu
+      // franc d'un lac de montagne.
+      color: 0x4a6f6b, roughness: 0.18, metalness: 0.0, side: THREE.FrontSide,
+      transparent: false, depthWrite: true,
+      normalMap: eauNormales,
+      normalScale: new THREE.Vector2(0.22, 0.22),
+    });
+    const meshEau = new THREE.Mesh(g, matEau);
+    meshEau.receiveShadow = true;
+    group.add(meshEau);
+    materiauEau = matEau;
   }
 
   // ---- Routes ------------------------------------------------------------
@@ -521,9 +579,20 @@ export function buildWorld(scene, data) {
   // atteint 0,744, soit un rapport d'albédo de 0,20 ; et une surface
   // horizontale ne reçoit que la composante basse de la lumière
   // hémisphérique, plus sombre que le ciel qui éclaire les murs.
+  //
+  // La rugosité passe par une carte plutôt qu'un scalaire : les bandes de
+  // roulement sont polies par le trafic et les bords de voie restent grenus,
+  // ce qu'une valeur unique ne peut pas rendre. `roughness` reste à 1 pour que
+  // la carte s'applique telle quelle, les deux se multipliant.
+  //
+  // Teinte à peine réchauffée (0xd0d0d6 -> 0xd2d1cf) : le gris bleuté d'avant
+  // prenait le ciel de plein fouet et l'enrobé virait au mauve en fin de
+  // journée. La clarté est inchangée, le calage à 0,281 relevé au chantier
+  // précédent reste donc valable.
   const roadMesh = meshFromArrays(roadPos, roadUv, roadNrm,
     new THREE.MeshStandardMaterial({
-      map: asphalt, roughness: 0.92, color: 0xd0d0d6, side: THREE.DoubleSide,
+      map: asphalt, roughnessMap: asphaltRug, roughness: 1,
+      color: 0xc2c1bf, side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
     }));
   roadMesh.renderOrder = 2;
@@ -721,8 +790,11 @@ export function buildWorld(scene, data) {
     g.setAttribute('position', new THREE.Float32BufferAttribute(margePos, 3));
     g.computeVertexNormals();
     g.computeBoundingSphere();
+    // Même teinte usée que le marquage de chaussée : un trait de place et une
+    // ligne de rive sont peints avec la même peinture et vieillissent pareil.
+    // Pas de carte d'usure ici, ce maillage n'ayant pas d'UV.
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0xe8e4d8, roughness: 0.85, side: THREE.DoubleSide,
+      color: 0xcfccc0, roughness: 0.82, side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12,
     }));
     m.renderOrder = 3;
@@ -734,7 +806,8 @@ export function buildWorld(scene, data) {
       new THREE.MeshStandardMaterial({
         // Un peu plus clair que la chaussée : l'enrobé d'un parking est moins
         // circulé, donc moins noirci par la gomme et les hydrocarbures.
-        map: asphalt, roughness: 0.94, color: 0x9a9a9f, side: THREE.DoubleSide,
+        map: asphalt, roughnessMap: asphaltRug, roughness: 1,
+        color: 0x9a9a9c, side: THREE.DoubleSide,
         polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
       }));
     parkMesh.renderOrder = 1;
@@ -792,7 +865,8 @@ export function buildWorld(scene, data) {
   if (pontPos.length) {
     const m = meshFromArrays(pontPos, pontUv, pontNrm,
       new THREE.MeshStandardMaterial({
-        map: asphalt, roughness: 0.9, color: 0xd0d0d4, side: THREE.DoubleSide,
+        map: asphalt, roughnessMap: asphaltRug, roughness: 1,
+        color: 0xd2d1cf, side: THREE.DoubleSide,
       }));
     m.renderOrder = 3;
     group.add(m);
@@ -878,9 +952,23 @@ export function buildWorld(scene, data) {
     }
   }
   if (markPos.length) {
+    // Marquage éclairé comme le reste plutôt qu'en `MeshBasicMaterial` : un
+    // matériau non éclairé garde la même clarté de jour comme de nuit, et les
+    // bandes blanches restaient lumineuses sous un ciel nocturne alors que la
+    // chaussée autour s'éteignait. Elles ressortaient alors comme des néons.
+    //
+    // La teinte s'écarte du blanc pur : une peinture routière est usée par le
+    // trafic et grise avec le temps. La légère variation d'un trait à l'autre
+    // vient du bruit d'usure, qui empêche la ligne de se lire comme un trait
+    // vectoriel parfaitement homogène.
+    //
+    // Opaque et sans transparence, tirée vers la caméra par `polygonOffset` :
+    // c'est ce qui évite le z-fighting avec l'enrobé sans superposer de
+    // couches semi-transparentes.
     const markMesh = meshFromArrays(markPos, markUv, markNrm,
-      new THREE.MeshBasicMaterial({
-        color: 0xe8e4d8, side: THREE.DoubleSide,
+      new THREE.MeshStandardMaterial({
+        color: 0xcfccc0, roughness: 0.82, map: usureMarquage,
+        side: THREE.DoubleSide,
         polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12,
       }));
     markMesh.renderOrder = 3;
@@ -895,15 +983,62 @@ export function buildWorld(scene, data) {
   const roofPos = [], roofCol = [], roofUv = [];
   // Fenêtres : petits quads sombres plaqués sur les façades. C'est ce qui
   // distingue le plus nettement un bâtiment d'un simple bloc coloré.
-  const winPos = [];
+  //
+  // La couleur par sommet porte deux choses à la fois : la teinte de la vitre,
+  // qui varie d'une baie à l'autre, et l'indication d'une pièce éclairée. Les
+  // fenêtres allumées reçoivent une teinte chaude que le canal d'émission
+  // reprend, ce qui évite un second maillage pour quelques centaines de baies.
+  const winPos = [], winCol = [];
   // Encadrement des baies, en maillage séparé : un dormant clair autour d'une
   // vitre sombre est ce qui rend une fenêtre lisible de loin, bien plus que la
   // teinte du vitrage lui-même.
   const cadrePos = [];
+  // Appuis de fenêtre : la tablette de pierre ou de béton sous chaque baie.
+  // C'est un détail très présent sur le bâti du bourg, et il porte une ombre
+  // horizontale qui donne du relief à une façade autrement plate.
+  const appuiPos = [];
 
   // Niveau d'assise des bâtiments, relatif au terrain.
   const BASE_OFFSET = ROAD_Y - 0.04;
   const teinte = new THREE.Color();
+
+  // Index des emprises bâties, pour savoir si un bâtiment a un voisin proche.
+  //
+  // Le débord de toiture pousse chaque arête de 40 cm vers l'extérieur. Sur le
+  // bâti continu du centre-bourg, cela envoie le pan de A DANS l'emprise de B :
+  // les deux couvertures se croisent, et le tri de profondeur départage
+  // différemment selon l'angle de vue. C'est ce qui fait clignoter les toits
+  // vus de loin, en laissant apparaître par endroits la couverture du voisin.
+  //
+  // Une grille au pas de 40 m suffit : on ne cherche que les emprises à portée
+  // du débord, jamais un voisinage lointain.
+  const CELL_BAT = 40;
+  const grilleBat = new Map();
+  for (const b of data.buildings) {
+    if (!b.pts || b.pts.length < 3) continue;
+    for (const [x, z] of b.pts) {
+      const k = `${Math.floor(x / CELL_BAT)},${Math.floor(z / CELL_BAT)}`;
+      if (!grilleBat.has(k)) grilleBat.set(k, []);
+      grilleBat.get(k).push([x, z, b]);
+    }
+  }
+  // Distance au sommet bâti le plus proche n'appartenant pas au bâtiment lui-même.
+  const distVoisin = (b, x, z) => {
+    const cx = Math.floor(x / CELL_BAT), cz = Math.floor(z / CELL_BAT);
+    let best = Infinity;
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oz = -1; oz <= 1; oz++) {
+        const c = grilleBat.get(`${cx + ox},${cz + oz}`);
+        if (!c) continue;
+        for (const [vx, vz, vb] of c) {
+          if (vb === b) continue;
+          const d = (vx - x) ** 2 + (vz - z) ** 2;
+          if (d < best) best = d;
+        }
+      }
+    }
+    return Math.sqrt(best);
+  };
 
   data.buildings.forEach((b, bi) => {
     const n = b.pts.length;
@@ -970,7 +1105,43 @@ export function buildWorld(scene, data) {
     // Teinte de façade : matériau réel quand il est connu (pierre, brique,
     // aggloméré enduit, béton, bois), enduit clair par défaut.
     teinte.setHex(couleurMur(b));
-    const wr = teinte.r, wg = teinte.g, wb = teinte.b;
+
+    // Variation par bâtiment. Deux maisons voisines n'ont jamais exactement le
+    // même enduit : l'une a été refaite, l'autre a vieilli. Sans cet écart, un
+    // lotissement entier ressort d'un blanc cassé rigoureusement identique, ce
+    // qui est le défaut le plus visible en roulant.
+    //
+    // L'écart est tiré du centroïde de l'emprise, donc stable d'un lancement à
+    // l'autre, et volontairement faible : la palette a été calée sur
+    // photographie et il s'agit de la nuancer, pas de la remplacer. La clarté
+    // varie plus que la teinte, comme un même enduit sous des expositions et
+    // des âges différents.
+    const gb = hash(Math.abs(ctrX * 12.9898 + ctrZ * 78.233));
+    const clarte = 0.90 + gb * 0.20;
+    // Bascule chaud/froid discrète : un enduit vieilli tire vers l'ocre, un
+    // enduit récent vers le gris froid.
+    const chaud = (hash(gb * 41.7 + 3.1) - 0.5) * 0.045;
+    const wr = Math.min(1, teinte.r * clarte * (1 + chaud));
+    const wg = Math.min(1, teinte.g * clarte);
+    const wb = Math.min(1, teinte.b * clarte * (1 - chaud));
+
+    // Salissure de pied de façade : la pluie rejaillit du sol et noircit le
+    // bas des murs sur les 80 premiers centimètres, très visible sur les
+    // enduits clairs du bourg. Rendue par assombrissement des sommets bas
+    // plutôt que par une texture, la couleur par sommet étant déjà en place.
+    const PIED = 0.86;
+    const solr = wr * 0.80, solg = wg * 0.79, solb = wb * 0.76;
+    // Facteur d'assombrissement à une altitude donnée, 1 au niveau du sol.
+    const pied = (y) => Math.max(0, 1 - (y - BASE_Y) / PIED);
+    // Écrit la couleur d'un sommet de façade, salissure comprise.
+    const poserMur = (y) => {
+      const t = pied(y);
+      wallCol.push(
+        wr + (solr - wr) * t,
+        wg + (solg - wg) * t,
+        wb + (solb - wb) * t,
+      );
+    };
 
     // Murs
     for (let i = 0; i < n; i++) {
@@ -995,10 +1166,24 @@ export function buildWorld(scene, data) {
 
       // Les murs partent du niveau du sol, pas de y = 0 : le terrain affleure
       // désormais la chaussée et les bâtiments seraient enfoncés d'autant.
-      wallPos2.push(x1, BASE_Y, z1, x2, BASE_Y, z2, x2, top, z2);
-      wallPos2.push(x1, BASE_Y, z1, x2, top, z2, x1, top, z1);
-      for (let k = 0; k < 6; k++) wallCol.push(wr, wg, wb);
-      wallUv.push(0, 0, len / 3, 0, len / 3, h / 3, 0, 0, len / 3, h / 3, 0, h / 3);
+      //
+      // La façade est coupée en deux bandes à la hauteur de la salissure de
+      // pied. Sans cette coupure, le dégradé serait interpolé sur toute la
+      // hauteur du mur, donc étalé et invisible sur un bâtiment haut : c'est
+      // le sommet intermédiaire qui le concentre là où il se voit. Le coût est
+      // d'un quad de plus par façade, la géométrie de mur restant très en
+      // dessous des postes lourds de la scène.
+      const yMid = Math.min(top, BASE_Y + PIED);
+      const paliers = yMid < top - 0.05 ? [BASE_Y, yMid, top] : [BASE_Y, top];
+      for (let p = 0; p < paliers.length - 1; p++) {
+        const ya = paliers[p], yb = paliers[p + 1];
+        wallPos2.push(x1, ya, z1, x2, ya, z2, x2, yb, z2);
+        wallPos2.push(x1, ya, z1, x2, yb, z2, x1, yb, z1);
+        poserMur(ya); poserMur(ya); poserMur(yb);
+        poserMur(ya); poserMur(yb); poserMur(yb);
+        const va = (ya - BASE_Y) / 3, vb = (yb - BASE_Y) / 3;
+        wallUv.push(0, va, len / 3, va, len / 3, vb, 0, va, len / 3, vb, 0, vb);
+      }
 
       // Mur = obstacle solide.
       collisionTris.push(x1, BASE_Y, z1, x2, BASE_Y, z2, x2, top, z2);
@@ -1026,16 +1211,31 @@ export function buildWorld(scene, data) {
         const hauteurF = Math.min(1.12, hNiveau * 0.42);
         const allege = Math.min(1.0, hNiveau * 0.32);
         const largeur = 0.86;
-        // Léger décalage vers l'extérieur pour éviter le z-fighting.
-        const ox = nx * 0.04, oz = nz * 0.04;
+        // La vitre reste très légèrement en saillie du mur, faute de quoi
+        // celui-ci la masquerait : la façade est un simple quad sans épaisseur,
+        // il n'y a pas de tableau creusé où loger la baie.
+        //
+        // La profondeur vient donc du DORMANT, ressorti à 6 cm devant elle : le
+        // cadre porte son ombre sur le vitrage en lumière rasante, ce qui donne
+        // le décrochement qu'un retrait de la vitre aurait produit, sans avoir
+        // à creuser la façade.
+        const ox = nx * 0.015, oz = nz * 0.015;
 
         for (let e = 0; e < niveaux; e++) {
           // Allège proportionnelle à la hauteur du niveau, plafonnée à 1 m.
           const yb = BASE_Y + allege + e * hNiveau;
           const yh = yb + hauteurF;
-          // Marge sous l'égout resserrée : 35 cm sur un mur de 2,5 m suffisait
-          // à tout rejeter.
-          if (yh > top - 0.2) continue;
+          // Marge sous l'égout. Elle doit couvrir la SAILLIE des éléments
+          // rapportés, pas seulement la hauteur de la baie : le dormant sort
+          // de 7,5 cm du nu de façade et l'appui de 13 cm, si bien qu'une
+          // fenêtre calée à 20 cm de l'égout ressortait à travers le pan de
+          // toiture, qui déborde justement au-dessus d'elle. Vue de loin, la
+          // vitre gagnait le tri de profondeur et perçait la couverture.
+          //
+          // 45 cm laissent passer le débord de 40 cm plus l'épaisseur de la
+          // tablette. C'est la moitié d'un niveau de moins sur les murs les
+          // plus bas, ce qui vaut mieux qu'un toit troué.
+          if (yh > top - 0.45) continue;
           for (let k = 0; k < parNiveau; k++) {
             const t = (k + 0.5) / parNiveau;
             const cxw = x1 + dx * t, czw = z1 + dz * t;
@@ -1048,13 +1248,45 @@ export function buildWorld(scene, data) {
               cxw + ux + ox, yh, czw + uz + oz,
               cxw - ux + ox, yh, czw - uz + oz,
             );
-            // Dormant : un quadrilatère un peu plus large et plus haut, posé
-            // légèrement en retrait de la vitre.
+
+            // Teinte du vitrage. Une baie ne renvoie pas la même chose selon
+            // ce qu'il y a derrière et selon son orientation : les unes tirent
+            // vers le bleu du ciel, les autres vers le brun d'une pièce
+            // sombre ou le gris d'un volet fermé. Quatre teintes très sombres
+            // suffisent à casser l'aplat, la lecture d'une fenêtre tenant à
+            // son cadre clair bien plus qu'à sa couleur.
+            const gv = hash(Math.abs(cxw * 27.3 + czw * 61.7 + e * 3.9));
+            // Une pièce sur douze est éclairée. La proportion est basse
+            // volontairement : une ville dont toutes les fenêtres brillent
+            // ressemble à une carte postale, pas à un bourg de 3 000 âmes.
+            // Les rez-de-chaussée le sont un peu plus souvent, commerces et
+            // pièces de vie s'y trouvant.
+            const allume = gv > (e === 0 ? 0.90 : 0.945);
+            let vr, vg, vbl;
+            if (allume) {
+              // Chaud, et nettement plus clair que le vitrage éteint : c'est
+              // cette valeur que le canal d'émission reprend la nuit.
+              vr = 1.0; vg = 0.82; vbl = 0.52;
+            } else if (gv < 0.28) {
+              vr = 0.196; vg = 0.227; vbl = 0.278;   // gris bleuté
+            } else if (gv < 0.55) {
+              vr = 0.157; vg = 0.180; vbl = 0.212;   // gris neutre sombre
+            } else if (gv < 0.80) {
+              vr = 0.169; vg = 0.176; vbl = 0.169;   // pièce sombre, verdi
+            } else {
+              vr = 0.212; vg = 0.196; vbl = 0.176;   // volet bois, brun
+            }
+            for (let s = 0; s < 6; s++) winCol.push(vr, vg, vbl);
+
+            // Dormant : un quadrilatère un peu plus large et plus haut, en
+            // saillie devant la vitre. C'est ce décrochement qui donne la
+            // profondeur de la baie, la façade n'ayant pas d'épaisseur où
+            // creuser un tableau.
             const MARGE = 0.11;
             const vx2 = (dx / len) * (largeur / 2 + MARGE);
             const vz2 = (dz / len) * (largeur / 2 + MARGE);
             const yb2 = yb - MARGE, yh2 = yh + MARGE;
-            const ox2 = nx * 0.025, oz2 = nz * 0.025;
+            const ox2 = nx * 0.075, oz2 = nz * 0.075;
             cadrePos.push(
               cxw - vx2 + ox2, yb2, czw - vz2 + oz2,
               cxw + vx2 + ox2, yb2, czw + vz2 + oz2,
@@ -1062,6 +1294,36 @@ export function buildWorld(scene, data) {
               cxw - vx2 + ox2, yb2, czw - vz2 + oz2,
               cxw + vx2 + ox2, yh2, czw + vz2 + oz2,
               cxw - vx2 + ox2, yh2, czw - vz2 + oz2,
+            );
+
+            // Appui de fenêtre : une tablette horizontale débordant de part et
+            // d'autre du dormant. Deux quads, le dessus et le chant vu d'en
+            // bas, le dessous n'étant jamais visible depuis la rue.
+            const APPUI_DEB = 0.06;    // débord latéral au-delà du dormant
+            const APPUI_SAIL = 0.13;   // saillie devant le nu de façade
+            const APPUI_EP = 0.05;     // épaisseur de la tablette
+            const ax3 = (dx / len) * (largeur / 2 + MARGE + APPUI_DEB);
+            const az3 = (dz / len) * (largeur / 2 + MARGE + APPUI_DEB);
+            const sx3 = nx * APPUI_SAIL, sz3 = nz * APPUI_SAIL;
+            // Le nu du mur, point de départ de la tablette.
+            const yA = yb2, yB = yb2 - APPUI_EP;
+            // Dessus, incliné vers l'extérieur comme un vrai rejingot.
+            appuiPos.push(
+              cxw - ax3, yA, czw - az3,
+              cxw + ax3, yA, czw + az3,
+              cxw + ax3 + sx3, yB, czw + az3 + sz3,
+              cxw - ax3, yA, czw - az3,
+              cxw + ax3 + sx3, yB, czw + az3 + sz3,
+              cxw - ax3 + sx3, yB, czw - az3 + sz3,
+            );
+            // Chant, vu depuis la rue en contrebas.
+            appuiPos.push(
+              cxw - ax3 + sx3, yB, czw - az3 + sz3,
+              cxw + ax3 + sx3, yB, czw + az3 + sz3,
+              cxw + ax3 + sx3, yB - APPUI_EP, czw + az3 + sz3,
+              cxw - ax3 + sx3, yB, czw - az3 + sz3,
+              cxw + ax3 + sx3, yB - APPUI_EP, czw + az3 + sz3,
+              cxw - ax3 + sx3, yB - APPUI_EP, czw - az3 + sz3,
             );
           }
         }
@@ -1140,7 +1402,18 @@ export function buildWorld(scene, data) {
     }
     const faitageY = top + pente;
     // Débord de toiture, très marqué sur les maisons du Sud-Ouest.
-    const debord = 0.4;
+    //
+    // Borné par la distance au bâtiment voisin : sur le bâti continu du
+    // centre-bourg, un débord de 40 cm envoie le pan DANS l'emprise mitoyenne,
+    // les deux couvertures se croisent et le tri de profondeur les départage
+    // différemment selon l'angle. Vu de loin, les toits clignotent et laissent
+    // apparaître par endroits la couverture du voisin.
+    //
+    // On garde la moitié de l'écart disponible, l'autre revenant au voisin qui
+    // déborde en sens inverse. Un mitoyen strict (écart nul) perd donc tout
+    // débord de ce côté, ce qui est le cas réel : deux maisons accolées
+    // partagent un mur, elles n'ont pas d'égout entre elles.
+    const DEBORD_MAX = 0.4;
 
     // Deux points de faîtage, aux extrémités du grand axe. Leur retrait décide
     // de la forme : faible, le faîtage court jusqu'aux pignons (toit à deux
@@ -1175,10 +1448,15 @@ export function buildWorld(scene, data) {
       const [x2, z2] = b.pts[(i + 1) % n];
       // Chaque arête de mur est débordée vers l'extérieur, puis reliée au
       // segment de faîtage le plus proche.
-      const e1x = x1 + (x1 - cx) / (Math.hypot(x1 - cx, z1 - cz) || 1) * debord;
-      const e1z = z1 + (z1 - cz) / (Math.hypot(x1 - cx, z1 - cz) || 1) * debord;
-      const e2x = x2 + (x2 - cx) / (Math.hypot(x2 - cx, z2 - cz) || 1) * debord;
-      const e2z = z2 + (z2 - cz) / (Math.hypot(x2 - cx, z2 - cz) || 1) * debord;
+      // Débord propre à chaque sommet : un bâtiment peut être mitoyen d'un
+      // côté et dégagé de l'autre, ce qui est le cas de tous les immeubles de
+      // bout de rangée.
+      const d1 = Math.min(DEBORD_MAX, distVoisin(b, x1, z1) * 0.5);
+      const d2 = Math.min(DEBORD_MAX, distVoisin(b, x2, z2) * 0.5);
+      const e1x = x1 + (x1 - cx) / (Math.hypot(x1 - cx, z1 - cz) || 1) * d1;
+      const e1z = z1 + (z1 - cz) / (Math.hypot(x1 - cx, z1 - cz) || 1) * d1;
+      const e2x = x2 + (x2 - cx) / (Math.hypot(x2 - cx, z2 - cz) || 1) * d2;
+      const e2z = z2 + (z2 - cz) / (Math.hypot(x2 - cx, z2 - cz) || 1) * d2;
 
       // Le sommet du faîtage retenu est celui dont la projection est la plus
       // proche du milieu de l'arête : c'est ce qui crée les deux pans.
@@ -1230,13 +1508,16 @@ export function buildWorld(scene, data) {
     }));
     // Pas de castShadow : la passe d'ombre redessinerait les 3 500 bâtiments
     // à chaque frame, pour un gain visuel marginal en vue de conduite.
+    m.name = 'murs';
     m.receiveShadow = true;
     group.add(m);
   }
 
+  let vitrages = null;
   if (winPos.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(winPos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(winCol, 3));
     g.computeVertexNormals();
     g.computeBoundingSphere();
     // Vitrage sombre légèrement réfléchissant : de loin, ce sont ces trouées
@@ -1249,11 +1530,34 @@ export function buildWorld(scene, data) {
     // fenêtres étaient bien générées et bien placées, mais indiscernables sur
     // un enduit clair en plein jour. Même piège que la carrosserie de la
     // voiture, déclarée `metallicFactor = 1` dans son glTF.
-    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0x38414d, roughness: 0.28, metalness: 0.08, side: THREE.DoubleSide,
-    }));
-    m.renderOrder = 1;
+    //
+    // Opaque, sans transparence ni transmission : le vitrage de plusieurs
+    // milliers de baies passerait sinon par le tri des faces transparentes, à
+    // un coût sans rapport avec ce qu'on y gagnerait. Le reflet vient de la
+    // carte d'environnement de la scène, qui suffit à cette distance.
+    //
+    // La teinte est portée par sommet, ce qui donne quatre nuances de vitrage
+    // et, la nuit, quelques pièces éclairées. L'émission reprend cette même
+    // couleur : à intensité nulle le jour, elle ne change rien, et de nuit
+    // seules les baies déclarées chaudes s'allument, les autres étant trop
+    // sombres pour émettre quoi que ce soit de visible.
+    const mat = new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.24, metalness: 0.08,
+      side: THREE.DoubleSide,
+      emissive: 0xffffff, emissiveIntensity: 0,
+    });
+    // L'émission d'un matériau à couleur par sommet reprend la couleur de
+    // sommet : c'est ce qui permet de n'allumer que les baies chaudes sans
+    // second maillage.
+    const m = new THREE.Mesh(g, mat);
+    m.name = 'vitrages';
+    // Pas de `renderOrder` : tous ces maillages sont opaques et écrivent la
+    // profondeur, donc le tampon suffit à les départager. Forcer les vitrages
+    // en 1 les faisait dessiner APRÈS les toitures, restées en 0 : une baie
+    // qui dépassait un peu l'égout gagnait alors le tri et perçait la
+    // couverture, ce qui donnait des toits troués vus de loin.
     group.add(m);
+    vitrages = mat;
   }
 
   if (cadrePos.length) {
@@ -1267,6 +1571,20 @@ export function buildWorld(scene, data) {
       color: 0xece9e2, roughness: 0.7, side: THREE.DoubleSide,
     }));
     m.renderOrder = 0;
+    group.add(m);
+  }
+
+  if (appuiPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(appuiPos, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Pierre ou béton de tablette : plus gris et plus mat que la menuiserie,
+    // plus clair que l'enduit sali du pied de façade.
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0xc8c4ba, roughness: 0.88, side: THREE.DoubleSide,
+    }));
+    m.receiveShadow = true;
     group.add(m);
   }
 
@@ -1285,6 +1603,7 @@ export function buildWorld(scene, data) {
       vertexColors: true, roughness: 0.95, side: THREE.DoubleSide,
       map: tuile, bumpMap: carteRelief(tuile), bumpScale: 0.5,
     }));
+    m.name = 'toitures';
     m.receiveShadow = true;
     group.add(m);
   }
@@ -1472,6 +1791,12 @@ export function buildWorld(scene, data) {
     // Foyers lumineux, pour l'éclairage public nocturne.
     foyers: lamps?.userData.foyers ?? [],
     lampHeads: lamps?.userData.lampHeads ?? null,
+    // Matériau du vitrage : son émission est pilotée par le cycle jour/nuit,
+    // pour que les pièces déclarées éclairées s'allument à la tombée du jour.
+    vitrages,
+    // Matériau de l'eau : la boucle fait dériver ses normales très lentement,
+    // ce qui donne le courant sans animer la moindre géométrie.
+    eau: materiauEau,
     // Places en épi des aires OSM, pour y garer des véhicules bien orientés.
     placesEpi,
     // Maillages instanciés éligibles au découpage spatial, avec la position de

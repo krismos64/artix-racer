@@ -59,6 +59,87 @@ function textureDevise() {
   return t;
 }
 
+// Enseigne du Leclerc Express de l'avenue Maréchal Leclerc de Hautecloque.
+//
+// Dessinée en canvas comme toutes les textures du projet, à partir des
+// éléments observés sur place : le sigle carré bleu portant un E blanc, le nom
+// en bas-de-casse bleu, et la mention EXPRESS en capitales sur pavé bleu.
+// Aucun fichier d'image n'est importé.
+//
+// Le bleu relevé sur la devanture est un outremer soutenu, nettement plus
+// sombre qu'un bleu primaire : c'est lui qui porte la lecture de l'enseigne
+// depuis l'avenue.
+const BLEU_ENSEIGNE = '#0b3d91';
+
+function textureEnseigne() {
+  const L = 1024, H = 256;
+  const c = document.createElement('canvas');
+  c.width = L; c.height = H;
+  const ctx = c.getContext('2d');
+  // Fond blanc du bandeau : la devanture est un long panneau clair sur lequel
+  // le lettrage se détache.
+  ctx.fillStyle = '#f7f7f5';
+  ctx.fillRect(0, 0, L, H);
+
+  // Sigle : carré bleu à coins vifs portant un E blanc, à gauche du nom.
+  const cote = H * 0.62;
+  const sx = L * 0.10, sy = (H - cote) / 2;
+  ctx.fillStyle = BLEU_ENSEIGNE;
+  ctx.fillRect(sx, sy, cote, cote);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `700 ${cote * 0.74}px Helvetica, Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('E', sx + cote / 2, sy + cote / 2 + cote * 0.02);
+
+  // Nom en bas-de-casse, la forme qu'il prend sur les devantures.
+  ctx.fillStyle = BLEU_ENSEIGNE;
+  ctx.font = `700 ${H * 0.46}px Helvetica, Arial, sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.fillText('Leclerc', sx + cote * 1.35, H / 2);
+
+  // Mention EXPRESS : capitales blanches sur pavé bleu, à la suite du nom.
+  const wNom = ctx.measureText('Leclerc').width;
+  const px = sx + cote * 1.35 + wNom + H * 0.10;
+  const pw = L - px - L * 0.06, ph = H * 0.34;
+  ctx.fillStyle = BLEU_ENSEIGNE;
+  ctx.fillRect(px, (H - ph) / 2, pw, ph);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `700 ${ph * 0.62}px Helvetica, Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.letterSpacing = '3px';
+  ctx.fillText('EXPRESS', px + pw / 2, H / 2 + 1);
+
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+// Panonceau carré du sigle seul, posé en façade de part et d'autre de
+// l'entrée : deux exemplaires sur le bâtiment réel.
+function texturePanonceau() {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, S, S);
+  // Cadre bleu, laissant une marge blanche comme sur les panneaux réels.
+  const m = S * 0.12;
+  ctx.fillStyle = BLEU_ENSEIGNE;
+  ctx.fillRect(m, m, S - 2 * m, S - 2 * m);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `700 ${S * 0.52}px Helvetica, Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('E', S / 2, S / 2 + S * 0.02);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
 // Mairie d'Artix : 27,1 × 17,4 m, façade blanche, toit mansardé en ardoise.
 function construireMairie(boite, solY) {
   const g = new THREE.Group();
@@ -966,6 +1047,205 @@ function construireImmeubleRue(dims) {
   return g;
 }
 
+// Enseigne de commerce plaquée sur une façade, sans toucher au bâtiment.
+//
+// Certains commerces n'ont pas besoin d'un repère modélisé : leur bâtiment est
+// correctement extrudé, il leur manque seulement le bandeau qui les identifie
+// depuis la rue. Cette fonction pose un simple panneau, à charge de l'appelant
+// de lui donner sa position et son cap.
+//
+// Le texte est dessiné en canvas comme le reste des textures du projet.
+function textureEnseigneCommerce(nom, fond, encre) {
+  const L = 1024, H = 256;
+  const c = document.createElement('canvas');
+  c.width = L; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = fond;
+  ctx.fillRect(0, 0, L, H);
+  // Filet clair en bordure : les caissons d'enseigne ont un encadrement, et
+  // sans lui le panneau se fond dans la façade quand les teintes sont proches.
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = H * 0.05;
+  ctx.strokeRect(H * 0.06, H * 0.06, L - H * 0.12, H - H * 0.12);
+  ctx.fillStyle = encre;
+  // La taille s'adapte à la longueur du nom : un nom long déborderait sinon.
+  let taille = H * 0.46;
+  ctx.font = `700 ${taille}px Helvetica, Arial, sans-serif`;
+  const dispo = L * 0.86;
+  while (ctx.measureText(nom).width > dispo && taille > 20) {
+    taille -= 4;
+    ctx.font = `700 ${taille}px Helvetica, Arial, sans-serif`;
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.letterSpacing = '2px';
+  ctx.fillText(nom, L / 2, H / 2);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+// Leclerc Express du centre-bourg, dans les murs de l'ancien Intermarché.
+//
+// Emprise et cap viennent d'OSM (way 63685613, 974 m², 42,9 x 26,5 m, cap
+// 10,4 degrés) ; la hauteur de 5 m et l'usage commercial de la BD TOPO, qui le
+// donne à toiture-terrasse.
+//
+// L'extrusion automatique en ferait une boîte grise, alors que ce qui
+// l'identifie depuis la rue tient à trois choses : le long bandeau blanc
+// d'acrotère, la façade entièrement vitrée sous auvent, et l'enseigne bleue.
+function construireSupermarche(dims) {
+  const g = new THREE.Group();
+  const L = dims.longueur, W = dims.largeur;
+  // Hauteur au sommet de l'acrotère, relevé BD TOPO. Le corps de bâtiment est
+  // un peu plus bas, l'acrotère le dépassant.
+  const H = 4.35;
+  const ACROTERE = 0.65;
+
+  const murMat = new THREE.MeshStandardMaterial({
+    // Bardage blanc cassé, légèrement grisé : le blanc pur ressort en tache
+    // sous le ciel et écrase le bandeau d'enseigne.
+    color: 0xe4e4e0, roughness: 0.82, side: THREE.DoubleSide,
+  });
+  const soubMat = new THREE.MeshStandardMaterial({
+    // Soubassement gris, sali par les projections : très présent sur la photo.
+    color: 0x9d9c97, roughness: 0.92, side: THREE.DoubleSide,
+  });
+  const vitreMat = new THREE.MeshStandardMaterial({
+    // Vitrine opaque et sombre, comme le vitrage du bâti ordinaire : la
+    // transmission physique coûterait cher pour un intérieur qu'on ne voit pas.
+    color: 0x2c3540, roughness: 0.16, metalness: 0.10, side: THREE.DoubleSide,
+  });
+  const menuiserieMat = new THREE.MeshStandardMaterial({
+    color: 0xd8d8d4, roughness: 0.55, metalness: 0.25, side: THREE.DoubleSide,
+  });
+  const toitMat = new THREE.MeshStandardMaterial({
+    // Étanchéité de toiture-terrasse : gris moyen mat, jamais brillant.
+    color: 0x6f7175, roughness: 0.96, side: THREE.DoubleSide,
+  });
+
+  // Corps du bâtiment. La façade avant (+Z) est traitée à part, elle porte
+  // toute la vitrine ; les trois autres sont du bardage plein.
+  const corps = new THREE.Mesh(new THREE.BoxGeometry(L, H, W), murMat);
+  corps.position.y = H / 2;
+  corps.castShadow = true;
+  corps.receiveShadow = true;
+  g.add(corps);
+
+  // Acrotère : le bandeau qui ceinture la toiture-terrasse et masque son bord.
+  // C'est lui qui donne au bâtiment sa ligne horizontale franche.
+  const acro = new THREE.Mesh(
+    new THREE.BoxGeometry(L + 0.3, ACROTERE, W + 0.3), murMat);
+  acro.position.y = H + ACROTERE / 2;
+  acro.castShadow = true;
+  g.add(acro);
+
+  // Terrasse, en léger retrait sous le haut d'acrotère.
+  const terrasse = new THREE.Mesh(new THREE.PlaneGeometry(L, W), toitMat);
+  terrasse.rotation.x = -Math.PI / 2;
+  terrasse.position.y = H + ACROTERE * 0.55;
+  terrasse.receiveShadow = true;
+  g.add(terrasse);
+
+  // --- Façade avant : vitrine continue sous auvent -----------------------
+  //
+  // Elle occupe les deux tiers de la longueur, le reste étant l'annexe pleine
+  // visible à droite sur la photo. Le vitrage est posé en applique devant le
+  // bardage plutôt que percé dedans : la façade est une simple boîte, il n'y a
+  // pas d'épaisseur où creuser une baie.
+  const zF = W / 2;
+  const LARG_VITRINE = L * 0.62;
+  const xVitrine = -L * 0.12;   // décalée vers la gauche, comme sur place
+  const H_ALLEGE = 0.55;        // soubassement sous la vitrine
+  const H_VITRE = 2.35;
+
+  // Soubassement : bandeau gris continu au pied de la vitrine.
+  const soub = new THREE.Mesh(
+    new THREE.BoxGeometry(LARG_VITRINE, H_ALLEGE, 0.10), soubMat);
+  soub.position.set(xVitrine, H_ALLEGE / 2, zF + 0.05);
+  g.add(soub);
+
+  // Vitrage, d'un seul tenant : les montants viennent par-dessus.
+  const vitre = new THREE.Mesh(
+    new THREE.PlaneGeometry(LARG_VITRINE, H_VITRE), vitreMat);
+  vitre.position.set(xVitrine, H_ALLEGE + H_VITRE / 2, zF + 0.04);
+  g.add(vitre);
+
+  // Montants d'aluminium, tous les 2,4 m environ : c'est ce rythme vertical
+  // qui fait lire une devanture de commerce plutôt qu'un mur sombre.
+  const nMont = Math.max(2, Math.round(LARG_VITRINE / 2.4));
+  const montGeo = new THREE.BoxGeometry(0.09, H_VITRE, 0.07);
+  const montants = new THREE.InstancedMesh(montGeo, menuiserieMat, nMont + 1);
+  const mm = new THREE.Matrix4();
+  for (let i = 0; i <= nMont; i++) {
+    const x = xVitrine - LARG_VITRINE / 2 + (LARG_VITRINE * i) / nMont;
+    mm.makeTranslation(x, H_ALLEGE + H_VITRE / 2, zF + 0.09);
+    montants.setMatrixAt(i, mm);
+  }
+  montants.instanceMatrix.needsUpdate = true;
+  g.add(montants);
+
+  // Traverse haute, qui ferme la vitrine sous l'auvent.
+  const trav = new THREE.Mesh(
+    new THREE.BoxGeometry(LARG_VITRINE, 0.14, 0.10), menuiserieMat);
+  trav.position.set(xVitrine, H_ALLEGE + H_VITRE + 0.07, zF + 0.07);
+  g.add(trav);
+
+  // Auvent en débord sur toute la vitrine : il porte l'ombre horizontale qui
+  // détache la devanture du bardage, très marquée sur la photo.
+  const DEB = 1.35;
+  const auvent = new THREE.Mesh(
+    new THREE.BoxGeometry(LARG_VITRINE + 1.2, 0.16, DEB), murMat);
+  auvent.position.set(xVitrine, H_ALLEGE + H_VITRE + 0.35, zF + DEB / 2);
+  auvent.castShadow = true;
+  g.add(auvent);
+
+  // --- Enseigne ----------------------------------------------------------
+  // Bandeau posé sur l'acrotère, débordant légèrement : sur place, l'enseigne
+  // est fixée en applique au-dessus de la ligne de toiture.
+  // Largeur bornée, et hauteur calée sur celle de l'acrotère : une enseigne
+  // plus haute que son support déborde forcément.
+  const LARG_ENS = Math.min(L * 0.42, 11);
+  const texEns = textureEnseigne();
+  const ens = new THREE.Mesh(
+    new THREE.PlaneGeometry(LARG_ENS, Math.min(LARG_ENS * 0.25, ACROTERE * 0.8)),
+    new THREE.MeshStandardMaterial({
+      map: texEns, roughness: 0.55,
+      // Légère émission : les enseignes de magasin sont rétroéclairées et
+      // restent lisibles à la tombée du jour. L'intensité est faible, il ne
+      // s'agit pas d'en faire une source lumineuse.
+      //
+      // L'émission reprend la MÊME texture que la couleur : sans `emissiveMap`,
+      // un `emissive` blanc éclaire uniformément tout le panneau et efface le
+      // lettrage, au lieu de rétroéclairer le fond clair comme un caisson réel.
+      emissive: 0xffffff, emissiveMap: texEns, emissiveIntensity: 0.12,
+      side: THREE.DoubleSide,
+    }));
+  // Plaquée sur l'acrotère et non au-dessus : un premier essai la posait à
+  // `H + ACROTERE * 0.62`, ce qui la faisait flotter au-dessus de la ligne de
+  // toiture, détachée du bâtiment. Elle occupe maintenant la hauteur du
+  // bandeau, comme sur la devanture réelle.
+  ens.position.set(xVitrine, H + ACROTERE * 0.32, zF + 0.20);
+  g.add(ens);
+
+  // Deux panonceaux du sigle en façade, de part et d'autre de l'entrée.
+  const panMat = new THREE.MeshStandardMaterial({
+    map: texturePanonceau(), roughness: 0.6, side: THREE.DoubleSide,
+  });
+  const panGeo = new THREE.PlaneGeometry(0.85, 0.85);
+  // Resserrés autour de l'entrée : un premier essai plaçait le second trop
+  // loin sur la droite, isolé au milieu du bardage.
+  for (const dx of [-LARG_VITRINE * 0.26, LARG_VITRINE * 0.06]) {
+    const pan = new THREE.Mesh(panGeo, panMat);
+    pan.position.set(xVitrine + dx, H_ALLEGE + H_VITRE + 0.62, zF + 0.12);
+    g.add(pan);
+  }
+
+  g.userData = { L, W, H, ACROTERE, vitreMat, menuiserieMat, soubMat };
+  return g;
+}
+
 export function buildLandmarks(data, relief, roadY) {
   const group = new THREE.Group();
   const traites = [];   // emprises à retirer des bâtiments ordinaires
@@ -1020,6 +1300,82 @@ export function buildLandmarks(data, relief, roadY) {
   // et leur cap viennent de la BD TOPO, leurs hauteurs et leur silhouette de
   // la photo : la BD TOPO ne donne qu'une hauteur moyenne, dont l'extrusion
   // efface l'avant-corps et la pente de toiture.
+  // Leclerc Express du centre-bourg. Il occupe les murs de l'ancien
+  // Intermarché, qu'OSM porte encore sous ce nom : le relevé date d'avant le
+  // changement d'enseigne, que Christophe confirme.
+  //
+  // Emprise et cap relevés sur l'OSM téléchargé (way 63685613, 974 m²,
+  // 42,9 x 26,5 m, cap 10,4 degrés) ; hauteur de 5 m et usage commercial de la
+  // BD TOPO (index 1128, 981 m²), qui le donne à toiture-terrasse.
+  const SUPERMARCHES = [
+    { x: 57.0, z: -88.4, longueur: 42.9, largeur: 26.5, cap: 0.1814 },
+  ];
+  for (const sm of SUPERMARCHES) {
+    // Assise au point le plus bas de l'emprise, comme les autres repères : sur
+    // terrain en pente, se caler sur le centre laisse un côté en l'air.
+    let sol = Infinity;
+    const rot = -sm.cap;
+    const ca = Math.cos(rot), sa = Math.sin(rot);
+    for (const du of [-sm.longueur / 2, 0, sm.longueur / 2]) {
+      for (const dv of [-sm.largeur / 2, 0, sm.largeur / 2]) {
+        const x = sm.x + du * ca - dv * sa;
+        const z = sm.z + du * sa + dv * ca;
+        const h = (relief ? relief.hauteurRoute(x, z) : 0) + roadY;
+        if (h < sol) sol = h;
+      }
+    }
+    sol -= 0.25;
+    const bat = construireSupermarche(
+      { longueur: sm.longueur, largeur: sm.largeur });
+    bat.position.set(sm.x, sol, sm.z);
+    bat.rotation.y = rot;
+    group.add(bat);
+    traites.push({
+      x: sm.x, z: sm.z,
+      rayon: Math.max(sm.longueur, sm.largeur) / 2 + 2,
+    });
+  }
+
+  // Enseignes de commerce posées en façade, sans repère modélisé. Le bâtiment
+  // reste extrudé automatiquement : seul le bandeau est ajouté, ce qui suffit
+  // à l'identifier depuis la rue.
+  //
+  // `cap` est celui de la NORMALE SORTANTE de la façade, mesurée sur l'emprise
+  // OSM : c'est la direction vers laquelle l'enseigne regarde.
+  const ENSEIGNES_FACADE = [
+    // Loto Tyche, avenue Maréchal Leclerc de Hautecloque. Il occupe les murs
+    // de l'ancien Leader Price, qu'OSM porte encore sous ce nom. Façade sur
+    // parking, côté sud-ouest, 29,1 m de long.
+    {
+      // Altitude : le bâtiment fait 3,7 m au faîtage et sa toiture descend sur
+      // les bords. Un premier essai à 3,1 m faisait dépasser le haut du
+      // panneau au-dessus de la ligne de toit.
+      x: 829.0, z: 488.6, cap: -0.583, largeur: 4.2, hauteur: 0.80,
+      altitude: 2.55, nom: 'LOTO TYCHE',
+      fond: '#1d4f8f', encre: '#ffffff',
+    },
+  ];
+  for (const e of ENSEIGNES_FACADE) {
+    const sol = (relief ? relief.hauteurRoute(e.x, e.z) : 0) + roadY;
+    const pan = new THREE.Mesh(
+      new THREE.PlaneGeometry(e.largeur, e.hauteur),
+      new THREE.MeshStandardMaterial({
+        map: textureEnseigneCommerce(e.nom, e.fond, e.encre),
+        roughness: 0.6, side: THREE.DoubleSide,
+      }));
+    // Légèrement en avant du nu de façade : le bâtiment extrudé occupe déjà ce
+    // plan, et poser l'enseigne dessus produirait du z-fighting.
+    const dec = 0.14;
+    pan.position.set(
+      e.x + Math.sin(e.cap) * dec,
+      sol + e.altitude,
+      e.z + Math.cos(e.cap) * dec,
+    );
+    pan.rotation.y = e.cap;
+    group.add(pan);
+    // Pas d'entrée dans `traites` : le bâtiment garde son extrusion.
+  }
+
   const IMMEUBLES_RUE = [
     // « Au Comptoir » et les commerces attenants, carrefour de la Patte d'Oie.
     // Bâtiment 1081 de la BD TOPO : 354 m², 39,2 x 11,2 m, cap -74,7 degrés.

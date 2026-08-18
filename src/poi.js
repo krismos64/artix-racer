@@ -11,6 +11,17 @@ const RAYON_MAX = 2000;
 // Catégories d'équipements à signaler au joueur, avec leur libellé et la
 // couleur de leur panonceau. L'ordre définit la priorité d'affichage quand
 // plusieurs équipements se superposent.
+// Enseignes ayant changé depuis le relevé OSM. Le tag `name` reste celui de
+// l'ancienne enseigne tant que personne n'a mis la carte à jour, et le HUD
+// annoncerait un commerce qui n'existe plus. La correspondance est tenue à la
+// main, sur constat de terrain : c'est une donnée LUE, pas déduite.
+const ENSEIGNES_ACTUELLES = {
+  // L'Intermarché du centre-bourg est devenu un Leclerc Express.
+  'Intermarché': 'Leclerc Express',
+  // L'ancien Leader Price de l'avenue Maréchal Leclerc abrite Loto Tyche.
+  'Leader Price': 'Loto Tyche',
+};
+
 export const CATEGORIES = {
   townhall:        { label: 'Mairie',            couleur: 0x2f5fa8, icone: 'civique' },
   school:          { label: 'École',             couleur: 0xd4913a, icone: 'ecole' },
@@ -121,7 +132,7 @@ export function parsePOI(raw, terrain = null) {
       equipements.push({
         x, z,
         categorie: cat,
-        nom: t.name,
+        nom: ENSEIGNES_ACTUELLES[t.name] ?? t.name,
         // Un équipement sans catégorie connue reste affichable sous son nom.
         info: CATEGORIES[cat] ?? { label: 'Commerce', couleur: 0xc06020, icone: 'commerce' },
       });

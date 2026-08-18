@@ -23,6 +23,9 @@ export const PROFILS = {
     lampesCalculees: 8,
     passants: 70,
     smaa: false,
+    // Touffes d'herbe de premier plan : coupées ici, le budget allant d'abord
+    // à la ville elle-même.
+    touffes: false,
     // Distance au-delà de laquelle les petits objets ne sont plus affichés.
     distanceDetails: 220,
   },
@@ -37,6 +40,7 @@ export const PROFILS = {
     lampesCalculees: 20,
     passants: 140,
     smaa: true,
+    touffes: true,
     distanceDetails: 400,
   },
   qualite: {
@@ -50,6 +54,7 @@ export const PROFILS = {
     lampesCalculees: 28,
     passants: 180,
     smaa: true,
+    touffes: true,
     distanceDetails: 650,
   },
 };
@@ -94,6 +99,12 @@ export class Qualite {
     if (c.eclairage) c.eclairage.setPool?.(p.lampesCalculees);
     if (c.smaa) c.smaa.enabled = p.smaa;
     if (c.majGtao) c.majGtao(p.gtaoEchelle);
+    // Redimensionnement complet de la chaîne de passes, APRÈS le changement de
+    // pixel ratio et l'échelle du GTAO. Sans lui, le renderer change d'échelle
+    // mais les cibles du composer gardent celle capturée à leur construction :
+    // Performance calculait alors autant de pixels qu'Équilibré, et Qualité
+    // pas un de plus.
+    if (c.onResolution) c.onResolution();
     if (c.onProfil) c.onProfil(p);
   }
 

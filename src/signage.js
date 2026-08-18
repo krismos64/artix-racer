@@ -305,6 +305,30 @@ export function buildSignage(data, relief, roadY) {
     // elle : c'est là que le conducteur peut le lire.
     const pos = surAccotement(e.x, e.z);
     if (!pos.trouve) continue;
+
+    // Rapprochement du commerce quand la voie est loin.
+    //
+    // Le nœud OSM d'un équipement est au CENTRE de son bâtiment, pas au bord
+    // de la rue. Sur un commerce en fond de parcelle, `surAccotement` plantait
+    // donc le panneau à vingt mètres de lui, isolé au milieu de son propre
+    // parking : le panneau était au bon endroit du point de vue de la voirie,
+    // mais ne se rattachait visuellement à rien.
+    //
+    // On le ramène vers le bâtiment sans le sortir de l'accotement : il reste
+    // sur le bord de voie, mais on borne l'écart au lieu qu'il annonce. Le cap
+    // n'est pas touché, le panneau devant toujours faire face au conducteur.
+    // 14 m : assez pour rester en dehors de l'emprise des plus gros bâtiments
+    // signalés (le supermarché du bourg fait 26 m de large, donc 13 m depuis
+    // son centre), assez peu pour que le panneau se lise comme appartenant au
+    // commerce et non planté au hasard.
+    const ECART_MAX = 14;
+    const dLieu = Math.hypot(pos.x - e.x, pos.z - e.z);
+    if (dLieu > ECART_MAX) {
+      const k = ECART_MAX / dLieu;
+      pos.x = e.x + (pos.x - e.x) * k;
+      pos.z = e.z + (pos.z - e.z) * k;
+    }
+
     const sol = solEn(relief, pos.x, pos.z, roadY);
 
     const poteau = new THREE.Mesh(poteauGeo, poteauMat);

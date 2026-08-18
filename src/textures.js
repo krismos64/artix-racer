@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 
 // Bruit de valeur lissé, base de tous les grains.
-function bruit(w, h, cellules, graine = 0) {
+export function bruit(w, h, cellules, graine = 0) {
   const g = new Float32Array((cellules + 1) * (cellules + 1));
   let s = graine * 9301 + 49297;
   for (let i = 0; i < g.length; i++) {
@@ -37,6 +37,187 @@ function canvas(taille) {
   const c = document.createElement('canvas');
   c.width = c.height = taille;
   return c;
+}
+
+// Enrobé de chaussée.
+//
+// La version précédente posait un bruit blanc par pixel sur un aplat, plus
+// deux bandes sombres à bords francs figurant les traces de roulement. Deux
+// défauts se voyaient en conduite : le bruit blanc, sans structure à plus
+// grande échelle, se lit comme du grain de capteur et non comme un
+// revêtement ; et les bandes, alignées sur la texture, se répétaient tous les
+// quatre mètres le long de la voie.
+//
+// Ici, quatre échelles de bruit superposées : la granulométrie fine du
+// gravillon, une variation moyenne qui figure les reprises d'enrobé, une
+// variation lente qui empêche le motif de se lire comme un carrelage, et un
+// assombrissement des deux bandes de roulement, cette fois aux bords fondus.
+//
+// La texture reste centrée haut et de faible amplitude : elle est multipliée
+// par la couleur du matériau, et un gris moyen finirait presque noir après le
+// mappage de tons. C'est ce piège qui avait donné une chaussée huit fois trop
+// sombre par le passé.
+export function texturerEnrobe(taille = 512) {
+  const c = canvas(taille);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(taille, taille);
+  const d = img.data;
+  // Gravillon, reprises d'enrobé, ondulation lente.
+  const gravillon = bruit(taille, taille, 128, 7);
+  const reprises = bruit(taille, taille, 14, 31);
+  const lent = bruit(taille, taille, 4, 71);
+  for (let y = 0; y < taille; y++) {
+    // Bandes de roulement : deux zones un peu plus sombres, centrées sur les
+    // passages de roues. Le profil est en cosinus et non en créneau, donc sans
+    // arête visible au raccord de deux répétitions de la texture.
+    for (let x = 0; x < taille; x++) {
+      const i = (y * taille + x) * 4;
+      const u = x / taille;
+      // Deux creux, à un quart et trois quarts de la largeur du motif.
+      const creux = (centre) => {
+        const dd = Math.abs(u - centre);
+        return dd > 0.11 ? 0 : Math.cos((dd / 0.11) * Math.PI * 0.5) ** 2;
+      };
+      const roulement = Math.max(creux(0.26), creux(0.74));
+
+      // Base légèrement chaude : un enrobé vieilli tire vers le gris-beige, un
+      // gris strictement neutre le fait paraître bleuté sous un ciel bleu.
+      let v = 196
+        + (gravillon(x, y) - 0.5) * 26
+        + (reprises(x, y) - 0.5) * 17
+        + (lent(x, y) - 0.5) * 12
+        - roulement * 15;
+      v = Math.max(0, Math.min(255, v));
+      // Neutre à peine chaude : deux unités d'écart suffisent, au-delà
+      // l'enrobé vire au brun.
+      d[i] = Math.min(255, v + 3);
+      d[i + 1] = v;
+      d[i + 2] = Math.max(0, v - 3);
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+// Rugosité de chaussée. Un enrobé n'a pas une rugosité uniforme : les bandes
+// de roulement sont polies par le trafic, les bords de voie restent grenus.
+// Cette carte, branchée sur `roughnessMap`, donne à la lumière rasante de quoi
+// varier le long d'une même rue, ce qu'une valeur scalaire ne peut pas faire.
+//
+// Elle est en niveaux de gris et lue en espace LINÉAIRE : une carte de
+// rugosité porte une grandeur, pas une couleur, et la lire en sRGB fausserait
+// son amplitude.
+export function texturerRugositeEnrobe(taille = 256) {
+  const c = canvas(taille);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(taille, taille);
+  const d = img.data;
+  const grain = bruit(taille, taille, 64, 19);
+  const large = bruit(taille, taille, 9, 83);
+  for (let y = 0; y < taille; y++) {
+    for (let x = 0; x < taille; x++) {
+      const i = (y * taille + x) * 4;
+      const u = x / taille;
+      const creux = (centre) => {
+        const dd = Math.abs(u - centre);
+        return dd > 0.11 ? 0 : Math.cos((dd / 0.11) * Math.PI * 0.5) ** 2;
+      };
+      // Poli dans les traces de roue, grenu ailleurs.
+      const poli = Math.max(creux(0.26), creux(0.74));
+      const v = 236 - poli * 40 + (grain(x, y) - 0.5) * 22 + (large(x, y) - 0.5) * 18;
+      d[i] = d[i + 1] = d[i + 2] = Math.max(0, Math.min(255, v));
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// Normales de surface d'eau.
+//
+// Une nappe parfaitement plane rend comme du verre : elle prend le ciel d'un
+// bloc et se lit comme une découpe de papier bleu posée sur le pré. Ces
+// normales lui donnent une ondulation à deux échelles, la houle lente et la
+// ride serrée, ce qui suffit à faire accrocher la lumière sans réflexion
+// temps réel ni géométrie animée.
+//
+// Encodage classique : la normale, dont les composantes sont dans [-1, 1], est
+// rangée dans [0, 255] par (n + 1) / 2. La texture est donc lue en espace
+// LINÉAIRE, une normale n'étant pas une couleur.
+export function texturerNormalesEau(taille = 256) {
+  const c = canvas(taille);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(taille, taille);
+  const d = img.data;
+  const houle = bruit(taille, taille, 6, 13);
+  const rides = bruit(taille, taille, 22, 47);
+  // Hauteur en un point, combinaison des deux échelles.
+  const hauteur = (x, y) => houle(x, y) * 0.72 + rides(x, y) * 0.28;
+  // Le gradient est pris par différences finies sur le champ de hauteur : la
+  // pente en X et en Y donne directement les deux premières composantes de la
+  // normale, la troisième restant dominante puisque la surface est presque
+  // plane.
+  const PAS = 1;
+  for (let y = 0; y < taille; y++) {
+    for (let x = 0; x < taille; x++) {
+      const i = (y * taille + x) * 4;
+      const gx = (hauteur(x + PAS, y) - hauteur(x - PAS, y)) * 3.2;
+      const gy = (hauteur(x, y + PAS) - hauteur(x, y - PAS)) * 3.2;
+      // Normale non normalisée puis ramenée à la longueur unité.
+      const nx = -gx, ny = -gy, nz = 1;
+      const l = Math.hypot(nx, ny, nz);
+      d[i] = Math.round(((nx / l) * 0.5 + 0.5) * 255);
+      d[i + 1] = Math.round(((ny / l) * 0.5 + 0.5) * 255);
+      d[i + 2] = Math.round(((nz / l) * 0.5 + 0.5) * 255);
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// Usure de la peinture routière. Une bande blanche neuve n'existe que le jour
+// où elle est tracée : ensuite elle s'écaille, se salit et laisse par endroits
+// transparaître l'enrobé. Cette texture module la clarté du marquage pour
+// qu'il ne se lise pas comme un trait vectoriel uniforme.
+//
+// Amplitude contenue : le marquage doit rester nettement lisible en conduite,
+// c'est lui qui cadre la voie. Il s'agit de casser l'aplat, pas d'effacer la
+// ligne.
+export function texturerUsureMarquage(taille = 128) {
+  const c = canvas(taille);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(taille, taille);
+  const d = img.data;
+  const ecaillage = bruit(taille, taille, 40, 29);
+  const salissure = bruit(taille, taille, 8, 61);
+  for (let y = 0; y < taille; y++) {
+    for (let x = 0; x < taille; x++) {
+      const i = (y * taille + x) * 4;
+      const v = 242 + (ecaillage(x, y) - 0.5) * 34 + (salissure(x, y) - 0.5) * 22;
+      d[i] = d[i + 1] = d[i + 2] = Math.max(0, Math.min(255, v));
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
 }
 
 // Enduit de façade : crépi taloché, avec de légères coulures verticales.

@@ -5,9 +5,8 @@ données cartographiques OSM et IGN BD TOPO.
 
 ## Nature du projet
 
-Projet **personnel, 100 % local**. Pas de production, pas de dépôt Git, pas
-d'utilisateur autre que Christophe. Il n'y a rien à sécuriser, aucune donnée
-personnelle, aucune surface d'attaque.
+Projet **personnel**, sans production ni utilisateur autre que Christophe. Il
+n'y a rien à sécuriser, aucune donnée personnelle, aucune surface d'attaque.
 
 Conséquences directes sur la façon de travailler ici :
 
@@ -17,7 +16,10 @@ Conséquences directes sur la façon de travailler ici :
   à l'écran, pas dans un runner
 - ne pas suggérer TypeScript, Next.js, Prisma ni Docker. Ce projet est en
   JavaScript ES modules + Vite, et le reste ainsi
-- pas de commit, pas de `git init` (non demandé)
+- le projet est **suivi en Git**, avec un dépôt distant sur GitHub
+  (`krismos64/artix-racer`). Le travail se commite sur `main`, sans branche
+  intermédiaire. Ne pas commiter de sa propre initiative : Christophe le
+  demande quand il le veut
 
 **Le seul critère de qualité est le rendu visuel du jeu.** Fidélité de la ville
 d'Artix, qualité des décors, des véhicules, des passants, de la signalisation,
@@ -83,6 +85,7 @@ roule.
 | `src/audio.js` | Synthèse moteur, bruits de roulement, musique générative |
 | `src/quality.js` | Profils graphiques et résolution dynamique |
 | `src/spatial.js` | Découpage spatial des maillages instanciés |
+| `src/touffes.js` | Touffes d'herbe instanciées autour du véhicule |
 | `src/minimap.js` | Dessin de la minicarte du HUD |
 
 ## Contraintes de rendu
@@ -157,21 +160,26 @@ Résolution dynamique sous la touche `U`. Le profil Équilibré reprend les
 valeurs qui étaient en dur auparavant : le comportement par défaut est
 inchangé.
 
+Les profils agissent réellement sur les pixels depuis le 19/08/2026 :
+`EffectComposer` gardait le ratio capté à sa construction. Tout changement de
+résolution passe par `redimComposer` (`main.js`). Mesuré : 1,00 / 2,26 / 4,02
+millions de pixels, 60 fps partout à l'arrêt.
+
+**Chantier visuel du 19/08/2026** (détail au journal) : enrobé, herbe et
+marquage refaits ; trottoirs **relevés à 14 cm** avec bordure chanfreinée ;
+façades nuancées et salies en pied, vitrages en quatre teintes avec appuis ;
+touffes d'herbe de premier plan (`touffes.js`, pool fixe dans 38 m, `alphaTest`,
+coupé en profil Performance) ; ciel avec disque solaire et nuages dans le
+shader ; eau **opaque** ; véhicules garés **ramenés de 1 400 à 880**.
+
 Performances mesurées le 18/08/2026, profil Équilibré, 2400 x 1024, ombres et
 occlusion ambiante activées : **16,9 ms en roulage (59,2 fps)**, 16,6 ms à
 l'arrêt. Les trois profils tiennent 60 fps à l'arrêt, Qualité compris alors
 qu'il rend quatre fois plus de pixels que Performance : à l'arrêt, la
 résolution n'est pas le facteur limitant.
 
-Trois pièges de mesure, tous rencontrés :
-
-- **mesurer sur une page sans sonde.** Un chronomètre GPU par requête ou une
-  enveloppe sur `composer.render` coûtent 3 ms et font conclure à 45 fps là où
-  le jeu en tient 60. Le compteur du HUD dit vrai
-- **comparer à vitesse égale.** Un roulage à 51 km/h contre 72,6 fait paraître
-  un gain deux fois plus grand qu'il n'est
-- relever `renderer.domElement.width` à chaque série : le `setPixelRatio` peut
-  porter le rendu bien au-delà de la fenêtre sans que rien ne le signale
+Trois pièges de mesure sont détaillés au journal : mesurer sans sonde, comparer
+à vitesse inégale, et oublier de relever `renderer.domElement.width`.
 
 ### Restant à traiter
 
@@ -180,9 +188,12 @@ Trois pièges de mesure, tous rencontrés :
    spatial comme par la suppression des allocations. C'est ce qui se sent le
    plus au volant, la médiane étant déjà bonne. Pistes non vérifiées : la
    reconstruction de la carte d'ombre, et les `InstancedMesh` non découpés
-   (5 600 instances de fenêtres, 2 800 de mobilier)
-2. **Rapier consomme 18,2 % du temps en roulage**, avec 1 243 colliders
-   statiques pour 4 corps rigides. Optimisable, mais toucher à la physique
+   (2 800 instances de mobilier). Les fenêtres, elles, sont un maillage fusionné
+   de 25 568 baies, pas des instances
+2. **Rapier consomme 18,2 % du temps en roulage**, mesuré quand la commune
+   portait 1 400 véhicules garés. Ils ne sont plus que 880 depuis le
+   19/08/2026, donc autant de colliders statiques en moins : le poste mérite
+   d'être remesuré avant d'y toucher. Optimisable, mais toucher à la physique
    risque de modifier le comportement de conduite
 3. **Panoramax plafonne à 46,9 % des bâtiments** (1 661 sur 3 542) : les autres
    sont en fond de parcelle, hors de vue depuis la voirie. Aucun traitement ne
@@ -191,24 +202,29 @@ Trois pièges de mesure, tous rencontrés :
    glTF-Transform et ne porte plus ni auteur ni licence ; le crédit de l'écran
    d'accueil dit « attribution à compléter » en attendant. Il est désormais
    compressé en Meshopt (1,65 Mo contre 7,54)
-5. **Chaussée à 0,281 de la clarté d'une façade**, pour une cible
-   photographique de 0,47. Pousser plus loin la rendrait plus claire que le
-   trottoir : à trancher à l'oeil si le sujet revient
+5. **Chaussée portée de 0,281 à 0,376** de la clarté d'une façade le
+   19/08/2026, cible 0,47. La crainte de dépasser le trottoir était fondée :
+   un premier essai l'y portait à 1,26 fois. Détail au journal
 6. **Pertes silencieuses entre donnée et rendu** : 328 arbres plantés sur 415
    relevés, 5 panneaux de priorité, 45 équipements sur 102. Détail et causes
    dans le journal
 7. **Les 57 panonceaux d'équipements n'existent pas dans la rue** : choix de
-   lisibilité, à trancher si la fidélité prime
+   lisibilité, à trancher si la fidélité prime. Leur écart au commerce annoncé
+   est borné à 14 m depuis le 19/08/2026, médiane 9,2 m
 8. **Caméra intérieure dégradée** depuis le passage à l'Audi, qui n'a pas
    d'habitacle. Jamais vérifiée à l'écran
 
 ### Bâtiments modélisés un par un
 
-Cinq à ce jour, tous dans `landmarks.js` : la Mairie, l'immeuble d'angle
+Six à ce jour, tous dans `landmarks.js` : la Mairie, l'immeuble d'angle
 Vapozen / Centre de Beauté Fanny, l'immeuble « Au Comptoir », l'église
-Saint-Pierre et la barre de logements « Pyrénées » (avenue Edmond Rostand). La
+Saint-Pierre, la barre de logements « Pyrénées » et le Leclerc Express. La
 méthode est rodée : emprise et cap depuis la BD TOPO ou le cadastre OSM par
 analyse en composantes principales, hauteurs depuis la photographie.
+
+**Les enseignes d'OSM peuvent être périmées** : la table `ENSEIGNES_ACTUELLES`
+de `poi.js` les corrige sur constat de terrain, et `ENSEIGNES_FACADE`
+(`landmarks.js`) pose un panneau sans remodéliser le bâtiment.
 
 Un repère qui porte des éléments répétés (baies d'immeuble, contreforts) doit
 les **instancier** : la barre Pyrénées coûtait 4,5 fps avec ses 192 fenêtres

@@ -22,6 +22,7 @@ import { AudioEngine } from './audio.js';
 import { Qualite, PROFILS, PROFIL_DEFAUT } from './quality.js';
 import { GrilleInstances } from './spatial.js';
 import { Minicarte } from './minimap.js';
+import { Touffes } from './touffes.js';
 
 // Modèle du véhicule piloté.
 //
@@ -217,22 +218,95 @@ async function init() {
     uniforms: {
       hautCiel: { value: new THREE.Color(0x4a86c8) },
       basCiel: { value: new THREE.Color(0xc9dcee) },
+      // Direction du soleil, tenue à jour par le cycle jour/nuit. Elle porte
+      // le disque solaire et le halo qui l'entoure, tous deux dessinés dans ce
+      // shader plutôt qu'ajoutés en géométrie : un dôme les rend gratuitement.
+      soleilDir: { value: new THREE.Vector3(0.5, 0.5, 0.3) },
+      // Teinte du disque et de son halo, plus chaude à l'horizon.
+      soleilTeinte: { value: new THREE.Color(0xfff0d8) },
+      // Force du halo, nulle une fois le soleil couché.
+      soleilForce: { value: 1 },
+      // Densité des nuages. Ils restent très discrets : un ciel de bourg
+      // béarnais est le plus souvent voilé, jamais chargé de cumulus dessinés.
+      nuages: { value: 0.5 },
+      // Défilement lent des nuages, pour qu'un arrêt prolongé ne fige pas le
+      // ciel. Une valeur, pas une horloge : la boucle l'avance elle-même.
+      derive: { value: 0 },
     },
     vertexShader: `
       varying float hauteur;
+      varying vec3 dir;
       void main() {
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        hauteur = normalize(position).y;
+        dir = normalize(position);
+        hauteur = dir.y;
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: `
       uniform vec3 hautCiel;
       uniform vec3 basCiel;
+      uniform vec3 soleilDir;
+      uniform vec3 soleilTeinte;
+      uniform float soleilForce;
+      uniform float nuages;
+      uniform float derive;
       varying float hauteur;
+      varying vec3 dir;
+
+      // Bruit de valeur à trois octaves. Il ne sert qu'aux voiles nuageux,
+      // dont on ne veut que la basse fréquence : trois octaves suffisent, et
+      // au-delà le voile se met à grésiller quand la caméra tourne.
+      float alea(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+      }
+      float bruitVal(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(alea(i), alea(i + vec2(1.0, 0.0)), u.x),
+                   mix(alea(i + vec2(0.0, 1.0)), alea(i + vec2(1.0, 1.0)), u.x), u.y);
+      }
+      float voile(vec2 p) {
+        return bruitVal(p) * 0.55 + bruitVal(p * 2.3) * 0.30 + bruitVal(p * 4.7) * 0.15;
+      }
+
       void main() {
         // Dégradé resserré près de l'horizon, comme un vrai ciel.
         float t = clamp(pow(max(hauteur, 0.0), 0.55), 0.0, 1.0);
-        gl_FragColor = vec4(mix(basCiel, hautCiel, t), 1.0);
+        vec3 couleur = mix(basCiel, hautCiel, t);
+
+        // Brume d'horizon : l'air épaissit vers le bas et délave la teinte.
+        // C'est elle qui raccorde le ciel au brouillard de la scène, sans quoi
+        // la ligne d'horizon tranche net entre les deux.
+        float brume = pow(1.0 - clamp(abs(hauteur), 0.0, 1.0), 5.0);
+        couleur = mix(couleur, basCiel * 1.06 + 0.03, brume * 0.55);
+
+        // Voiles nuageux. Projection de la direction sur un plan horizontal :
+        // les nuages s'étirent près de l'horizon comme vus par la tranche, ce
+        // qu'un placage sphérique ne donne pas. Le facteur est borné pour que
+        // la projection n'explose pas au ras de l'horizon.
+        float ph = max(abs(hauteur), 0.12);
+        vec2 uv = dir.xz / ph * 0.55 + vec2(derive, derive * 0.35);
+        float n = voile(uv);
+        // Seuil haut et transition large : on cherche un ciel voilé, pas des
+        // masses dessinées. Le voile s'efface près de l'horizon, où il se
+        // confondrait avec la brume.
+        float masse = smoothstep(0.52, 0.86, n) * nuages
+          * smoothstep(0.04, 0.30, hauteur);
+        // Le nuage prend la teinte du ciel éclaircie, jamais un blanc pur :
+        // au coucher, un nuage blanc sur un ciel orange trahit le placage.
+        vec3 tonNuage = mix(couleur, soleilTeinte, 0.22) * 1.16 + 0.02;
+        couleur = mix(couleur, tonNuage, masse * 0.55);
+
+        // Disque solaire et son halo. Le halo est large et faible, le disque
+        // étroit et vif : c'est le rapport entre les deux qui donne un soleil
+        // plutôt qu'une tache. Les deux s'éteignent avec soleilForce, sinon
+        // un disque resterait visible après le coucher.
+        float cosA = dot(dir, soleilDir);
+        float halo = pow(max(cosA, 0.0), 220.0);
+        float disque = smoothstep(0.9993, 0.9997, cosA);
+        couleur += soleilTeinte * (halo * 0.55 + disque * 1.7) * soleilForce;
+
+        gl_FragColor = vec4(couleur, 1.0);
       }`,
   });
   const sky = new THREE.Mesh(skyGeo, skyMat);
@@ -381,20 +455,40 @@ async function init() {
     // renderer, y compris leurs variations au fil de la journée : ces réglages
     // restent portés par le renderer et ne doivent pas être neutralisés ici.
     composer.addPass(new OutputPass());
-    window.addEventListener('resize', () => {
+
+    // Redimensionnement complet de la chaîne de passes.
+    //
+    // `EffectComposer` capture le pixel ratio du renderer À SA CONSTRUCTION et
+    // le garde dans `_pixelRatio`. Changer `renderer.setPixelRatio()` ensuite,
+    // ce que font les profils graphiques et la résolution dynamique, ne
+    // touchait donc PAS aux cibles du composer : le profil Performance
+    // continuait de calculer autant de pixels qu'Équilibré, et le profil
+    // Qualité pas un de plus. Seule la copie finale à l'écran changeait de
+    // facteur d'échelle, ce qui explique qu'aucun des deux ne se voyait à
+    // l'écran ni au compteur.
+    //
+    // `composer.setPixelRatio()` réaligne les cibles, puis rappelle
+    // `setSize` : il faut donc réimposer l'échelle du GTAO après, sans quoi la
+    // passe repasse en pleine résolution.
+    const redimComposer = () => {
+      // `setPixelRatio` appelle `setSize(_width, _height)` avec les dernières
+      // dimensions connues : on les rafraîchit d'abord, sinon un changement de
+      // profil après un redimensionnement de fenêtre repartirait de l'ancienne
+      // taille et l'image sortirait étirée.
       composer.setSize(innerWidth, innerHeight);
-      // Même raison qu'à l'ajout : `composer.setSize` repasse chaque passe en
-      // pleine résolution. Sans ce rappel, GTAO y reviendrait au premier
-      // redimensionnement et le gain serait perdu sans rien signaler à l'écran.
+      composer.setPixelRatio(renderer.getPixelRatio());
+      // SMAA reçoit ses dimensions par ce `setSize` en cascade, déjà
+      // multipliées par le pixel ratio : rien de plus à faire pour lui. GTAO,
+      // lui, doit revenir à son échelle réduite, que `setSize` vient d'écraser.
       redimGtao();
       majContours();
-    });
+    };
+    window.addEventListener('resize', redimComposer);
     // Exposé pour la boucle de jeu et les bascules au clavier. Fusion et non
     // remplacement : `smaa` y a déjà été déposé plus haut.
-    // `redimGtao` et `majContours` sont exposés pour que le module de qualité
-    // puisse redimensionner les passes après un changement de profil ou un
-    // ajustement de résolution dynamique : elles allouent leurs cibles d'après
-    // le pixel ratio et resteraient sinon dimensionnées pour l'ancienne valeur.
+    // `redimComposer` est exposé pour que le module de qualité redimensionne
+    // toute la chaîne après un changement de profil ou un ajustement de
+    // résolution dynamique.
     const setEchelleGtao = (e) => {
       GTAO_ECHELLE = e;
       redimGtao();
@@ -402,7 +496,7 @@ async function init() {
     };
     composer.userData = {
       ...(composer.userData ?? {}),
-      contours, majContours, redimGtao, setEchelleGtao,
+      contours, majContours, redimGtao, redimComposer, setEchelleGtao,
     };
     diag('Occlusion ambiante : active');
   } catch (err) {
@@ -475,7 +569,7 @@ async function init() {
 
   await progress(42, "Construction de la ville (3481 bâtiments)...");
   const { collisionTris, group: cityGroup, foyers, lampHeads, placesEpi,
-    instances: instancesVegetation } = buildWorld(scene, data);
+    instances: instancesVegetation, vitrages, eau } = buildWorld(scene, data);
 
   // Éclairage public : les lanternes projettent réellement de la lumière sur
   // la chaussée à la tombée du jour.
@@ -530,7 +624,12 @@ async function init() {
     scene, data, data.terrain ?? null, ROAD_Y, data.poi?.passages ?? [], spawn,
     [...(parkings.places ?? []), ...(placesEpi ?? [])],
   );
-  if (garees.effectif) diag(`Véhicules stationnés : ${garees.effectif}`);
+  if (garees.effectif) {
+    diag(`Véhicules stationnés : ${garees.effectif}`
+      + (garees.avant
+        ? ` (${garees.avant} places trouvées, ${garees.apresEclaircissement} après éclaircissement)`
+        : ''));
+  }
 
   // Passants : ils marchent sur les cheminements piétons réels du bourg,
   // s'arrêtent pour discuter et donnent vie aux rues.
@@ -577,12 +676,11 @@ async function init() {
     soleil: sun,
     eclairage,
     get smaa() { return composer?.userData?.smaa ?? null; },
-    // Redimensionne les passes d'écran après un changement de résolution.
-    onResolution: () => {
-      composer?.setSize(innerWidth, innerHeight);
-      composer?.userData?.redimGtao?.();
-      composer?.userData?.majContours?.();
-    },
+    // Redimensionne toute la chaîne de passes après un changement de
+    // résolution : sans la remise à niveau du pixel ratio du composer, le
+    // renderer change d'échelle mais les cibles de rendu, elles, ne bougent
+    // pas et le profil choisi ne calcule ni plus ni moins de pixels.
+    onResolution: () => composer?.userData?.redimComposer?.(),
     majGtao: (e) => composer?.userData?.setEchelleGtao?.(e),
     // Appliqué à chaque bascule de profil : ce qui ne se règle pas sur le
     // renderer lui-même.
@@ -592,7 +690,11 @@ async function init() {
         if (o.isMesh && !o.userData.noShadowCast
           && o.geometry.attributes.position.count > 5000) o.castShadow = p.ombres;
       });
-      scene.traverse((o) => { if (o.isMesh) o.material.needsUpdate = true; });
+      // Pas de `needsUpdate` en masse sur les matériaux de la scène : Three.js
+      // recompile déjà les programmes concernés quand `shadowMap.enabled`
+      // change, et forcer les quelque cent matériaux de la ville provoquait
+      // une recompilation complète, donc une saccade d'une seconde à chaque
+      // bascule de profil.
       if (p.ombres) sun.shadow.needsUpdate = true;
       pietons?.setVisibles?.(p.passants);
       el('shadow-state').textContent = p.ombres ? 'ACTIVÉES' : 'DÉSACTIVÉES';
@@ -877,8 +979,10 @@ async function init() {
 
   // Nom de la rue la plus proche, pour l'affichage.
   let streetTimer = 0;
-  function nearestStreet() {
-    const p = car.position;
+  // La position est passée par l'appelant plutôt que relue : `car.position`
+  // construit un Vector3 à chaque accès, et cette fonction tourne dans la
+  // boucle de jeu.
+  function nearestStreet(p) {
     const cx = Math.floor(p.x / CELL), cz = Math.floor(p.z / CELL);
     let best = null, bestD = 45 * 45;
     for (let ox = -1; ox <= 1; ox++) {
@@ -928,8 +1032,8 @@ async function init() {
   }
 
   // Détection du revêtement sous la voiture (route ou bas-côté).
-  function checkOnRoad() {
-    const p = car.position;
+  // Même raison que `nearestStreet` : la position vient de l'appelant.
+  function checkOnRoad(p) {
     const cx = Math.floor(p.x / CELL), cz = Math.floor(p.z / CELL);
     // On balaie la cellule courante et ses voisines.
     for (let ox = -1; ox <= 1; ox++) {
@@ -949,6 +1053,38 @@ async function init() {
     }
     return false;
   }
+
+  // --- Touffes d'herbe de premier plan ------------------------------------
+  // Le sol porte une texture, ce qui suffit à distance mais laisse le bas-côté
+  // parfaitement lisse dès qu'on le longe. Un pool d'instances de taille fixe
+  // suit le véhicule et replante autour de lui, sans rien créer en cours de
+  // partie.
+  //
+  // L'herbe s'écarte de la chaussée et de ses abords : la marge est plus large
+  // que celle de la détection de revêtement, pour laisser la place à
+  // l'accotement et au trottoir sans que des brins ne poussent au travers.
+  const herbePlantable = (x, z) => {
+    const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oz = -1; oz <= 1; oz++) {
+        const segs = roadGrid.get(`${cx + ox},${cz + oz}`);
+        if (!segs) continue;
+        for (const seg of segs) {
+          const dx = seg.x2 - seg.x1, dz = seg.z2 - seg.z1;
+          const len2 = dx * dx + dz * dz;
+          if (len2 < 1e-6) continue;
+          let t = ((x - seg.x1) * dx + (z - seg.z1) * dz) / len2;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const ddx = x - (seg.x1 + dx * t), ddz = z - (seg.z1 + dz * t);
+          if (ddx * ddx + ddz * ddz < (seg.w / 2 + 2.6) ** 2) return false;
+        }
+      }
+    }
+    return true;
+  };
+  const touffes = new Touffes(scene, data.terrain ?? null, ROAD_Y, {
+    estPlantable: herbePlantable,
+  });
 
   // --- Traces de pneus ----------------------------------------------------
   const skidGeo = new THREE.PlaneGeometry(0.24, 0.6);
@@ -995,6 +1131,19 @@ async function init() {
   const skySunset = new THREE.Color(0xe89a5c);
   const skyNight = new THREE.Color(0x0a1020);
 
+  // Couleurs de mélange du cycle, allouées une fois. `updateSky` tourne à
+  // chaque frame : y construire cinq `Color` revenait à confier au ramasse-
+  // miettes trois cents objets par seconde, pour des valeurs constantes.
+  const CIEL_BLANC = new THREE.Color(0xffffff);
+  const CIEL_ZENITH = new THREE.Color(0x1c4c86);
+  const AMBIANCE_NUIT = new THREE.Color(0x4a5a7e);
+  const SOL_NUIT = new THREE.Color(0x6b5335);
+  // Teintes du disque solaire, du plein jour au ras de l'horizon.
+  const SOLEIL_HAUT = new THREE.Color(0xfff4e2);
+  const SOLEIL_BAS = new THREE.Color(0xff9d4a);
+  // Couleur de ciel courante, recalculée en place à chaque frame.
+  const cielCourant = new THREE.Color();
+
   // Décalage lumière/véhicule, recalculé selon l'heure. La lumière directionnelle
   // n'a pas de position physique : seul ce vecteur définit la direction du soleil.
   const sunOffset = new THREE.Vector3(140, 220, 90);
@@ -1014,20 +1163,43 @@ async function init() {
     sunOffset.set(Math.cos(sunAngle) * 260, Math.max(34, elev * 155), 130);
     sun.intensity = Math.max(0, elev) * 3.6;
 
-    let sky;
-    if (elev > 0.25) sky = skyDay.clone();
+    // Teinte de ciel du moment, calculée EN PLACE dans `cielCourant` : les
+    // `clone()` d'avant allouaient une couleur par frame, et les `new Color`
+    // des mélanges trois de plus.
+    const sky = cielCourant;
+    if (elev > 0.25) sky.copy(skyDay);
     else if (elev > -0.08) {
       const t = (elev + 0.08) / 0.33;
-      sky = skyNight.clone().lerp(skySunset, Math.min(1, t * 1.6)).lerp(skyDay, Math.max(0, t - 0.45) * 1.8);
-    } else sky = skyNight.clone();
+      sky.copy(skyNight)
+        .lerp(skySunset, Math.min(1, t * 1.6))
+        .lerp(skyDay, Math.max(0, t - 0.45) * 1.8);
+    } else sky.copy(skyNight);
 
-    scene.background = sky;
-    scene.fog.color = sky;
+    // `scene.background` et `fog.color` pointent désormais le MÊME objet, qui
+    // est réécrit chaque frame : les affecter suffit une fois pour toutes,
+    // Three.js lisant la valeur au moment du rendu.
+    if (scene.background !== sky) scene.background = sky;
+    if (scene.fog.color !== sky) scene.fog.color = sky;
     // Le dôme suit le cycle : zénith plus soutenu que l'horizon, l'écart se
     // resserrant à mesure que le soleil descend.
     const ecart = 0.45 + Math.max(0, elev) * 0.35;
-    skyMat.uniforms.basCiel.value.copy(sky).lerp(new THREE.Color(0xffffff), 0.22 * ecart);
-    skyMat.uniforms.hautCiel.value.copy(sky).lerp(new THREE.Color(0x1c4c86), 0.55 * ecart);
+    skyMat.uniforms.basCiel.value.copy(sky).lerp(CIEL_BLANC, 0.22 * ecart);
+    skyMat.uniforms.hautCiel.value.copy(sky).lerp(CIEL_ZENITH, 0.55 * ecart);
+
+    // Disque solaire : sa direction est celle de la lumière directionnelle,
+    // normalisée. Le dôme étant centré sur le véhicule, `sunOffset` donne
+    // directement la direction vue depuis lui.
+    skyMat.uniforms.soleilDir.value.copy(sunOffset).normalize();
+    // Plus le soleil descend, plus il rougit : l'atmosphère traversée filtre
+    // le bleu. La bascule se fait sur les 25 premiers degrés d'élévation.
+    const bas = 1 - Math.min(1, Math.max(0, elev) / 0.42);
+    skyMat.uniforms.soleilTeinte.value.copy(SOLEIL_HAUT).lerp(SOLEIL_BAS, bas);
+    // Extinction sous l'horizon : sans elle, un disque resterait accroché au
+    // dôme toute la nuit.
+    skyMat.uniforms.soleilForce.value = Math.max(0, Math.min(1, (elev + 0.06) / 0.14));
+    // Les nuages s'effacent la nuit, faute de quoi ils ressortent en gris
+    // clair sur un ciel presque noir.
+    skyMat.uniforms.nuages.value = 0.30 + Math.max(0, elev) * 0.34;
     // Ambiance nocturne. Un plancher à 0,3 avec la couleur du ciel de nuit
     // (presque noire) laissait la ville dans le noir absolu dès le soleil
     // couché : seules les deux ou trois lanternes du pool éclairaient encore
@@ -1042,10 +1214,10 @@ async function init() {
     // un ciel à 0x0a1020 ne renvoie aucune lumière exploitable. On bascule vers
     // un bleu nuit soutenu, la teinte que prend une rue sous éclairage public.
     const nuitProfonde = THREE.MathUtils.clamp((0.10 - elev) / 0.16, 0, 1);
-    hemi.color.copy(sky).lerp(new THREE.Color(0x4a5a7e), nuitProfonde * 0.85);
+    hemi.color.copy(sky).lerp(AMBIANCE_NUIT, nuitProfonde * 0.85);
     // Le sol renvoie la lumière orangée des lanternes plutôt que sa teinte
     // diurne : c'est ce rebond chaud qui fait lire une chaussée de nuit.
-    hemi.groundColor.copy(SOL_JOUR).lerp(new THREE.Color(0x6b5335), nuitProfonde);
+    hemi.groundColor.copy(SOL_JOUR).lerp(SOL_NUIT, nuitProfonde);
     sun.color.setHSL(0.09, 0.42, 0.5 + Math.max(0, elev) * 0.35);
 
     const night = elev < 0.06;
@@ -1060,12 +1232,24 @@ async function init() {
     // Pleine puissance sous l'horizon, extinction complète en plein jour.
     nuitFacteur = THREE.MathUtils.clamp((0.10 - elev) / 0.16, 0, 1);
     if (lampHeads) lampHeads.emissiveIntensity = 0.15 + nuitFacteur * 2.6;
+    // Fenêtres éclairées : elles s'allument avec les lampadaires. L'émission
+    // reprend la couleur de sommet du vitrage, donc seules les baies déclarées
+    // chaudes à la construction s'allument réellement ; les autres, très
+    // sombres, n'émettent rien de visible. Une seule écriture par frame sur un
+    // matériau partagé, sans recompilation.
+    if (vitrages) vitrages.emissiveIntensity = nuitFacteur * 1.5;
 
     return night;
   }
 
   // Intensité de l'éclairage public, de 0 (jour) à 1 (nuit noire).
   let nuitFacteur = 0;
+
+  // Commandes du véhicule, objet unique réécrit à chaque frame.
+  const input = {
+    throttle: 0, brake: 0, steer: 0, handbrake: 0,
+    shiftUp: false, shiftDown: false,
+  };
 
   // --- Détection de choc --------------------------------------------------
   let lastVel = new THREE.Vector3();
@@ -1155,21 +1339,22 @@ async function init() {
     if (!paused) {
       timeOfDay = (timeOfDay + timeSpeed * dt) % 24;
 
-      const input = {
-        throttle: down('arrowup', 'z', 'w') ? 1 : 0,
-        brake: down('arrowdown', 's') ? 1 : 0,
-        // Repère Three.js : Y pointe vers le haut, une rotation positive
-        // autour de Y tourne vers la gauche vue du dessus. La physique
-        // applique `-steerAngle` aux roues, donc un braquage à gauche demande
-        // une valeur négative ici.
-        steer: (down('arrowright', 'd') ? 1 : 0) - (down('arrowleft', 'q', 'a') ? 1 : 0),
-        handbrake: down(' ') ? 1 : 0,
-        shiftUp: !car.autoGearbox && tapped('e'),
-        shiftDown: !car.autoGearbox && tapped('x'),
-      };
+      // Commandes réécrites dans un objet réutilisé : un littéral par frame
+      // n'est pas cher, mais c'est une allocation de plus dans une boucle qui
+      // n'en veut aucune.
+      input.throttle = down('arrowup', 'z', 'w') ? 1 : 0;
+      input.brake = down('arrowdown', 's') ? 1 : 0;
+      // Repère Three.js : Y pointe vers le haut, une rotation positive autour
+      // de Y tourne vers la gauche vue du dessus. La physique applique
+      // `-steerAngle` aux roues, donc un braquage à gauche demande une valeur
+      // négative ici.
+      input.steer = (down('arrowright', 'd') ? 1 : 0) - (down('arrowleft', 'q', 'a') ? 1 : 0);
+      input.handbrake = down(' ') ? 1 : 0;
+      input.shiftUp = !car.autoGearbox && tapped('e');
+      input.shiftDown = !car.autoGearbox && tapped('x');
 
       const prevGear = car.gear;
-      car.onRoad = checkOnRoad();
+      car.onRoad = checkOnRoad(car.lirePosition(posTmp));
 
       // Pas de temps fixe : la physique reste stable quel que soit le framerate.
       accumulator += dt;
@@ -1316,6 +1501,17 @@ async function init() {
     // Le dôme de ciel accompagne le véhicule : il doit rester à distance
     // constante, sinon on finirait par en sortir.
     sky.position.copy(posVoiture);
+    // Défilement des nuages : très lent, de l'ordre d'un tour de motif en
+    // quelques minutes. Assez pour qu'un arrêt prolongé ne fige pas le ciel,
+    // assez peu pour qu'on ne le voie pas bouger en roulant.
+    skyMat.uniforms.derive.value += dt * 0.0035;
+    // Courant : les normales de la nappe glissent très lentement dans le sens
+    // des X. Décaler l'offset d'une texture ne coûte rien, là où animer la
+    // géométrie de l'eau supposerait de réécrire ses sommets chaque frame.
+    if (eau?.normalMap) {
+      eau.normalMap.offset.x += dt * 0.0055;
+      eau.normalMap.offset.y += dt * 0.0022;
+    }
 
     const night = updateSky();
 
@@ -1327,6 +1523,10 @@ async function init() {
     // se réordonne que lorsque le véhicule a franchi une fraction de cellule,
     // le tri restant valable entre-temps.
     grilleVegetation?.maj(posVoiture.x, posVoiture.z, qualite.profil.distanceDetails);
+    // Touffes de premier plan : coupées sur le profil Performance, où le
+    // budget va d'abord à la ville elle-même. La replantation n'a réellement
+    // lieu qu'au franchissement d'une cellule, soit tous les 2,4 m.
+    touffes.maj(posVoiture.x, posVoiture.z, qualite.profil.touffes);
     el('night-badge').classList.toggle('hidden', !night);
 
     // --- Caméra -------------------------------------------------------------
@@ -1438,7 +1638,7 @@ async function init() {
     streetTimer -= dt;
     if (streetTimer <= 0) {
       streetTimer = 0.5;
-      const s = nearestStreet();
+      const s = nearestStreet(posTmp);
       streetTxt.textContent = s?.name ?? (car.onRoad ? 'Voie communale' : 'Hors chaussée');
       drawMinimap();
 
@@ -1469,7 +1669,9 @@ async function init() {
       // Lieu remarquable à proximité : mairie, école, commerce, équipement
       // sportif. Le joueur voit ainsi devant quoi il passe.
       if (signage?.panneaux?.length) {
-        const p = car.position;
+        // Position déjà lue pour cette frame : `car.position` allouerait un
+        // Vector3 de plus à chaque passage.
+        const p = posTmp;
         let proche = null, dMin = 55;
         for (const pan of signage.panneaux) {
           const d = Math.hypot(pan.x - p.x, pan.z - p.z);

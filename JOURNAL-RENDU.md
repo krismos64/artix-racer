@@ -98,6 +98,270 @@ freinage. Trajectoire identique au chiffre près, position, vitesse, régime,
 rapport et braquage compris, jusqu'à l'odomètre final de 118,313 m. C'est
 ce test qui permet de toucher à `car.js` sans rien casser.
 
+## Chantier visuel : routes, trottoirs, façades, herbe, ciel, eau (19/08/2026)
+
+Demande d'améliorer la qualité visuelle générale en gardant 60 fps. Neuf postes
+traités, tous constatés à l'écran avant d'être déclarés faits.
+
+**Routes.** L'enrobé posait un bruit blanc par pixel sur un aplat, plus deux
+bandes sombres à bords francs. Deux défauts : le bruit blanc se lit comme du
+grain de capteur, et les bandes, alignées sur la texture, se répétaient tous les
+quatre mètres. Remplacé par quatre échelles de bruit superposées (gravillon,
+reprises d'enrobé, ondulation lente, roulement à bords fondus), plus une
+`roughnessMap` : les traces de roue sont polies par le trafic, les bords de voie
+restent grenus, ce qu'un scalaire ne peut pas rendre.
+
+**Trottoirs.** Ils étaient de simples bandes plates au ras de la chaussée. Ils
+sont désormais relevés de 14 cm (hauteur d'une bordure T2), avec caniveau en
+contrebas de 3 cm et bordure chanfreinée en maillage distinct. C'est le
+changement de matériau, plus que la hauteur, qui rend la ligne lisible de loin.
+
+**Façades.** Variation de teinte par bâtiment tirée du centroïde, donc stable
+d'un lancement à l'autre, et salissure de pied sur les 86 premiers centimètres.
+La façade est coupée en deux bandes à cette hauteur : sans ce sommet
+intermédiaire, le dégradé serait interpolé sur toute la hauteur du mur, donc
+invisible sur un bâtiment haut.
+
+**Fenêtres.** Quatre teintes de vitrage portées par la couleur de sommet, plus
+des appuis de fenêtre et quelques baies éclairées la nuit, dont l'émission
+reprend la carte de couleur. Restées **opaques** : plusieurs milliers de baies
+transparentes entreraient dans le tri des faces transparentes pour un gain nul.
+
+**Herbe.** La texture semait 9 000 carrés de 2 px au hasard ; à la répétition de
+60, un carré mesurait dix centimètres au sol, donc invisible en conduite.
+Refaite en quatre échelles dont les deux plus lentes portent la lecture, avec
+une teinte qui jaunit avec la clarté : un simple gris éclairci se lit comme une
+carte de gris, pas comme un pré.
+
+**Touffes de premier plan** (`touffes.js`) : pool d'instances de taille fixe,
+réparties sur une grille locale et replantées au franchissement d'une cellule de
+2,4 m. Rien n'est créé ni détruit en cours de partie, et deux passages au même
+endroit donnent la même herbe. Découpage par `alphaTest` à 0,45, jamais
+`transparent` : le fragment est rejeté, la touffe reste opaque et se trie comme
+le reste.
+
+**Ciel.** Disque solaire, halo, brume d'horizon et voiles nuageux ajoutés dans
+le fragment shader du dôme, donc gratuits en géométrie. La teinte du soleil
+rougit sur les 25 premiers degrés d'élévation, et le disque s'éteint sous
+l'horizon, sans quoi il resterait accroché au dôme toute la nuit.
+
+**Eau.** Passée d'`opacity: 0.82` à opaque. La transparence la faisait passer
+par le tri des faces transparentes : selon l'angle, la nappe se dessinait avant
+ou après le terrain qu'elle borde, et le pont apparaissait au travers. Un
+ruisseau du Béarn n'est de toute façon pas limpide. Le relief vient d'une carte
+de normales dont l'offset dérive très lentement.
+
+**Allocations.** `updateSky` construisait cinq `Color` par frame, soit trois
+cents objets par seconde pour des valeurs constantes. Toutes hissées hors de la
+boucle. Les trois derniers `car.position` de la boucle, qui allouent un
+`Vector3` à chaque accès, sont remplacés par la position déjà lue.
+
+**Mesure finale**, trois profils, à l'arrêt, résolution dynamique coupée :
+
+| Profil | Pixels | Médiane | p95 |
+| --- | --- | --- | --- |
+| Performance | 1,00 M | 16,7 ms | 17,3 ms |
+| Équilibré | 2,26 M | 16,6 ms | 18,2 ms |
+| Qualité | 4,02 M | 16,7 ms | 17,5 ms |
+
+60 fps partout, ce qui confirme la conclusion du chantier précédent : à
+l'arrêt, la résolution n'est pas le facteur limitant.
+
+## Les panonceaux d'équipement étaient plantés trop loin (19/08/2026)
+
+Signalé en marge du chantier des enseignes : le panonceau du commerce flottait
+au milieu de son propre parking, détaché du bâtiment qu'il annonce.
+
+**Le placement n'était pas faux, il était incomplet.** `surAccotement` plante
+le panneau au bord de la voie la plus proche, ce qui est juste pour un panneau
+de police : son nœud OSM est déjà en bordure, l'écart mesuré n'est que
+l'imprécision du relevé. Mais le nœud d'un ÉQUIPEMENT est au centre de son
+bâtiment. Sur un commerce en fond de parcelle, la voie desservante est à vingt
+mètres, et le panneau s'y plantait, correct du point de vue de la voirie mais
+rattaché à rien visuellement.
+
+Mesuré sur le cas signalé : **20,4 m** entre le commerce et sa voie.
+
+**Correction** : l'écart panneau-commerce est borné à 14 m. Le panneau reste
+sur l'accotement, son cap est inchangé, il est seulement ramené vers le lieu
+qu'il annonce. 14 m parce que le plus gros bâtiment signalé de la commune fait
+26 m de large, soit 13 m depuis son centre : en dessous, le panneau finirait
+dans les murs.
+
+**Résultat mesuré sur les 57 équipements** : écart médian de 9,2 m, et 3 cas
+au-delà de 14 m, tous des équipements dont aucun panneau n'a été posé
+(`!pos.trouve`) et dont la plaque la plus proche appartient à un autre
+commerce. Le cas signalé passe de 20,4 à 14,0 m.
+
+**Fausse piste écartée** : renoncer à poser le panneau au-delà d'une portée
+plus courte. Un paramètre `porteeMax` avait été ajouté pour cela, puis retiré :
+il aurait fait disparaître les panneaux au lieu de les recaler, alors que le
+défaut n'est pas la présence du panneau mais sa distance.
+
+## Leclerc Express et Loto Tyche : deux enseignes changées (19/08/2026)
+
+Demande de mieux modéliser le supermarché. La photo fournie était une capture
+Street View : **source écartée**, les conditions d'utilisation de Google
+interdisant d'en dériver des reproductions, y compris en usage privé. Le
+chantier a donc été mené sur les seules données déjà téléchargées, OSM et BD
+TOPO, ce qui a suffi.
+
+**Erreur commise en chemin, et c'est la leçon.** OSM porte deux supermarchés
+au centre : un « Intermarché » (way 63685613) et un « Leader Price »
+(way 63688776). Aucun Leclerc. J'ai supposé que le Leader Price était devenu le
+Leclerc Express et modélisé le mauvais bâtiment. Christophe a corrigé : le
+Leclerc a remplacé l'**Intermarché**, et l'ancien Leader Price abrite
+aujourd'hui **Loto Tyche**.
+
+C'est exactement le piège déjà consigné pour les sens interdits : *un objet
+déduit reste faux s'il est mal placé*. Le tag de départ était réel, la
+déduction ne l'était pas.
+
+**Ce qui est posé, après correction :**
+
+| Bâtiment | OSM | Réel | Traitement |
+| --- | --- | --- | --- |
+| way 63685613, index 1128 | Intermarché | Leclerc Express | repère modélisé |
+| way 63688776, index 648 | Leader Price | Loto Tyche | enseigne en façade |
+
+Le Leclerc Express (974 m², 42,9 x 26,5 m, cap 10,4 degrés, 5 m de haut) devient
+le sixième repère de `landmarks.js` : acrotère, vitrine continue sous auvent,
+enseigne sur bandeau et deux panonceaux encadrant l'entrée. Le Loto Tyche garde
+son extrusion automatique et ne reçoit qu'un panneau plaqué en façade, ce qui
+suffit à l'identifier depuis le parking.
+
+**Table `ENSEIGNES_ACTUELLES` dans `poi.js`** : le HUD annonçait « Intermarché »
+devant le Leclerc, le tag `name` d'OSM datant d'avant le changement. La
+correspondance est tenue à la main, sur constat de terrain, et clairement
+signalée comme telle.
+
+**Sur le logo** : dessiné en canvas comme toutes les textures du projet, à
+partir de la description de l'enseigne (sigle carré bleu au E blanc, nom en
+bas-de-casse, mention EXPRESS sur pavé). Aucun fichier d'image n'est importé.
+
+**Trois retouches faites à l'écran**, chacune constatée avant correction :
+enseigne d'abord posée au-dessus de la ligne de toiture au lieu d'être plaquée
+sur l'acrotère, second panonceau isolé trop à droite sur le bardage, et panneau
+Loto Tyche dépassant du toit.
+
+## Les toits troués venaient des fenêtres, pas des toits (19/08/2026)
+
+Signalé par Christophe : « vus de loin, certains toits de bâtiments et maisons
+sont transparents ou saccadés ». Des triangles gris-bleu perçaient la
+couverture, et ils changeaient de place selon l'angle de caméra.
+
+**Deux hypothèses écartées avant la bonne**, ce qui vaut d'être noté :
+
+- **le débord de toiture.** Il pousse chaque arête de 40 cm vers l'extérieur,
+  donc dans l'emprise du voisin sur le bâti continu du centre-bourg. Cause
+  plausible, corrigée au passage (le débord est désormais borné par la distance
+  au bâtiment voisin), mais le défaut persistait
+- **la précision du depth buffer.** `near = 1`, `far = 3000`, sans tampon
+  logarithmique : le suspect habituel. Le calcul l'innocente, la précision
+  restant de **9,5 mm à 400 m et 38 mm à 800 m**, très loin de ce qu'il
+  faudrait pour faire clignoter une toiture. Mesurer avant de corriger a évité
+  un chantier inutile sur la caméra
+
+**La vraie cause, trouvée par isolement.** En masquant les maillages un par un
+en vue aérienne, les triangles parasites disparaissent avec les VITRAGES et
+reviennent dès qu'on les réaffiche. Les baies du dernier niveau dépassaient
+l'égout et ressortaient sous le débord de toiture.
+
+Deux facteurs cumulés :
+
+- **la marge sous égout ne couvrait que la hauteur de la baie** (20 cm), pas la
+  saillie des éléments rapportés : le dormant sort de 7,5 cm du nu de façade et
+  l'appui de fenêtre de 13 cm. Portée à 45 cm, de quoi laisser passer le débord
+  de 40 cm plus l'épaisseur de la tablette
+- **`renderOrder = 1` sur les vitrages**, contre 0 sur les toitures. Tous ces
+  maillages sont opaques et écrivent la profondeur : le tampon suffit à les
+  départager, et forcer un ordre faisait gagner la vitre contre le toit dès
+  qu'elle le touchait. Supprimé
+
+**Aucune fenêtre perdue** : 25 568 baies avant comme après, la marge élargie
+n'ayant écarté que celles qui dépassaient déjà et n'auraient pas dû exister.
+
+**Leçon de méthode** : le maillage fautif n'était pas celui qui portait le
+symptôme. Masquer les maillages un par un a tranché en deux essais, là où deux
+hypothèses raisonnées avaient échoué. Les maillages `murs`, `vitrages` et
+`toitures` sont désormais nommés pour rendre ce diagnostic reproductible.
+
+## Le composer ignorait le pixel ratio des profils (19/08/2026)
+
+**Le défaut, jamais vu parce qu'invisible au compteur.** `EffectComposer`
+capture le pixel ratio du renderer À SA CONSTRUCTION et le garde dans
+`_pixelRatio`. Les profils graphiques appelaient bien `renderer.setPixelRatio`,
+mais `composer.setSize` réutilise sa valeur figée : les cibles de rendu ne
+bougeaient pas d'un pixel. Seule la copie finale à l'écran changeait d'échelle.
+
+Mesuré après correction, taille des cibles du composer :
+
+| Profil | Cible | Pixels | GTAO |
+| --- | --- | --- | --- |
+| Performance | 1470 x 683 | 1,00 M | 735 x 342 |
+| Équilibré | 2205 x 1024 | 2,26 M | 1103 x 512 |
+| Qualité | 2940 x 1366 | 4,02 M | 2205 x 1025 |
+
+Un rapport de 4 en surface entre les extrêmes, là où les trois profils
+rendaient auparavant le même nombre de pixels. Les trois tiennent 60 fps à
+l'arrêt (médiane 16,6 à 16,7 ms, p95 sous 18,2), ce qui confirme la conclusion
+du chantier précédent : **à l'arrêt, la résolution n'est pas le facteur
+limitant**.
+
+Corrigé par une fonction unique `redimComposer`, qui appelle `setSize` puis
+`setPixelRatio` et réimpose ensuite l'échelle du GTAO, que `setSize` écrase.
+`Qualite.appliquer()` la déclenche après avoir changé le pixel ratio.
+
+**Retiré au passage : `scene.traverse(o => o.material.needsUpdate = true)`** à
+chaque bascule de profil. `shadowMapEnabled` fait partie des paramètres de
+programme de Three.js et entre dans la clé de cache : le bon programme est
+sélectionné sans qu'on force quoi que ce soit. Forcer les matériaux de la ville
+provoquait une recompilation complète, donc une saccade d'une seconde par
+changement de profil.
+
+## La chaussée a failli passer devant le trottoir (19/08/2026)
+
+Le point 5 des restants annonçait le risque : « pousser plus loin la rendrait
+plus claire que le trottoir ». Il était fondé.
+
+Première tentative, enrobé porté à `0xd2d1cf` avec `roughnessMap` : le rapport
+chaussée/façade monte de 0,281 à **0,454**, tout près de la cible de 0,47. Mais
+la mesure sur la même capture donne une chaussée à **1,26 fois la clarté du
+trottoir**, ce qui se voyait immédiatement à l'écran : la route paraissait plus
+neuve que le cheminement qui la borde.
+
+Corrigé en agissant des deux côtés plutôt que sur le seul enrobé : chaussée
+ramenée à `0xc2c1bf`, dalle de trottoir éclaircie de `0x74736e` à `0x98968e`,
+bordure de `0x9a988f` à `0xb4b2a8`. Rapport final **0,376**, hiérarchie
+rétablie.
+
+**Leçon** : deux surfaces voisines se calent l'une par rapport à l'autre, pas
+chacune contre une référence lointaine. Mesurer le seul rapport à la façade
+laissait passer une inversion que l'oeil voit tout de suite.
+
+## Le plafond masquait l'éclaircissement du stationnement (19/08/2026)
+
+Demande de réduire les véhicules garés à 55-65 % de l'effectif. Une passe
+d'éclaircissement par files a été écrite : chaînage des véhicules qui se
+suivent le long d'une rive, puis retrait par grappes plutôt qu'un sur deux, une
+alternance régulière se lisant aussi mal qu'une file pleine.
+
+**Elle n'a d'abord rien changé.** Le log annonçait toujours 1 400 véhicules,
+parce que le plafond `maximum` valait 1 400 et tranchait APRÈS la passe : la
+ville en trouvant 3 063 possibles, le résultat restait collé au plafond quoi
+qu'on retire en amont. C'est lui, et non l'éclaircissement, qui fixait
+l'effectif réel depuis toujours.
+
+Deux corrections : plafond ramené à 880, et rattrapage du centre-bourg calculé
+sur la position de la PLACE et non sur le premier point de la voie. Ce dernier
+défaut réinjectait presque tout ce qui venait d'être retiré, une rue longue
+partant du bourg voyant toutes ses places classées « centre » jusqu'au bout.
+
+**1 400 -> 880 véhicules, soit 63 %.** L'éclaircissement lui-même ne retire que
+11 % (3 063 -> 2 725) : les places sont déjà clairsemées à la source par les
+densités de `trouverPlaces`, si bien que les longues files continues à casser
+sont rares. Le gros du travail reste fait par le plafond.
+
 ## L'eau flottait en plein ciel (18/08/2026)
 
 Symptôme constaté à l'écran depuis l'avenue de Castille : un ruban gris
