@@ -201,8 +201,15 @@ export function texturerEcorce(taille = 256) {
 // Carte de relief dérivée d'une texture de couleur : les matériaux Three.js
 // acceptent une bumpMap en niveaux de gris, ce qui suffit à faire accrocher la
 // lumière rasante sur le grain sans coût de mémoire notable.
+//
+// Le clone est repassé en espace LINÉAIRE. Une bumpMap ne porte pas une
+// couleur mais une hauteur : lue en sRGB, elle subit la conversion gamma et
+// son amplitude est faussée, les valeurs sombres du grain étant écrasées et
+// les claires étirées. Réutiliser telle quelle la texture de couleur, qui est
+// en sRGB à juste titre, revient à cette erreur.
 export function relief(tex) {
   const r = tex.clone();
+  r.colorSpace = THREE.NoColorSpace;
   r.needsUpdate = true;
   return r;
 }

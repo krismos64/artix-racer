@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { couleurMur, couleurToit } from './bdtopo.js';
-import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce } from './textures.js';
+import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce,
+  relief as carteRelief } from './textures.js';
 import { TAILLE as TERRAIN_TAILLE, RESOLUTION as TERRAIN_RES } from './terrain.js';
 
 // Altitude de la chaussée. Sert de référence commune au rendu, au maillage
@@ -1225,7 +1226,7 @@ export function buildWorld(scene, data) {
     // ce qui est le défaut le plus visible en conduite.
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
       vertexColors: true, roughness: 0.86, side: THREE.DoubleSide,
-      map: enduit, bumpMap: enduit, bumpScale: 0.35,
+      map: enduit, bumpMap: carteRelief(enduit), bumpScale: 0.35,
     }));
     // Pas de castShadow : la passe d'ombre redessinerait les 3 500 bâtiments
     // à chaque frame, pour un gain visuel marginal en vue de conduite.
@@ -1282,7 +1283,7 @@ export function buildWorld(scene, data) {
     // Sud-Ouest, et il porte loin : c'est visible sur toute la ligne de toits.
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
       vertexColors: true, roughness: 0.95, side: THREE.DoubleSide,
-      map: tuile, bumpMap: tuile, bumpScale: 0.5,
+      map: tuile, bumpMap: carteRelief(tuile), bumpScale: 0.5,
     }));
     m.receiveShadow = true;
     group.add(m);
@@ -1657,7 +1658,7 @@ function plantTrees(data, relief = null) {
   // les cannelures verticales. Répéter en Y les recouperait en tronçons.
   ecorce.repeat.set(3, 1);
   const trunkMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff, map: ecorce, bumpMap: ecorce, bumpScale: 0.6, roughness: 1,
+    color: 0xffffff, map: ecorce, bumpMap: carteRelief(ecorce), bumpScale: 0.6, roughness: 1,
   });
   const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f6b30, roughness: 1, flatShading: true });
 
