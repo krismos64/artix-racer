@@ -19,6 +19,9 @@ import { buildCarMesh } from './carmesh.js';
 import { chargerVoiture, animerRoues } from './carmodel.js';
 
 import { AudioEngine } from './audio.js';
+import { Qualite, PROFILS, PROFIL_DEFAUT } from './quality.js';
+import { GrilleInstances } from './spatial.js';
+import { Minicarte } from './minimap.js';
 
 // Modèle du véhicule piloté.
 //
@@ -37,6 +40,14 @@ const MODELE_VOITURE = 'models/AudiR8.glb';
 const el = (id) => document.getElementById(id);
 const loaderText = el('loader-text');
 const loaderBar = el('loader-bar');
+
+// Journal de construction : ce qui a été lu, ce qui a été posé. Ces relevés
+// servent à comparer la donnée au rendu (un compteur dit ce qui est posé, pas
+// ce qui a été lu) et n'ont d'intérêt qu'en développement. Les avertissements
+// et les erreurs, eux, restent affichés en production.
+const diag = import.meta.env.DEV
+  ? (...a) => console.log(...a)
+  : () => {};
 
 function progress(pct, text) {
   loaderBar.style.width = pct + '%';
@@ -73,21 +84,40 @@ async function init() {
   await RAPIER.init();
 
   await progress(15, "Chargement des données cartographiques d'Artix...");
+
+  // `fetch` ne rejette pas sur un 404 : sans contrôle du statut, un fichier
+  // absent remonte une erreur d'analyse JSON qui ne dit pas lequel manque.
+  async function charger(nom, { requis = false } = {}) {
+    try {
+      const r = await fetch(`data/${nom}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    } catch (err) {
+      if (requis) throw new Error(`données indispensables illisibles (${nom}) : ${err.message}`);
+      // Une source facultative illisible dégrade la ville en silence : sans ce
+      // message, on cherche longtemps pourquoi les toits sont plats ou les
+      // façades grises.
+      console.warn(`Source facultative ignorée (${nom}) : ${err.message}`);
+      return null;
+    }
+  }
+
   const [raw, rawBati, rawPoi, rawToits, rawToitsLidar, rawFacades] = await Promise.all([
-    fetch('data/artix-osm.json').then((r) => r.json()),
+    // Sans le réseau OSM il n'y a ni route ni ville : seule source obligatoire.
+    charger('artix-osm.json', { requis: true }),
     // BD TOPO : hauteurs mesurées et matériaux réels des bâtiments d'Artix.
-    fetch('data/artix-bdtopo.json').then((r) => r.json()).catch(() => null),
+    charger('artix-bdtopo.json'),
     // Signalisation et équipements : cartographiés en nœuds OSM, ils
     // n'apparaissent pas dans la requête des surfaces.
-    fetch('data/artix-poi.json').then((r) => r.json()).catch(() => null),
+    charger('artix-poi.json'),
     // Toitures relevées au LiDAR HD : forme réelle de la couverture, que ni
     // OSM ni la BD TOPO ne fournissent.
-    fetch('data/artix-toitures.json').then((r) => r.json()).catch(() => null),
+    charger('artix-toitures.json'),
     // Relevé LiDAR détaillé : forme, gouttière et faîtage mesurés par
     // bâtiment. Prend le pas sur le classement en trois catégories ci-dessus.
-    fetch('data/artix-toits-lidar.json').then((r) => r.json()).catch(() => null),
+    charger('artix-toits-lidar.json'),
     // Teintes de façade relevées sur les photographies de rue Panoramax.
-    fetch('data/artix-facades.json').then((r) => r.json()).catch(() => null),
+    charger('artix-facades.json'),
   ]);
 
   // Le relevé détaillé remplace l'ancien classement quand il est présent.
@@ -104,14 +134,14 @@ async function init() {
     if (toitsRetenus?.toits?.length) {
       const f = { 0: 0, 1: 0, 2: 0 };
       for (const t of toitsRetenus.toits) f[t.f]++;
-      console.log(`Toitures LiDAR : ${toitsRetenus.toits.length} mesurées `
+      diag(`Toitures LiDAR : ${toitsRetenus.toits.length} mesurées `
         + `(${f[0]} plates, ${f[1]} monopentes, ${f[2]} à deux pans)`);
     } else if (toitsRetenus?.toitures?.length) {
-      console.log(`Toitures LiDAR : ${toitsRetenus.toitures.length} relevées`);
+      diag(`Toitures LiDAR : ${toitsRetenus.toitures.length} relevées`);
     }
     if (rawFacades?.facades?.length) {
       const retenues = bdt.batiments.filter((b) => b.teinteMur != null).length;
-      console.log(`Façades Panoramax : ${rawFacades.facades.length} relevées, `
+      diag(`Façades Panoramax : ${rawFacades.facades.length} relevées, `
         + `${retenues} appliquées`);
     }
     if (bdt.batiments.length > 200) {
@@ -153,7 +183,7 @@ async function init() {
         terrain.terrasser(data.roads, GARDE_SOL);
         data.terrain = terrain;
       }
-      console.log(`BD TOPO : ${bdt.batiments.length} bâtiments, `
+      diag(`BD TOPO : ${bdt.batiments.length} bâtiments, `
         + `${pts.length} points d'altitude`);
     }
   }
@@ -166,9 +196,9 @@ async function init() {
   // visuel faible en jeu. 1,5x est le bon compromis netteté / fluidité.
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.setSize(innerWidth, innerHeight);
-  // Ombres désactivées par défaut : sur une ville de 200 000 triangles, la
-  // passe d'ombre coûte les deux tiers du budget de frame. La touche O les
-  // rallume pour les machines qui le supportent.
+  // Les ombres sont réglées plus bas, une fois la ville construite : c'est là
+  // que se décide quels maillages les projettent. Elles sont actives par
+  // défaut, la touche O les coupe.
   renderer.shadowMap.enabled = false;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -269,7 +299,9 @@ async function init() {
     // ambiante est une donnée basse fréquence (de larges dégradés au pied des
     // objets, aucun détail fin), la calculer sur deux fois moins de pixels ne
     // se voit pas : captures comparées à midi, images indiscernables.
-    const GTAO_ECHELLE = 0.5;
+    // Pilotée par le profil graphique : `let` et non `const`, la valeur change
+    // quand le joueur bascule de profil.
+    let GTAO_ECHELLE = PROFILS[PROFIL_DEFAUT].gtaoEchelle;
     const gtao = new GTAOPass(scene, camera,
       Math.round(innerWidth * GTAO_ECHELLE), Math.round(innerHeight * GTAO_ECHELLE));
     // Rayon court : on cherche les ombres de contact au pied des objets, pas
@@ -359,8 +391,20 @@ async function init() {
     });
     // Exposé pour la boucle de jeu et les bascules au clavier. Fusion et non
     // remplacement : `smaa` y a déjà été déposé plus haut.
-    composer.userData = { ...(composer.userData ?? {}), contours, majContours };
-    console.log('Occlusion ambiante : active');
+    // `redimGtao` et `majContours` sont exposés pour que le module de qualité
+    // puisse redimensionner les passes après un changement de profil ou un
+    // ajustement de résolution dynamique : elles allouent leurs cibles d'après
+    // le pixel ratio et resteraient sinon dimensionnées pour l'ancienne valeur.
+    const setEchelleGtao = (e) => {
+      GTAO_ECHELLE = e;
+      redimGtao();
+      majContours();
+    };
+    composer.userData = {
+      ...(composer.userData ?? {}),
+      contours, majContours, redimGtao, setEchelleGtao,
+    };
+    diag('Occlusion ambiante : active');
   } catch (err) {
     console.warn('Occlusion ambiante indisponible, rendu direct :', err.message);
   }
@@ -430,12 +474,13 @@ async function init() {
   }
 
   await progress(42, "Construction de la ville (3481 bâtiments)...");
-  const { collisionTris, group: cityGroup, foyers, lampHeads, placesEpi } = buildWorld(scene, data);
+  const { collisionTris, group: cityGroup, foyers, lampHeads, placesEpi,
+    instances: instancesVegetation } = buildWorld(scene, data);
 
   // Éclairage public : les lanternes projettent réellement de la lumière sur
   // la chaussée à la tombée du jour.
   const eclairage = new EclairagePublic(scene, foyers);
-  console.log(`Éclairage public : ${foyers.length} foyers`);
+  diag(`Éclairage public : ${foyers.length} foyers`);
 
   // Signalisation et panonceaux d'équipements, posés après la ville pour
   // disposer du relief définitif.
@@ -443,7 +488,7 @@ async function init() {
   if (data.poi) {
     signage = buildSignage(data, data.terrain ?? null, ROAD_Y);
     scene.add(signage.group);
-    console.log('Signalisation :', JSON.stringify(signage.stats));
+    diag('Signalisation :', JSON.stringify(signage.stats));
   }
 
   // Point d'apparition calculé dès maintenant : il sert à dégager la zone de
@@ -462,7 +507,7 @@ async function init() {
   const accotements = new Accotements(data, data.terrain ?? null, ROAD_Y);
   if (accotements.effectif) {
     scene.add(accotements.group);
-    console.log(`Accotements : ${accotements.effectif} bandes, `
+    diag(`Accotements : ${accotements.effectif} bandes, `
       + JSON.stringify(accotements.stats));
   }
 
@@ -470,7 +515,7 @@ async function init() {
   // places marquées le long des voies desservant les barres d'immeubles.
   const parkings = new ParkingsEpi(scene, data, data.terrain ?? null, ROAD_Y);
   if (parkings.effectif) {
-    console.log(`Parkings en épi : ${parkings.effectif} places occupées`);
+    diag(`Parkings en épi : ${parkings.effectif} places occupées`);
   }
 
   // Véhicules en stationnement le long des rues du bourg. Sur les photographies
@@ -485,24 +530,27 @@ async function init() {
     scene, data, data.terrain ?? null, ROAD_Y, data.poi?.passages ?? [], spawn,
     [...(parkings.places ?? []), ...(placesEpi ?? [])],
   );
-  if (garees.effectif) console.log(`Véhicules stationnés : ${garees.effectif}`);
+  if (garees.effectif) diag(`Véhicules stationnés : ${garees.effectif}`);
 
   // Passants : ils marchent sur les cheminements piétons réels du bourg,
   // s'arrêtent pour discuter et donnent vie aux rues.
-  const pietons = new Pietons(data, data.terrain ?? null, ROAD_Y, 140);
+  // L'effectif des passants est figé à la construction (un InstancedMesh est
+  // dimensionné une fois). Le profil le fixe au démarrage ; en cours de partie,
+  // un changement de profil masque les passants excédentaires plutôt que de
+  // reconstruire, ce qui éviterait de réallouer sept maillages instanciés.
+  const pietons = new Pietons(data, data.terrain ?? null, ROAD_Y,
+    PROFILS.qualite.passants);
   if (pietons.effectif) {
     scene.add(pietons.group);
-    console.log(`Passants : ${pietons.effectif} sur ${pietons.noeuds.length} nœuds piétons`);
+    diag(`Passants : ${pietons.effectif} sur ${pietons.noeuds.length} nœuds piétons`);
   }
 
   // Bâtiments remarquables modélisés d'après les photographies du bourg.
   if (data.landmarkSources?.length) {
     const lm = buildLandmarks(data, data.terrain ?? null, ROAD_Y);
     scene.add(lm.group);
-    console.log(`Repères modélisés : ${lm.traites.length}`);
+    diag(`Repères modélisés : ${lm.traites.length}`);
   }
-  // Ombres légères par défaut : sur une ville entière, la passe d'ombre
-  // complète divise le framerate par trois.
   // Ombres actives par défaut : c'est ce qui sépare le plus nettement un
   // rendu de jeu d'une maquette. Le volume d'ombre suit le véhicule et reste
   // resserré, ce qui borne le coût ; la touche O permet de les couper sur une
@@ -518,6 +566,56 @@ async function init() {
       && o.geometry.attributes.position.count > 5000) o.castShadow = true;
   });
   el('shadow-state').textContent = 'ACTIVÉES';
+
+  // --- Profils graphiques -------------------------------------------------
+  // Les réglages de rendu sont regroupés dans `quality.js`. Le profil
+  // « Équilibré » reprend exactement les valeurs qui étaient en dur ici, donc
+  // le comportement par défaut du jeu ne change pas.
+  const qualite = new Qualite({
+    renderer,
+    scene,
+    soleil: sun,
+    eclairage,
+    get smaa() { return composer?.userData?.smaa ?? null; },
+    // Redimensionne les passes d'écran après un changement de résolution.
+    onResolution: () => {
+      composer?.setSize(innerWidth, innerHeight);
+      composer?.userData?.redimGtao?.();
+      composer?.userData?.majContours?.();
+    },
+    majGtao: (e) => composer?.userData?.setEchelleGtao?.(e),
+    // Appliqué à chaque bascule de profil : ce qui ne se règle pas sur le
+    // renderer lui-même.
+    onProfil: (p) => {
+      shadowsHigh = p.ombres;
+      cityGroup.traverse((o) => {
+        if (o.isMesh && !o.userData.noShadowCast
+          && o.geometry.attributes.position.count > 5000) o.castShadow = p.ombres;
+      });
+      scene.traverse((o) => { if (o.isMesh) o.material.needsUpdate = true; });
+      if (p.ombres) sun.shadow.needsUpdate = true;
+      pietons?.setVisibles?.(p.passants);
+      el('shadow-state').textContent = p.ombres ? 'ACTIVÉES' : 'DÉSACTIVÉES';
+      el('aa-state').textContent = p.smaa ? 'ACTIVÉ' : 'DÉSACTIVÉ';
+      const q = el('quality-state');
+      if (q) q.textContent = p.nom.toUpperCase();
+    },
+  }, PROFIL_DEFAUT);
+  qualite.appliquer();
+  diag(`Profil graphique : ${qualite.profil.nom}`);
+
+  // --- Découpage spatial de la végétation ---------------------------------
+  // Les arbres sont le poste le plus lourd de la scène : 3 500 instances pour
+  // 1,18 million de triangles à eux seuls, dessinés en entier quel que soit
+  // l'endroit où se trouve la voiture, la sphère englobante d'un InstancedMesh
+  // couvrant toute la commune. La grille les range par distance et n'en
+  // dessine que la part utile.
+  const grilleVegetation = instancesVegetation
+    ? new GrilleInstances(instancesVegetation.meshes, instancesVegetation.positions)
+    : null;
+  if (grilleVegetation) {
+    diag(`Découpage spatial : ${grilleVegetation.total} arbres instanciés`);
+  }
 
   // --- Monde physique -----------------------------------------------------
   await progress(66, 'Génération des collisions...');
@@ -595,7 +693,7 @@ async function init() {
     if (ok) for (let k = 0; k < 9; k++) clean.push(collisionTris[i + k]);
     else rejected++;
   }
-  console.log(`Collisions : ${clean.length / 9} triangles retenus, ${rejected} rejetés`);
+  diag(`Collisions : ${clean.length / 9} triangles retenus, ${rejected} rejetés`);
 
   const verts = new Float32Array(clean);
   const indices = new Uint32Array(verts.length / 3);
@@ -624,7 +722,7 @@ async function init() {
         gareesBody,
       );
     }
-    console.log(`Collisions véhicules garés : ${garees.obstacles.length} cuboïdes`);
+    diag(`Collisions véhicules garés : ${garees.obstacles.length} cuboïdes`);
   }
 
   // --- Véhicule -----------------------------------------------------------
@@ -655,7 +753,9 @@ async function init() {
   // Véhicule : un modèle glTF fourni prend le pas sur le modèle procédural.
   // En cas d'absence ou d'erreur de chargement, on retombe sur ce dernier
   // plutôt que de laisser le jeu sans voiture.
-  let carMesh, wheelMeshes, headMat, tailMat, bodyMat;
+  // `headMat` et `tailMat` pilotent les feux du modèle procédural au fil du
+  // cycle jour/nuit ; le modèle importé porte les siens dans sa texture.
+  let carMesh, wheelMeshes, headMat, tailMat;
   let modeleImporte = false;
   // Éléments animés du modèle importé : roues, volant, rayon de roulement et
   // position du siège conducteur pour la caméra intérieure.
@@ -673,14 +773,14 @@ async function init() {
     rayonRoueImporte = importe.rayonRoue;
     siegeImporte = importe.siege;
     modeleImporte = true;
-    console.log(`Modèle importé : échelle ${importe.echelle.toFixed(3)}, `
+    diag(`Modèle importé : échelle ${importe.echelle.toFixed(3)}, `
       + `${importe.roues.length} roues, rayon ${importe.rayonRoue.toFixed(3)} m, `
       + `volant ${importe.volant ? 'oui' : 'non'}`);
   } catch (err) {
     console.warn('Modèle glTF indisponible, modèle procédural utilisé :', err.message);
     const proc = buildCarMesh(0x1c2b4a);
     carMesh = proc.car; wheelMeshes = proc.wheels;
-    headMat = proc.headMat; tailMat = proc.tailMat; bodyMat = proc.bodyMat;
+    headMat = proc.headMat; tailMat = proc.tailMat;
   }
   carMesh.castShadow = true;
   scene.add(carMesh);
@@ -725,77 +825,38 @@ async function init() {
   const camPos = new THREE.Vector3();
   const camLook = new THREE.Vector3();
   let camInit = false;
+  // Objets de travail du bloc caméra, alloués une fois. Le calcul de cadrage
+  // tourne à chaque frame et créait une douzaine de Vector3 par passage.
+  const camP = new THREE.Vector3();       // position du véhicule
+  const camFwd = new THREE.Vector3();     // axe avant du véhicule
+  const camUp = new THREE.Vector3();      // axe haut du véhicule
+  const camSide = new THREE.Vector3();    // axe latéral du véhicule
+  const camCible = new THREE.Vector3();   // position visée par la caméra
+  const camVise = new THREE.Vector3();    // point regardé
+  const camDepuis = new THREE.Vector3();  // origine du rayon anti-traversée
+  const camVers = new THREE.Vector3();    // direction de ce rayon
+  // Vecteurs de la boucle de simulation.
+  const velTmp = new THREE.Vector3();     // vitesse courante
+  const deltaTmp = new THREE.Vector3();   // écart de vitesse, détection de choc
+  const eulerTmp = new THREE.Euler();     // conversions de cap
+  const posTmp = new THREE.Vector3();     // position du véhicule, lue une fois par frame
+  // Vecteur propre à la minicarte : elle est dessinée après que `posTmp` a
+  // servi au reste de la frame, et le partager exposerait à un écrasement
+  // silencieux si l'ordre des appels changeait.
+  const posCarte = new THREE.Vector3();
+  // Structures brutes réutilisées pour le rayon Rapier de la caméra.
+  const camRayOrig = { x: 0, y: 0, z: 0 };
+  const camRayDir = { x: 0, y: 0, z: 0 };
+  const camRay = new RAPIER.Ray(camRayOrig, camRayDir);
 
   // --- Minicarte ----------------------------------------------------------
-  const mapCanvas = el('minimap');
-  const mctx = mapCanvas.getContext('2d');
-  const MAP_SIZE = 190;
-  mapCanvas.width = mapCanvas.height = MAP_SIZE * devicePixelRatio;
-  mctx.scale(devicePixelRatio, devicePixelRatio);
-  const MAP_SCALE = 0.22; // px par mètre
-
-  function drawMinimap() {
-    const p = car.position;
-    const yaw = new THREE.Euler().setFromQuaternion(car.quaternion, 'YXZ').y;
-    mctx.save();
-    mctx.clearRect(0, 0, MAP_SIZE, MAP_SIZE);
-    mctx.beginPath();
-    mctx.arc(MAP_SIZE / 2, MAP_SIZE / 2, MAP_SIZE / 2 - 2, 0, Math.PI * 2);
-    mctx.fillStyle = 'rgba(12,16,22,0.82)';
-    mctx.fill();
-    mctx.clip();
-
-    mctx.translate(MAP_SIZE / 2, MAP_SIZE / 2);
-    mctx.rotate(-yaw); // la carte tourne avec la voiture
-    mctx.translate(-p.x * MAP_SCALE, -p.z * MAP_SCALE);
-
-    const range = 420;
-    mctx.lineCap = 'round';
-    for (const r of data.roads) {
-      if (!r.drivable) continue;
-      const [x0, z0] = r.pts[0];
-      if (Math.abs(x0 - p.x) > range && Math.abs(z0 - p.z) > range) continue;
-      mctx.beginPath();
-      for (let i = 0; i < r.pts.length; i++) {
-        const [x, z] = r.pts[i];
-        i ? mctx.lineTo(x * MAP_SCALE, z * MAP_SCALE) : mctx.moveTo(x * MAP_SCALE, z * MAP_SCALE);
-      }
-      // Code couleur repris des cartes routières : jaune pour les axes
-      // principaux, blanc pour la desserte, teinte distincte pour les ponts.
-      mctx.strokeStyle = r.bridge ? '#7fd4ff'
-        : r.rondPoint ? '#f0a63c'
-        : r.width >= 8 ? '#e8c34a' : '#b9c2cc';
-      mctx.lineWidth = Math.max(1, r.width * MAP_SCALE * 0.9);
-      mctx.stroke();
-    }
-    // Équipements remarquables : une pastille colorée par catégorie, pour
-    // repérer mairie, écoles et commerces d'un coup d'œil.
-    if (data.poi?.equipements) {
-      for (const e of data.poi.equipements) {
-        if (Math.abs(e.x - p.x) > range || Math.abs(e.z - p.z) > range) continue;
-        mctx.beginPath();
-        mctx.arc(e.x * MAP_SCALE, e.z * MAP_SCALE, 2.6, 0, Math.PI * 2);
-        mctx.fillStyle = '#' + e.info.couleur.toString(16).padStart(6, '0');
-        mctx.fill();
-        mctx.lineWidth = 0.8;
-        mctx.strokeStyle = 'rgba(255,255,255,.75)';
-        mctx.stroke();
-      }
-    }
-    mctx.restore();
-
-    // Flèche du véhicule, toujours au centre.
-    mctx.save();
-    mctx.translate(MAP_SIZE / 2, MAP_SIZE / 2);
-    mctx.beginPath();
-    mctx.moveTo(0, -7); mctx.lineTo(5, 6); mctx.lineTo(0, 3); mctx.lineTo(-5, 6);
-    mctx.closePath();
-    mctx.fillStyle = '#ff3b30';
-    mctx.strokeStyle = '#fff';
-    mctx.lineWidth = 1.2;
-    mctx.fill(); mctx.stroke();
-    mctx.restore();
-  }
+  // Le dessin lui-même est dans `minimap.js` : il ne dépend que du canvas, des
+  // données cartographiques et de la position du véhicule.
+  const minicarte = new Minicarte(el('minimap'), data);
+  const drawMinimap = () => minicarte.dessiner(
+    car.lirePosition(posCarte),
+    eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y,
+  );
 
   // --- Compteur (aiguille + chiffres) -------------------------------------
   const needle = el('needle');
@@ -890,8 +951,6 @@ async function init() {
   }
 
   // --- Traces de pneus ----------------------------------------------------
-  const skidMarks = new THREE.Group();
-  scene.add(skidMarks);
   const skidGeo = new THREE.PlaneGeometry(0.24, 0.6);
   const skidMat = new THREE.MeshBasicMaterial({
     color: 0x0a0a0a, transparent: true, opacity: 0.42, depthWrite: false,
@@ -903,19 +962,29 @@ async function init() {
   skidPool.frustumCulled = false;
   scene.add(skidPool);
   let skidIndex = 0;
+  // Nombre d'empreintes réellement écrites : il plafonne à MAX_SKIDS une fois
+  // l'anneau bouclé. Distinct de skidIndex, qui repart à zéro.
+  let skidEcrites = 0;
   const skidMatrix = new THREE.Matrix4();
-  const flatQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+  // Objets temporaires réutilisés : addSkid est appelé jusqu'à quatre fois par
+  // frame en glissade, une fois par roue.
+  const skidPos = new THREE.Vector3();
+  const skidQuat = new THREE.Quaternion();
+  const skidEuler = new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ');
+  const skidEchelle = new THREE.Vector3(1, 1, 1);
 
   function addSkid(pos, yaw) {
-    skidMatrix.compose(
-      new THREE.Vector3(pos.x, 0.12, pos.z),
-      new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, -yaw, 'XYZ')),
-      new THREE.Vector3(1, 1, 1),
-    );
+    skidPos.set(pos.x, 0.12, pos.z);
+    skidEuler.set(-Math.PI / 2, 0, -yaw, 'XYZ');
+    skidQuat.setFromEuler(skidEuler);
+    skidMatrix.compose(skidPos, skidQuat, skidEchelle);
     skidPool.setMatrixAt(skidIndex, skidMatrix);
     skidIndex = (skidIndex + 1) % MAX_SKIDS;
-    skidPool.count = Math.max(skidPool.count, skidIndex);
-    if (skidPool.count < MAX_SKIDS) skidPool.count = Math.min(MAX_SKIDS, skidPool.count + 1);
+    // Une seule progression du compteur : les deux lignes cumulées d'avant
+    // affichaient une instance de plus que d'empreintes écrites, laissée à la
+    // matrice identité, soit un carré parasite posé à l'origine du monde.
+    skidEcrites = Math.min(MAX_SKIDS, skidEcrites + 1);
+    skidPool.count = skidEcrites;
     skidPool.instanceMatrix.needsUpdate = true;
   }
 
@@ -1005,6 +1074,12 @@ async function init() {
   // --- Boucle -------------------------------------------------------------
   let last = performance.now();
   let accumulator = 0;
+  // Pas fixe à 60 Hz, comme le timestep du monde Rapier : les deux doivent
+  // rester accordés, sinon la physique n'avance pas du temps qu'on lui donne.
+  const PAS_PHYSIQUE = 1 / 60;
+  // Plafond de rattrapage : au-delà, on préfère perdre du temps simulé plutôt
+  // que d'enchaîner les pas et de faire chuter encore le framerate.
+  const MAX_PAS = 5;
   let paused = false;
   let fpsTimer = 0, frames = 0;
   const fpsTxt = el('fps');
@@ -1049,7 +1124,7 @@ async function init() {
       if (c) {
         c.enabled = !c.enabled;
         el('cartoon-state').textContent = c.enabled ? 'ACTIVÉ' : 'DÉSACTIVÉ';
-        console.log(`Rendu dessin animé : ${c.enabled ? 'activé' : 'désactivé'}`);
+        diag(`Rendu dessin animé : ${c.enabled ? 'activé' : 'désactivé'}`);
       }
     }
     if (tapped('a')) {
@@ -1057,12 +1132,23 @@ async function init() {
       if (s) {
         s.enabled = !s.enabled;
         el('aa-state').textContent = s.enabled ? 'ACTIVÉ' : 'DÉSACTIVÉ';
-        console.log(`Anticrénelage : ${s.enabled ? 'activé' : 'désactivé'}`);
+        diag(`Anticrénelage : ${s.enabled ? 'activé' : 'désactivé'}`);
       }
     }
     if (tapped('g')) {
       car.autoGearbox = !car.autoGearbox;
       el('gearbox-mode').textContent = car.autoGearbox ? 'AUTO' : 'MANU';
+    }
+    // Profil graphique : Performance, Équilibré, Qualité.
+    if (tapped('j')) {
+      const n = qualite.suivant();
+      diag(`Profil graphique : ${PROFILS[n].nom}`);
+    }
+    // Ajustement automatique de la résolution : le joueur peut le couper.
+    if (tapped('u')) {
+      const on = qualite.setAuto(!qualite.autoResolution);
+      el('auto-res-state').textContent = on ? 'ON' : 'OFF';
+      diag(`Résolution dynamique : ${on ? 'active' : 'coupée'}`);
     }
     audio.horn(down('b'));
 
@@ -1088,20 +1174,31 @@ async function init() {
       // Pas de temps fixe : la physique reste stable quel que soit le framerate.
       accumulator += dt;
       let steps = 0;
-      while (accumulator >= 1 / 60 && steps < 5) {
-        car.update(1 / 60, input);
+      while (accumulator >= PAS_PHYSIQUE && steps < MAX_PAS) {
+        car.update(PAS_PHYSIQUE, input);
         world.step();
-        accumulator -= 1 / 60;
+        accumulator -= PAS_PHYSIQUE;
         steps++;
       }
+      // Après une chute de framerate, le retard accumulé peut dépasser ce que
+      // le plafond de pas permet de rattraper. Le conserver ferait tourner la
+      // simulation à fond pendant les frames suivantes : le jeu paraîtrait
+      // accéléré, puis reprendrait son rythme. On abandonne donc le retard
+      // au-delà d'un pas, ce qui revient à ralentir imperceptiblement le temps
+      // simulé plutôt qu'à le rendre saccadé.
+      //
+      // Le seuil laisse passer le report normal d'une frame sur l'autre (un
+      // écran à 60 Hz ne tombe jamais pile sur 1/60) et ne coupe que le retard
+      // franc.
+      if (accumulator > PAS_PHYSIQUE) accumulator = PAS_PHYSIQUE;
       if (car.gear !== prevGear) audio.shift();
       car.checkSanity(spawn);
 
       // --- Choc ---
       crashCooldown = Math.max(0, crashCooldown - dt);
       const lv = car.body.linvel();
-      const vel = new THREE.Vector3(lv.x, lv.y, lv.z);
-      const delta = vel.clone().sub(lastVel).length();
+      const vel = velTmp.set(lv.x, lv.y, lv.z);
+      const delta = deltaTmp.copy(vel).sub(lastVel).length();
       if (delta > 4.5 && crashCooldown <= 0 && !car.airborne) {
         audio.impact(delta);
         crashCooldown = 0.25;
@@ -1109,12 +1206,14 @@ async function init() {
       lastVel.copy(vel);
 
       // --- Synchro du modèle 3D ---
-      carMesh.position.copy(car.position);
+      // Une seule lecture de position pour tout le bloc : chaque accès à
+      // `car.position` alloue un vecteur.
+      const cp = car.lirePosition(posTmp);
+      carMesh.position.copy(cp);
       carMesh.quaternion.copy(car.quaternion);
 
       // L'ombre de contact suit la voiture, à plat, orientée selon son cap.
-      const cp = car.position;
-      const yaw = new THREE.Euler().setFromQuaternion(car.quaternion, 'YXZ').y;
+      const yaw = eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y;
       blob.position.set(cp.x, (terrain ? terrain.hauteurEn(cp.x, cp.z) : 0) + ROAD_Y + 0.02, cp.z);
       blob.rotation.set(-Math.PI / 2, 0, -yaw);
       // Elle s'estompe quand la voiture décolle.
@@ -1141,7 +1240,7 @@ async function init() {
 
         // Traces au sol quand la roue glisse.
         if (w.grounded && w.slip > 0.28 && car.speed > 3) {
-          const yaw = new THREE.Euler().setFromQuaternion(car.quaternion, 'YXZ').y;
+          const yaw = eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y;
           addSkid(w.contactPoint, yaw);
         }
       });
@@ -1181,7 +1280,7 @@ async function init() {
       // même à pleine vitesse la voiture reste largement au centre entre deux
       // recalages. À 134 km/h (37 m/s) cela déclenche environ 6 recalculs par
       // seconde au lieu de 60.
-      const sp = car.position;
+      const sp = cp;
       const bougeAssez = Math.hypot(sp.x - ombreAncre.x, sp.z - ombreAncre.z) > 6;
       // Le soleil tourne avec l'heure : même à l'arrêt, la carte doit suivre
       // sa course, sans quoi les ombres resteraient figées au fil de la journée.
@@ -1206,38 +1305,54 @@ async function init() {
     // d'accroche reste dans signage.js si une commune en comportant devait
     // être chargée un jour.
 
+    // Position du véhicule pour tout ce qui suit, y compris en pause : ces
+    // trois consommateurs tournent hors du bloc de simulation.
+    const posVoiture = car.lirePosition(posTmp);
+
     // Passants : animation continue, y compris en pause pour que la ville
     // reste vivante quand le joueur observe.
-    if (pietons?.effectif) pietons.update(Math.min(dt, 0.1), now / 1000, car.position);
+    if (pietons?.effectif) pietons.update(Math.min(dt, 0.1), now / 1000, posVoiture);
 
     // Le dôme de ciel accompagne le véhicule : il doit rester à distance
     // constante, sinon on finirait par en sortir.
-    sky.position.copy(car.position);
+    sky.position.copy(posVoiture);
 
     const night = updateSky();
 
     // Les lampadaires proches de la voiture s'allument réellement : le pool de
     // lumières est réaffecté à chaque frame aux foyers les plus proches.
-    eclairage.update(car.position, nuitFacteur);
+    eclairage.update(posVoiture, nuitFacteur);
+
+    // Végétation : seules les instances à portée sont dessinées. La grille ne
+    // se réordonne que lorsque le véhicule a franchi une fraction de cellule,
+    // le tri restant valable entre-temps.
+    grilleVegetation?.maj(posVoiture.x, posVoiture.z, qualite.profil.distanceDetails);
     el('night-badge').classList.toggle('hidden', !night);
 
     // --- Caméra -------------------------------------------------------------
-    const p = car.position;
+    // Tout ce bloc écrit dans des vecteurs réutilisés : `camCible` porte la
+    // position visée, `camVise` le point regardé. Les deux restent distincts,
+    // les partager confondrait cadrage et visée.
+    const p = car.lirePosition(camP);
     const q = car.quaternion;
-    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const fwd = camFwd.set(0, 0, 1).applyQuaternion(q);
+    const up = camUp.set(0, 1, 0).applyQuaternion(q);
     const speedT = Math.min(1, car.speed / 50);
 
-    let targetPos, targetLook, fov = 64;
+    const targetPos = camCible;
+    const targetLook = camVise;
+    let fov = 64;
     if (camMode === 0) {        // Poursuite
       const dist = 8.6 + speedT * 2.6;
       const height = 3.4 + speedT * 0.6;
-      targetPos = p.clone().add(fwd.clone().multiplyScalar(-dist)).add(new THREE.Vector3(0, height, 0));
-      targetLook = p.clone().add(fwd.clone().multiplyScalar(7)).add(new THREE.Vector3(0, 0.9, 0));
+      targetPos.copy(p).addScaledVector(fwd, -dist);
+      targetPos.y += height;
+      targetLook.copy(p).addScaledVector(fwd, 7);
+      targetLook.y += 0.9;
       fov = 62 + speedT * 16;
     } else if (camMode === 1) { // Capot
-      targetPos = p.clone().add(fwd.clone().multiplyScalar(1.3)).add(up.clone().multiplyScalar(0.28));
-      targetLook = p.clone().add(fwd.clone().multiplyScalar(18)).add(up.clone().multiplyScalar(0.15));
+      targetPos.copy(p).addScaledVector(fwd, 1.3).addScaledVector(up, 0.28);
+      targetLook.copy(p).addScaledVector(fwd, 18).addScaledVector(up, 0.15);
       fov = 72 + speedT * 10;
     } else if (camMode === 2) { // Intérieur
       // Position des yeux du conducteur. Le modèle importé fournit les cotes
@@ -1247,22 +1362,25 @@ async function init() {
       const lat = s ? s.x : -0.36;
       const haut = s ? s.y - 0.66 : 0.46;
       const avant = s ? s.z : 0.10;
-      targetPos = p.clone().add(fwd.clone().multiplyScalar(avant))
-        .add(up.clone().multiplyScalar(haut))
-        .add(new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(lat));
+      camSide.set(1, 0, 0).applyQuaternion(q);
+      targetPos.copy(p).addScaledVector(fwd, avant)
+        .addScaledVector(up, haut)
+        .addScaledVector(camSide, lat);
       // Regard à l'horizontale depuis la hauteur des yeux : viser plus bas
       // cadre le capot au lieu de la route.
-      targetLook = p.clone().add(fwd.clone().multiplyScalar(16)).add(up.clone().multiplyScalar(haut));
+      targetLook.copy(p).addScaledVector(fwd, 16).addScaledVector(up, haut);
       fov = 76;
     } else if (camMode === 3) { // Cinématique : recule et s'incline
-      const side = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-      targetPos = p.clone().add(fwd.clone().multiplyScalar(-9)).add(side.multiplyScalar(5.5))
-        .add(new THREE.Vector3(0, 2.2, 0));
-      targetLook = p.clone().add(new THREE.Vector3(0, 0.7, 0));
+      camSide.set(1, 0, 0).applyQuaternion(q);
+      targetPos.copy(p).addScaledVector(fwd, -9).addScaledVector(camSide, 5.5);
+      targetPos.y += 2.2;
+      targetLook.copy(p);
+      targetLook.y += 0.7;
       fov = 52;
     } else {                    // Aérienne
-      targetPos = p.clone().add(new THREE.Vector3(0, 58, -26));
-      targetLook = p.clone();
+      targetPos.copy(p);
+      targetPos.y += 58; targetPos.z += -26;
+      targetLook.copy(p);
       fov = 60;
     }
 
@@ -1270,16 +1388,17 @@ async function init() {
     // poursuite, on rapproche la caméra jusqu'au point de contact. Sans cela,
     // la caméra passe au travers des façades en rue étroite.
     if (camMode === 0 || camMode === 3) {
-      const depuis = p.clone().add(new THREE.Vector3(0, 1.2, 0));
-      const vers = targetPos.clone().sub(depuis);
+      const depuis = camDepuis.copy(p);
+      depuis.y += 1.2;
+      const vers = camVers.copy(targetPos).sub(depuis);
       const dist = vers.length();
       if (dist > 0.5) {
         vers.divideScalar(dist);
-        const ray = new RAPIER.Ray(
-          { x: depuis.x, y: depuis.y, z: depuis.z },
-          { x: vers.x, y: vers.y, z: vers.z },
-        );
-        const hit = world.castRay(ray, dist, true, undefined, undefined, undefined, car.body);
+        camRayOrig.x = depuis.x; camRayOrig.y = depuis.y; camRayOrig.z = depuis.z;
+        camRayDir.x = vers.x; camRayDir.y = vers.y; camRayDir.z = vers.z;
+        camRay.origin = camRayOrig;
+        camRay.dir = camRayDir;
+        const hit = world.castRay(camRay, dist, true, undefined, undefined, undefined, car.body);
         if (hit && hit.timeOfImpact < dist) {
           // On garde une marge pour ne pas coller au mur.
           targetPos.copy(depuis).addScaledVector(vers, Math.max(1.6, hit.timeOfImpact - 0.4));
@@ -1366,6 +1485,14 @@ async function init() {
       }
     }
 
+    // Résolution dynamique : la moyenne glissante et l'hystérésis sont dans
+    // `quality.js`. On lui passe le temps de la frame écoulée, pas une moyenne
+    // déjà lissée, sinon le lissage s'appliquerait deux fois.
+    if (qualite.tick(dt * 1000, now / 1000)) {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+    }
+
     frames++;
     fpsTimer += dt;
     if (fpsTimer >= 0.5) {
@@ -1420,6 +1547,7 @@ async function init() {
   // `setHeure` permet de sauter directement à une heure du cycle jour/nuit, ce
   // qui rend l'éclairage nocturne testable sans attendre que le temps tourne.
   window.__game = { car, world, scene, camera, renderer, composer, data, spawn, SPEC, audio, collisionTris: verts, RAPIER,
+    qualite, grilleVegetation,
     setHeure: (h) => { timeOfDay = ((h % 24) + 24) % 24; },
     getHeure: () => timeOfDay };
 

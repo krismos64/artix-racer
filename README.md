@@ -37,9 +37,11 @@ npm run build && npm run preview
 | T | Accélérer l'écoulement du temps (cycle jour/nuit) |
 | B | Klaxon |
 | M / N | Musique / son |
-| O | Ombres portées (coûteuses, désactivées par défaut) |
+| O | Ombres portées (activées par défaut, coûteuses) |
 | K | Rendu dessin animé : contours de silhouette et ombrage en paliers |
 | A | Anticrénelage (SMAA, activé par défaut) |
+| J | Profil graphique : Performance, Équilibré, Qualité |
+| U | Ajustement automatique de la résolution |
 | P | Pause |
 | H | Aide à l'écran |
 
@@ -215,7 +217,10 @@ l'asphalte), ce qui se sent immédiatement au volant.
 
 ### Son
 
-Aucun fichier audio : tout est synthétisé.
+Tous les bruits sont synthétisés, aucun n'est un enregistrement. La musique,
+elle, est un fichier lu en boucle (`public/audio/music1.m4a`). La boucle
+générative décrite plus bas reste dans le code et reprend la main si le
+fichier est absent ou illisible, plutôt que de laisser le jeu muet.
 
 - **Moteur** : une table d'onde périodique contenant les **quatre explosions
   d'un cycle quatre temps**, avec attaque raide et décroissance exponentielle,
@@ -232,7 +237,7 @@ Aucun fichier audio : tout est synthétisé.
 - **Crissements** : bruit résonant proportionnel au glissement réel des pneus
 - **Chocs** : composante métallique filtrée plus un grave de tôle, l'amplitude
   suivant la violence de l'impact
-- **Musique** : boucle électronique générative à 128 BPM sur une grille
+- **Musique de secours** : boucle électronique générative à 128 BPM sur une grille
   Am - F - C - G, avec basse, nappe, arpège et batterie
 
 ### Rendu
@@ -275,6 +280,42 @@ Aucun fichier audio : tout est synthétisé.
   lampadaires à la tombée du jour
 - traces de pneus laissées au sol lors des glissements
 - textures d'asphalte et d'herbe générées en canvas, donc aucun asset externe
+- la **végétation n'est dessinée qu'à portée utile** : un maillage instancié
+  n'étant écarté qu'en bloc par le frustum culling, les 3 500 arbres étaient
+  dessinés en entier où que se trouve la voiture. Les instances sont
+  réordonnées par distance et seules les proches sont soumises, soit 114 arbres
+  au centre-bourg au lieu de 3 500, sans différence visible à l'écran
+
+### Profils graphiques
+
+Trois profils sous la touche `J` : **Performance**, **Équilibré** (par défaut)
+et **Qualité**. Chacun règle d'un bloc le pixel ratio, la résolution de
+l'occlusion ambiante, les ombres et la taille de leur carte, les distances de
+brouillard, le nombre de lampadaires réellement calculés, l'effectif des
+passants et l'anticrénelage.
+
+Le changement de profil ne reconstruit pas la ville. Les lampadaires sont
+alloués une fois pour le plus gros profil et le courant en éteint une partie ;
+les passants gardent leurs maillages instanciés et seul le nombre d'instances
+dessinées change.
+
+S'y ajoute un ajustement automatique de la résolution, que la touche `U`
+désactive : le rendu perd en finesse quand le temps de frame reste durablement
+au-dessus du budget, et la retrouve lentement quand la marge revient. Deux
+seuils distincts et un délai minimal entre deux ajustements évitent que la
+netteté ne batte en permanence, et un plancher garde l'image lisible.
+
+Mesuré à l'arrêt au centre-bourg, à midi, ajustement automatique coupé :
+
+| Profil | Résolution de rendu | Temps de frame |
+| --- | --- | --- |
+| Performance | 1600 x 683 | 16,7 ms |
+| Équilibré | 2400 x 1024 | 16,6 ms |
+| Qualité | 3200 x 1366 | 16,7 ms |
+
+Les trois tiennent 60 fps à l'arrêt, y compris Qualité qui rend quatre fois
+plus de pixels que Performance : à l'arrêt au centre-bourg, la résolution n'est
+pas le facteur limitant. L'écart se creuse en roulage.
 
 ### Rendu dessin animé
 
@@ -346,7 +387,11 @@ En développement, `window.__game` expose la scène, le renderer et
 
 ## Le véhicule
 
-**Audi R8**, modèle glTF de 207 329 triangles. Le fichier d'origine était un
+**Audi R8**, modèle glTF de 207 329 triangles, compressé en Meshopt : le
+fichier pèse 1,65 Mo contre 7,54 auparavant, pour une géométrie identique au
+triangle près. Il ne portait aucune texture, seulement de la géométrie brute en
+virgule flottante, ce qui en faisait 80 % du poids réellement transféré. Le
+décodeur est fourni par Three.js et reste local. Le fichier d'origine était un
 fichier de studio : 807 274 triangles, un plan de sol et deux sources de lumière
 modélisées, chaque roue éclatée en sept pièces. La conversion l'a ramené au
 gabarit du jeu et regroupé ses roues sous les quatre noms attendus par le
@@ -391,9 +436,13 @@ dans la table `SECTIONS` : il sert de secours si le chargement du glTF échoue.
   signalisation
 - les bâtiments en fond de parcelle gardent une teinte déduite de leur matériau
   BD TOPO : aucune photographie de rue ne les atteint
-- les ombres coûtent environ 11 fps sur une ville entière (touche O pour les
-  couper). Ce coût vient de leur échantillonnage sur les 692 000 triangles qui
-  les reçoivent, pas de la construction de la carte d'ombre
+- les ombres se coupent par la touche O, ou en passant au profil Performance.
+  Leur coût vient de leur échantillonnage sur les triangles qui les reçoivent,
+  pas de la construction de la carte d'ombre
+- **des à-coups subsistent en roulage** : 17,4 % des frames dépassent 20 ms et
+  le p99 reste à 28,8 ms, sans que le découpage de la végétation ni la
+  suppression des allocations ne les aient réduits. La médiane, elle, tient
+  60 fps. La cause de ces pointes n'est pas identifiée
 
 ## Calage sur photographies
 

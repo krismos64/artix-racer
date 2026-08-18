@@ -1,6 +1,15 @@
-// Moteur sonore entièrement procédural (Web Audio API) : aucun fichier externe.
-// Le son moteur est un banc d'oscillateurs harmoniques piloté par le régime,
-// approche utilisée par les simulateurs pour un rendu continu sans boucle audible.
+// Moteur sonore (Web Audio API). Tous les BRUITS sont synthétisés : le son
+// moteur est un banc d'oscillateurs harmoniques piloté par le régime, approche
+// utilisée par les simulateurs pour un rendu continu sans boucle audible.
+//
+// La MUSIQUE, elle, est un fichier lu en boucle (`public/audio/music1.m4a`).
+// Elle passe par le même bus que la musique générative qu'elle remplace, donc
+// la touche M et la coupure du son continuent de la piloter. La boucle
+// générative reste dans le code, en secours : si le fichier est absent ou
+// illisible, elle reprend la main plutôt que de laisser le jeu muet.
+
+// Fichier de musique. Mettre à `null` pour revenir à la boucle générative.
+const MUSIQUE = 'audio/music1.m4a';
 
 export class AudioEngine {
   constructor() {
@@ -8,6 +17,9 @@ export class AudioEngine {
     this.ready = false;
     this.muted = false;
     this.musicOn = true;
+    // Passe à `true` quand le fichier est chargé et joué : la boucle
+    // générative se tait alors d'elle-même.
+    this.musiqueFichier = false;
   }
 
   start() {
@@ -39,6 +51,9 @@ export class AudioEngine {
     // L'horloge musicale démarre maintenant, pas à la construction des nœuds.
     this.nextNoteTime = ctx.currentTime + 0.1;
     this.ready = true;
+    // Chargement du morceau en tâche de fond : la boucle générative joue
+    // pendant le décodage, puis se tait dès que le fichier démarre.
+    this.chargerMusique();
   }
 
   // Table d'onde d'un cycle moteur complet. Chaque période contient les quatre
@@ -263,8 +278,9 @@ export class AudioEngine {
     const load = state.throttle;
     const rpmNorm = (state.rpm - 850) / 6350;
 
-    // Volume moteur : audible au ralenti, plus fort en charge.
-    set(this.engineBus.gain, 0.13 + rpmNorm * 0.24 + load * 0.28);
+    // Volume moteur : audible au ralenti, plus fort en charge. Baissé d'un
+    // tiers environ, il couvrait la musique à pleine charge.
+    set(this.engineBus.gain, 0.09 + rpmNorm * 0.16 + load * 0.18);
     // Le filtre s'ouvre largement en montée en régime : c'est ce qui donne la
     // sensation de moteur qui « prend ses tours ».
     set(this.engineFilter.frequency, 480 + load * 3400 + rpmNorm * rpmNorm * 4200);
@@ -488,11 +504,51 @@ export class AudioEngine {
     ];
   }
 
+  // Charge et joue le fichier de musique en boucle. Appelé depuis `start`,
+  // sans être attendu : le jeu ne doit pas patienter sur un décodage de
+  // plusieurs mégaoctets, la boucle générative couvre l'intervalle.
+  async chargerMusique() {
+    if (!MUSIQUE || !this.ctx) return false;
+    try {
+      const r = await fetch(MUSIQUE);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const donnees = await r.arrayBuffer();
+      // `decodeAudioData` en promesse : la forme à callback est obsolète.
+      const buffer = await this.ctx.decodeAudioData(donnees);
+      // Le contexte a pu être fermé entre-temps (rechargement rapide).
+      if (!this.ctx || this.ctx.state === 'closed') return false;
+
+      const src = this.ctx.createBufferSource();
+      src.buffer = buffer;
+      src.loop = true;
+      // Le morceau passe par son propre gain, branché sur le bus musique :
+      // il hérite ainsi de la touche M et de la coupure générale, sans passer
+      // par le filtre et la réverbération réglés pour la boucle générative.
+      this.gainFichier = this.ctx.createGain();
+      // Relevé de 0,55 à 1,4 : à l'oreille, le morceau passait sous le moteur
+      // dès qu'on accélérait. Le bus musique est lui-même à 0,32, donc ce
+      // gain le compense en partie.
+      this.gainFichier.gain.value = 1.4;
+      src.connect(this.gainFichier).connect(this.musicBus);
+      src.start();
+      this.sourceMusique = src;
+      // La boucle générative se tait : `tickMusic` la court-circuite.
+      this.musiqueFichier = true;
+      return true;
+    } catch (err) {
+      // Fichier absent ou illisible : la boucle générative garde la main.
+      console.warn(`Musique ${MUSIQUE} indisponible, boucle générative :`, err.message);
+      return false;
+    }
+  }
+
   midi(n) { return 440 * Math.pow(2, (n - 69) / 12); }
 
   // Ordonnanceur : appelé à chaque frame, planifie les notes en avance.
   tickMusic() {
     if (!this.ready || !this.musicOn || this.muted) return;
+    // Le fichier a pris la main : plus aucune note à planifier.
+    if (this.musiqueFichier) return;
     const ctx = this.ctx;
     const stepDur = 60 / this.bpm / 4; // double-croche
 

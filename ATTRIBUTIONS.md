@@ -55,6 +55,15 @@ affilié à AUDI AG ni approuvé par elle.
 Si vous êtes l'auteur de ce modèle, ou si vous en identifiez la source, ouvrez
 une issue : l'attribution sera ajoutée, ou le fichier retiré sur demande.
 
+## Musique
+
+**`public/audio/music1.m4a`** : morceau fourni par l'auteur du projet, libre
+de droits pour cet usage. Réencodé en AAC depuis le fichier d'origine.
+
+Tous les autres sons du jeu (moteur, roulement, crissements, chocs, klaxon)
+sont synthétisés en temps réel par la Web Audio API : aucun n'est un
+enregistrement.
+
 ## Bibliothèques
 
 - **Three.js**, licence MIT, © Three.js authors

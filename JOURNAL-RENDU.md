@@ -7,6 +7,155 @@ les règles permanentes du projet, ce fichier garde le pourquoi.
 Chaque section indique le symptôme visible, la cause réelle une fois mesurée
 (souvent différente de celle supposée au départ), et le coût de frame constaté.
 
+## Le compteur de fps du HUD disait vrai, mes sondes non (18/08/2026)
+
+Chantier de performance mené sur huit commits. Sa première conclusion a été
+fausse, et la corriger a demandé de refaire toutes les mesures.
+
+Mesuré au départ : 19 à 20 ms par frame, 45 à 51 fps à l'arrêt au
+centre-bourg, alors que le HUD affichait 60. J'en ai conclu que le compteur
+du HUD était optimiste et j'ai écrit cette conclusion dans un commit.
+
+C'était l'inverse. Le chronomètre GPU par requête
+(`EXT_disjoint_timer_query_webgl2`) et les enveloppes posées sur
+`renderer.render` et `composer.render` coûtaient à eux seuls les 3 ms
+d'écart. Sur une page vierge de toute instrumentation, la médiane retombe à
+16,6 ms et le HUD dit vrai.
+
+**Toute mesure de temps doit se faire sur une page sans sonde.** Le nombre
+de triangles et le nombre d'appels de dessin se relèvent dans une session
+distincte de celle qui mesure le temps, jamais dans la même.
+
+Deuxième correction du même chantier : une comparaison en roulage donnait
+les à-coups en recul de 19,4 % à 8,8 %, soit moitié moins. Elle est fausse.
+Le passage « après » avait été conduit à 51 km/h contre 72,6 pour la
+référence, donc à charge moindre. **Une comparaison de roulage n'a de sens
+qu'à vitesse comparable.**
+
+Les tests de roulage automatisés étaient eux-mêmes faux : maintenir
+l'accélérateur sans braquer envoie la voiture dans une voiture garée au
+bout de quelques secondes. Les chiffres qui en sortaient mesuraient une
+accélération courte suivie d'un choc, pas du roulage. Christophe a signalé
+le défaut ; les mesures de roulage retenues ici ont toutes été conduites à
+la main.
+
+### Gain réel, mesuré en roulage conduit à la main
+
+Profil Équilibré, 2400x1024, ombres et SMAA actifs, midi, ajustement
+automatique coupé, échantillons relevés au-dessus de 5 km/h.
+
+| | Référence | Après | Écart |
+| --- | --- | --- | --- |
+| vitesse moyenne | 72,6 km/h | 75,3 km/h | +2,7 |
+| médiane | 18,0 ms (55,6 fps) | 16,9 ms (59,2 fps) | **+3,6 fps** |
+| p95 | 25,2 ms | 25,0 ms | -0,2 |
+| p99 | 28,8 ms | 28,8 ms | 0 |
+| à-coups > 20 ms | 19,4 % | 17,4 % | -2,0 points |
+
+Le gain porte sur la médiane, qui repasse sous 16,7 ms : le jeu tient
+60 fps en roulage là où il était à 55,6. **Le p95 et le p99 sont
+inchangés.** Les à-coups ne viennent donc ni de la végétation ni des
+allocations de la boucle, et leur cause reste à trouver.
+
+### Ce que le découpage spatial a donné
+
+Un `InstancedMesh` n'est écarté par le frustum culling qu'en bloc, sa
+sphère englobante couvrant toutes ses instances. Celle des 3 500 arbres
+couvre la commune entière : ils étaient donc dessinés en totalité où que se
+trouve la voiture. Mesuré avant : 5,01 millions de triangles soumis par
+frame, identiques au centre-bourg et à 3,4 km de là.
+
+`count` ne dessine que les N premières instances. En partitionnant le
+tampon pour amener devant celles qui sont à portée, il suffit d'ajuster
+`count` : aucune géométrie recréée, aucun objet Three.js de plus,
+l'instanciation est conservée.
+
+Résultat au centre-bourg : 114 arbres dessinés sur 3 500, soit 1 183 000
+triangles de végétation ramenés à 38 532, une réduction de 96,7 %.
+
+Coût de la partition : 0,1 ms médian, 0,2 au pire, pour 3 500 instances
+parcourues. Elle ne se déclenche que lorsque le véhicule a franchi un quart
+de cellule, soit 15 fois sur 80 s de conduite. Négligeable.
+
+**Aucun gain de fps à l'arrêt**, le jeu y étant déjà calé sur le vsync.
+Le gain se voit en roulage, dans la médiane.
+
+### Allocations : un gain invisible au compteur
+
+La boucle allouait 99 Ko par frame en roulage, avec 8 passages du
+ramasse-miettes en 5 s. Les temporaires de `car.js` (quatre roues, soixante
+pas par seconde), du bloc caméra et de `pedestrians.js` (140 passants, sept
+maillages animés) sont désormais des champs réutilisés.
+
+**Aucun gain de framerate mesurable à l'arrêt** : médiane de 19,2 à 20,2 ms
+avant, 19,9 à 20,3 après, plages entièrement recouvrantes. La scène est
+limitée par le GPU, pas par le temps CPU. Le bénéfice porte sur la
+régularité, et il faut le chercher en roulage.
+
+Comportement de conduite vérifié inchangé par une empreinte déterministe :
+monde plat isolé, 900 pas, séquence accélération / virage / frein à main /
+freinage. Trajectoire identique au chiffre près, position, vitesse, régime,
+rapport et braquage compris, jusqu'à l'odomètre final de 118,313 m. C'est
+ce test qui permet de toucher à `car.js` sans rien casser.
+
+## L'eau flottait en plein ciel (18/08/2026)
+
+Symptôme constaté à l'écran depuis l'avenue de Castille : un ruban gris
+suspendu au-dessus des prés, sans rapport avec le terrain traversé.
+
+Cause : l'eau était construite à une altitude fixe de 0,05 alors que tout
+le reste de la ville suit le relief interpolé. Sur une commune qui présente
+38 m de dénivelé, elle se retrouvait donc suspendue ou enterrée selon
+l'endroit.
+
+Deux essais avant le bon calage. La poser 0,35 m sous le sol, pour figurer
+un lit creusé, l'a enfouie : **le relief n'est terrassé que sous les
+routes, jamais sous les cours d'eau**, et 94 % de la surface passait sous
+le terrain donc devenait invisible. Elle affleure maintenant 6 cm au-dessus
+du sol naturel, et le contrôle donne 0 % de surface enfouie.
+
+Les plans d'eau retiennent la médiane des altitudes de leur contour et non
+le minimum : un seul point de rive anormalement bas, fréquent sur un
+contour interpolé, enfonçait toute la nappe.
+
+Défaut annexe trouvé en chemin : **100 % des triangles d'eau avaient leur
+normale tournée vers le sol.** Le `DoubleSide` le masquait, au prix d'une
+face inutile et d'un éclairage pris à contresens. Les sommets sont
+réordonnés et le sens de parcours des plans d'eau déterminé par l'aire
+signée, celui d'un contour OSM étant arbitraire. Le `FrontSide` devient
+alors légitime.
+
+Matériau : `metalness` ramené de 0,6 à 0. L'eau est un diélectrique, sa
+réflectivité vient de son indice de réfraction. À 0,6 elle rendait comme du
+plomb liquide, prenant la teinte de l'environnement au lieu de la sienne.
+
+## Le modèle pesait 80 % du chargement (18/08/2026)
+
+Mesure du poids réellement transféré, serveur de preview, gzip actif :
+9,36 Mo, dont 7,54 pour le seul `AudiR8.glb`.
+
+Le JS et les JSON se compressent bien (2,80 -> 0,93 Mo pour le bundle,
+3,46 -> 0,59 pour l'OSM). Le GLB ne gagnait rien : il ne contient **aucune
+texture**, seulement 7,13 Mo de géométrie en FLOAT non compressée. Le code
+splitting n'aurait donc rien changé au poids initial ; c'est le modèle qu'il
+fallait traiter.
+
+Compression `EXT_meshopt_compression` + `KHR_mesh_quantization` :
+7,54 -> 1,65 Mo, 77 % de moins, total transféré ramené de 9,36 à 3,36 Mo.
+Géométrie identique au triangle près, 207 329 triangles avant comme après.
+
+Fausse piste écartée : `gltf-transform optimize` descend à 1,36 Mo mais ses
+passes `join` et `simplify` fusionnent tout en **un seul nœud** et
+supprimant les noms de roues. Le chargeur ne trouve plus `WheelFrontL` et
+les roues cessent de tourner. Seule la passe de compression est appliquée.
+
+Piège de la quantification : elle normalise les positions et reporte
+l'échelle sur les nœuds. Lire la boîte de la géométrie brute donnait un
+rayon de roue de 0,963 m au lieu de 0,314, et les roues auraient tourné
+trois fois trop lentement. La mesure passe désormais par `setFromObject`,
+qui applique toute la chaîne de transformations et reste juste quel que
+soit l'encodage du fichier.
+
 ## Corrigé : le terrain recouvrait la chaussée
 
 Le symptôme visible (chaussée verte) avait **deux causes distinctes**, dont une

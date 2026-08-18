@@ -183,6 +183,22 @@ export class Pietons {
       m.frustumCulled = false;
       this.group.add(m);
     }
+
+    // Objets de travail de `update`, alloués une fois. Les paires
+    // maillage/signe sont figées ici : les recréer à chaque passant allouait
+    // deux tableaux et deux sous-tableaux par membre animé.
+    this._m = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._qq = new THREE.Quaternion();
+    this._euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    this._axeY = new THREE.Vector3(0, 1, 0);
+    this._echelle = new THREE.Vector3(1, 1, 1);
+    this._posTmp = new THREE.Vector3();
+    this._membres = [[this.jambeG, 1], [this.jambeD, -1]];
+    this._bras = [[this.brasG, 1], [this.brasD, -1]];
+    // Liste des maillages à marquer pour mise à jour, figée elle aussi.
+    this._tousMaillages = [this.corps, this.tete, this.cheveux,
+      this.jambeG, this.jambeD, this.brasG, this.brasD];
   }
 
   peupler(n) {
@@ -239,10 +255,18 @@ export class Pietons {
 
   update(dt, temps, posVoiture) {
     if (!this.agents.length) return;
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const axeY = new THREE.Vector3(0, 1, 0);
-    const echelle = new THREE.Vector3(1, 1, 1);
+    // Objets de travail réutilisés d'une frame à l'autre. Avec 140 passants
+    // animés en sept maillages instanciés, les temporaires alloués ici
+    // pesaient plusieurs milliers d'objets par frame.
+    const m = this._m;
+    const q = this._q;
+    const echelle = this._echelle;
+    const axeY = this._axeY;
+    const posTmp = this._posTmp;
+    const qq = this._qq;
+    const eulerTmp = this._euler;
+    const membres = this._membres;
+    const bras = this._bras;
 
     for (let i = 0; i < this.agents.length; i++) {
       const a = this.agents[i];
@@ -359,56 +383,55 @@ export class Pietons {
       // Léger tangage du corps au rythme des pas.
       const bob = a.etat === 'discute' ? 0 : Math.abs(Math.sin(cadence)) * 0.022;
 
-      m.compose(new THREE.Vector3(p.x, base + (0.62 + bob) * T, p.z), q,
-        echelle.set(T, T, T));
+      echelle.set(T, T, T);
+      m.compose(posTmp.set(p.x, base + (0.62 + bob) * T, p.z), q, echelle);
       this.corps.setMatrixAt(i, m);
 
-      m.compose(new THREE.Vector3(p.x, base + (0.98 + bob) * T, p.z), q, echelle.set(T, T, T));
+      m.compose(posTmp.set(p.x, base + (0.98 + bob) * T, p.z), q, echelle);
       this.tete.setMatrixAt(i, m);
-      m.compose(new THREE.Vector3(p.x, base + (0.995 + bob) * T, p.z), q, echelle.set(T, T, T));
+      m.compose(posTmp.set(p.x, base + (0.995 + bob) * T, p.z), q, echelle);
       this.cheveux.setMatrixAt(i, m);
 
       // Jambes : décalage latéral et balancement en opposition de phase.
       const latX = Math.cos(cap) * 0.075 * T;
       const latZ = -Math.sin(cap) * 0.075 * T;
-      for (const [mesh, signe] of [[this.jambeG, 1], [this.jambeD, -1]]) {
+      for (const paire of membres) {
+        const mesh = paire[0], signe = paire[1];
         const av = Math.sin(cadence) * signe * 0.19 * T;
-        const qq = new THREE.Quaternion().setFromEuler(
-          new THREE.Euler(swing * signe, cap, 0, 'YXZ'),
-        );
+        eulerTmp.set(swing * signe, cap, 0, 'YXZ');
+        qq.setFromEuler(eulerTmp);
         m.compose(
-          new THREE.Vector3(
+          posTmp.set(
             p.x + latX * signe + Math.sin(cap) * av,
             base + 0.28 * T,
             p.z + latZ * signe + Math.cos(cap) * av,
           ),
-          qq, echelle.set(T, T, T),
+          qq, echelle,
         );
         mesh.setMatrixAt(i, m);
       }
 
       // Bras : balancement inverse des jambes, ou gesticulation en discussion.
-      for (const [mesh, signe] of [[this.brasG, 1], [this.brasD, -1]]) {
+      for (const paire of bras) {
+        const mesh = paire[0], signe = paire[1];
         const angle = a.etat === 'discute'
           ? -0.7 - a.geste * signe * 0.6
           : -swing * signe;
-        const qq = new THREE.Quaternion().setFromEuler(
-          new THREE.Euler(angle, cap, 0, 'YXZ'),
-        );
+        eulerTmp.set(angle, cap, 0, 'YXZ');
+        qq.setFromEuler(eulerTmp);
         m.compose(
-          new THREE.Vector3(
+          posTmp.set(
             p.x + Math.cos(cap) * 0.215 * T * signe,
             base + (0.66 + bob) * T,
             p.z - Math.sin(cap) * 0.215 * T * signe,
           ),
-          qq, echelle.set(T, T, T),
+          qq, echelle,
         );
         mesh.setMatrixAt(i, m);
       }
     }
 
-    for (const mesh of [this.corps, this.tete, this.cheveux,
-      this.jambeG, this.jambeD, this.brasG, this.brasD]) {
+    for (const mesh of this._tousMaillages) {
       mesh.instanceMatrix.needsUpdate = true;
     }
   }
@@ -421,6 +444,16 @@ export class Pietons {
       x: nA.x + (nB.x - nA.x) * a.avance,
       z: nA.z + (nB.z - nA.z) * a.avance,
     };
+  }
+
+  // Nombre de passants réellement dessinés, piloté par le profil graphique.
+  // Les agents excédentaires continuent d'exister et de marcher, seul leur
+  // rendu s'arrête : borner `count` sur les maillages instanciés coûte un
+  // simple entier, là où reconstruire réallouerait sept géométries.
+  setVisibles(n) {
+    this.visibles = Math.max(0, Math.min(this.agents.length, n));
+    for (const m of this._tousMaillages ?? []) m.count = this.visibles;
+    return this.visibles;
   }
 
   get effectif() { return this.agents.length; }
