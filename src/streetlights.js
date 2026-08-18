@@ -16,7 +16,11 @@ const PORTEE = 45;
 // fragment éclairé, mais 8 ne couvraient que les deux ou trois mâts les plus
 // proches : dès qu'on roulait, la ville retombait dans le noir. 20 tient le
 // champ de vision proche sans coût mesurable sur le M4.
-const POOL = 20;
+//
+// Le pool est alloué à la taille maximale utilisée par les profils : le profil
+// courant en éteint une partie via `setPool` plutôt que de recréer les
+// lumières, ce qui éviterait une recompilation de matériaux à chaque bascule.
+const POOL = 28;
 
 export class EclairagePublic {
   constructor(scene, foyers) {
@@ -47,6 +51,21 @@ export class EclairagePublic {
       scene.add(l);
       this.lampes.push({ light: l, foyer: -1 });
     }
+    // Par défaut toutes les lampes du pool sont servies ; le profil graphique
+    // en réduit le nombre au démarrage.
+    this.actives = this.lampes.length;
+  }
+
+  // Nombre de foyers réellement calculés, piloté par le profil graphique. Les
+  // lumières excédentaires sont éteintes plutôt que détruites : les recréer à
+  // chaque changement de profil coûterait une recompilation de matériaux.
+  setPool(n) {
+    this.actives = Math.max(0, Math.min(this.lampes.length, n));
+    for (let i = this.actives; i < this.lampes.length; i++) {
+      this.lampes[i].light.visible = false;
+      this.lampes[i].foyer = -1;
+    }
+    return this.actives;
   }
 
   // `intensite` va de 0 (plein jour, éteint) à 1 (nuit noire, plein feu).
@@ -83,14 +102,18 @@ export class EclairagePublic {
     // Affectation : chaque lumière du pool prend le foyer le plus proche non
     // encore servi. Une lumière déjà sur le bon foyer n'est pas déplacée, ce
     // qui évite les sauts d'éclairage quand deux foyers sont à égale distance.
-    const retenus = proches.slice(0, POOL);
+    // Seules les lampes actives du profil courant sont servies.
+    const n = this.actives ?? this.lampes.length;
+    const retenus = proches.slice(0, n);
     const dejaPris = new Set();
-    for (const l of this.lampes) {
+    for (let i = 0; i < n; i++) {
+      const l = this.lampes[i];
       if (l.foyer >= 0 && retenus.some((r) => r.i === l.foyer)) dejaPris.add(l.foyer);
     }
 
     let curseur = 0;
-    for (const l of this.lampes) {
+    for (let i = 0; i < n; i++) {
+      const l = this.lampes[i];
       if (l.foyer >= 0 && dejaPris.has(l.foyer)) {
         // Conserve son foyer, ajuste seulement l'intensité.
         l.light.intensity = this.puissance(l.foyer, posVoiture, intensite);

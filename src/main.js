@@ -19,6 +19,7 @@ import { buildCarMesh } from './carmesh.js';
 import { chargerVoiture, animerRoues } from './carmodel.js';
 
 import { AudioEngine } from './audio.js';
+import { Qualite, PROFILS, PROFIL_DEFAUT } from './quality.js';
 
 // Modèle du véhicule piloté.
 //
@@ -296,7 +297,9 @@ async function init() {
     // ambiante est une donnée basse fréquence (de larges dégradés au pied des
     // objets, aucun détail fin), la calculer sur deux fois moins de pixels ne
     // se voit pas : captures comparées à midi, images indiscernables.
-    const GTAO_ECHELLE = 0.5;
+    // Pilotée par le profil graphique : `let` et non `const`, la valeur change
+    // quand le joueur bascule de profil.
+    let GTAO_ECHELLE = PROFILS[PROFIL_DEFAUT].gtaoEchelle;
     const gtao = new GTAOPass(scene, camera,
       Math.round(innerWidth * GTAO_ECHELLE), Math.round(innerHeight * GTAO_ECHELLE));
     // Rayon court : on cherche les ombres de contact au pied des objets, pas
@@ -386,7 +389,19 @@ async function init() {
     });
     // Exposé pour la boucle de jeu et les bascules au clavier. Fusion et non
     // remplacement : `smaa` y a déjà été déposé plus haut.
-    composer.userData = { ...(composer.userData ?? {}), contours, majContours };
+    // `redimGtao` et `majContours` sont exposés pour que le module de qualité
+    // puisse redimensionner les passes après un changement de profil ou un
+    // ajustement de résolution dynamique : elles allouent leurs cibles d'après
+    // le pixel ratio et resteraient sinon dimensionnées pour l'ancienne valeur.
+    const setEchelleGtao = (e) => {
+      GTAO_ECHELLE = e;
+      redimGtao();
+      majContours();
+    };
+    composer.userData = {
+      ...(composer.userData ?? {}),
+      contours, majContours, redimGtao, setEchelleGtao,
+    };
     diag('Occlusion ambiante : active');
   } catch (err) {
     console.warn('Occlusion ambiante indisponible, rendu direct :', err.message);
@@ -516,7 +531,12 @@ async function init() {
 
   // Passants : ils marchent sur les cheminements piétons réels du bourg,
   // s'arrêtent pour discuter et donnent vie aux rues.
-  const pietons = new Pietons(data, data.terrain ?? null, ROAD_Y, 140);
+  // L'effectif des passants est figé à la construction (un InstancedMesh est
+  // dimensionné une fois). Le profil le fixe au démarrage ; en cours de partie,
+  // un changement de profil masque les passants excédentaires plutôt que de
+  // reconstruire, ce qui éviterait de réallouer sept maillages instanciés.
+  const pietons = new Pietons(data, data.terrain ?? null, ROAD_Y,
+    PROFILS.qualite.passants);
   if (pietons.effectif) {
     scene.add(pietons.group);
     diag(`Passants : ${pietons.effectif} sur ${pietons.noeuds.length} nœuds piétons`);
@@ -543,6 +563,43 @@ async function init() {
       && o.geometry.attributes.position.count > 5000) o.castShadow = true;
   });
   el('shadow-state').textContent = 'ACTIVÉES';
+
+  // --- Profils graphiques -------------------------------------------------
+  // Les réglages de rendu sont regroupés dans `quality.js`. Le profil
+  // « Équilibré » reprend exactement les valeurs qui étaient en dur ici, donc
+  // le comportement par défaut du jeu ne change pas.
+  const qualite = new Qualite({
+    renderer,
+    scene,
+    soleil: sun,
+    eclairage,
+    get smaa() { return composer?.userData?.smaa ?? null; },
+    // Redimensionne les passes d'écran après un changement de résolution.
+    onResolution: () => {
+      composer?.setSize(innerWidth, innerHeight);
+      composer?.userData?.redimGtao?.();
+      composer?.userData?.majContours?.();
+    },
+    majGtao: (e) => composer?.userData?.setEchelleGtao?.(e),
+    // Appliqué à chaque bascule de profil : ce qui ne se règle pas sur le
+    // renderer lui-même.
+    onProfil: (p) => {
+      shadowsHigh = p.ombres;
+      cityGroup.traverse((o) => {
+        if (o.isMesh && !o.userData.noShadowCast
+          && o.geometry.attributes.position.count > 5000) o.castShadow = p.ombres;
+      });
+      scene.traverse((o) => { if (o.isMesh) o.material.needsUpdate = true; });
+      if (p.ombres) sun.shadow.needsUpdate = true;
+      pietons?.setVisibles?.(p.passants);
+      el('shadow-state').textContent = p.ombres ? 'ACTIVÉES' : 'DÉSACTIVÉES';
+      el('aa-state').textContent = p.smaa ? 'ACTIVÉ' : 'DÉSACTIVÉ';
+      const q = el('quality-state');
+      if (q) q.textContent = p.nom.toUpperCase();
+    },
+  }, PROFIL_DEFAUT);
+  qualite.appliquer();
+  diag(`Profil graphique : ${qualite.profil.nom}`);
 
   // --- Monde physique -----------------------------------------------------
   await progress(66, 'Génération des collisions...');
@@ -1124,6 +1181,17 @@ async function init() {
       car.autoGearbox = !car.autoGearbox;
       el('gearbox-mode').textContent = car.autoGearbox ? 'AUTO' : 'MANU';
     }
+    // Profil graphique : Performance, Équilibré, Qualité.
+    if (tapped('j')) {
+      const n = qualite.suivant();
+      diag(`Profil graphique : ${PROFILS[n].nom}`);
+    }
+    // Ajustement automatique de la résolution : le joueur peut le couper.
+    if (tapped('u')) {
+      const on = qualite.setAuto(!qualite.autoResolution);
+      el('auto-res-state').textContent = on ? 'ON' : 'OFF';
+      diag(`Résolution dynamique : ${on ? 'active' : 'coupée'}`);
+    }
     audio.horn(down('b'));
 
     if (!paused) {
@@ -1452,6 +1520,14 @@ async function init() {
           lieuPanel.classList.add('hidden');
         }
       }
+    }
+
+    // Résolution dynamique : la moyenne glissante et l'hystérésis sont dans
+    // `quality.js`. On lui passe le temps de la frame écoulée, pas une moyenne
+    // déjà lissée, sinon le lissage s'appliquerait deux fois.
+    if (qualite.tick(dt * 1000, now / 1000)) {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
     }
 
     frames++;

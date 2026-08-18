@@ -446,5 +446,15 @@ export class Pietons {
     };
   }
 
+  // Nombre de passants réellement dessinés, piloté par le profil graphique.
+  // Les agents excédentaires continuent d'exister et de marcher, seul leur
+  // rendu s'arrête : borner `count` sur les maillages instanciés coûte un
+  // simple entier, là où reconstruire réallouerait sept géométries.
+  setVisibles(n) {
+    this.visibles = Math.max(0, Math.min(this.agents.length, n));
+    for (const m of this._tousMaillages ?? []) m.count = this.visibles;
+    return this.visibles;
+  }
+
   get effectif() { return this.agents.length; }
 }
