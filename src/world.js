@@ -365,6 +365,18 @@ export function buildWorld(scene, data) {
   }
 
   // ---- Eau ---------------------------------------------------------------
+  // L'eau était posée à une altitude fixe de 0,05 alors que tout le reste de
+  // la ville suit le relief interpolé. Sur une commune qui présente 38 m de
+  // dénivelé, le résultat était un ruban gris suspendu en l'air au-dessus des
+  // prés, sans rapport avec le terrain qu'il traverse.
+  //
+  // La surface descend maintenant avec le sol. Elle affleure quelques
+  // centimètres AU-DESSUS du terrain et non en dessous : le relief n'est
+  // terrassé que sous les routes, jamais sous les cours d'eau. Une nappe
+  // posée sous le sol naturel disparaît purement et simplement, ce qu'un
+  // premier essai à -0,35 m a produit : 94 % de la surface enfouie.
+  const AFFLEUREMENT_EAU = 0.06;
+  const altEau = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + AFFLEUREMENT_EAU;
   const waterPos = [];
   for (const w of data.water) {
     if (w.river) {
@@ -374,16 +386,43 @@ export function buildWorld(scene, data) {
         const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
         if (len < 0.01) continue;
         const nx = (-dz / len) * h, nz = (dx / len) * h;
+        // Une altitude par berge : le lit suit la pente en travers comme en
+        // long, sinon un cours d'eau en dévers ressort d'un côté.
+        const yA = altEau(x1 + nx, z1 + nz), yB = altEau(x1 - nx, z1 - nz);
+        const yC = altEau(x2 + nx, z2 + nz), yD = altEau(x2 - nx, z2 - nz);
+        // Sommets énumérés dans le sens antihoraire vu du dessus, pour que la
+        // normale calculée pointe vers le ciel. L'ordre inverse, en place
+        // jusqu'ici, donnait 100 % de normales tournées vers le bas : le
+        // DoubleSide le masquait, au prix d'une face inutile et d'un éclairage
+        // pris à contresens.
         waterPos.push(
-          x1 + nx, 0.05, z1 + nz, x1 - nx, 0.05, z1 - nz, x2 + nx, 0.05, z2 + nz,
-          x1 - nx, 0.05, z1 - nz, x2 - nx, 0.05, z2 - nz, x2 + nx, 0.05, z2 + nz,
+          x1 + nx, yA, z1 + nz, x2 + nx, yC, z2 + nz, x1 - nx, yB, z1 - nz,
+          x1 - nx, yB, z1 - nz, x2 + nx, yC, z2 + nz, x2 - nx, yD, z2 - nz,
         );
       }
     } else {
+      // Plan d'eau : une nappe est horizontale. On retient la MÉDIANE des
+      // altitudes du contour plutôt que le minimum : un seul point de rive
+      // anormalement bas, fréquent sur un contour interpolé, enfoncerait toute
+      // la nappe sous le terrain et la rendrait invisible.
+      const alts = w.pts.map(([px, pz]) => altEau(px, pz)).sort((a, b) => a - b);
+      let yPlan = alts.length ? alts[Math.floor(alts.length / 2)] : AFFLEUREMENT_EAU;
+      if (!Number.isFinite(yPlan)) yPlan = AFFLEUREMENT_EAU;
       for (const [a, b, c] of triangulate(w.pts)) {
-        waterPos.push(w.pts[a][0], 0.05, w.pts[a][1]);
-        waterPos.push(w.pts[b][0], 0.05, w.pts[b][1]);
-        waterPos.push(w.pts[c][0], 0.05, w.pts[c][1]);
+        const ax = w.pts[a][0], az = w.pts[a][1];
+        const bx = w.pts[b][0], bz = w.pts[b][1];
+        const cx = w.pts[c][0], cz = w.pts[c][1];
+        // Le sens de parcours d'un contour OSM est arbitraire : on mesure
+        // l'aire signée et on inverse les deux derniers sommets quand elle
+        // annonce une face tournée vers le sol. Sans quoi la nappe est
+        // invisible du dessus, seule vue qui compte ici.
+        const aireSignee = (bx - ax) * (cz - az) - (cx - ax) * (bz - az);
+        waterPos.push(ax, yPlan, az);
+        if (aireSignee > 0) {
+          waterPos.push(cx, yPlan, cz, bx, yPlan, bz);
+        } else {
+          waterPos.push(bx, yPlan, bz, cx, yPlan, cz);
+        }
       }
     }
   }
@@ -391,9 +430,17 @@ export function buildWorld(scene, data) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(waterPos, 3));
     g.computeVertexNormals();
+    // L'eau n'est pas un métal : sa réflectivité vient de son indice de
+    // réfraction, pas d'une conductivité. Un `metalness` de 0,6 la faisait
+    // rendre comme du plomb liquide, prenant la teinte de l'environnement au
+    // lieu de la sienne. En PBR, une surface diélectrique se décrit avec
+    // metalness à 0 et une rugosité basse.
+    //
+    // FrontSide : la nappe est vue du dessus, sa face inférieure n'est jamais
+    // visible en conduite.
     group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0x2f5f7a, roughness: 0.08, metalness: 0.6, side: THREE.DoubleSide,
-      transparent: true, opacity: 0.88,
+      color: 0x3d6b85, roughness: 0.12, metalness: 0.0, side: THREE.FrontSide,
+      transparent: true, opacity: 0.82,
     })));
   }
 
