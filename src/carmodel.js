@@ -12,6 +12,7 @@
 // tourne, le nœud d'origine conserve sa pose.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 
 // Longueur hors tout visée, en mètres. Le modèle est mis à l'échelle pour
 // correspondre au gabarit utilisé par la physique.
@@ -78,6 +79,14 @@ const AXE_ROULEMENT = 'x';
 // modules.
 export async function chargerVoiture(url, basDesPneus = -0.67) {
   const loader = new GLTFLoader();
+  // Le modèle est compressé en Meshopt (EXT_meshopt_compression et
+  // KHR_mesh_quantization) : 7,54 Mo de géométrie brute ramenés à 1,73 Mo,
+  // pour une géométrie identique au triangle près. Le décodeur est fourni par
+  // Three.js et reste local, aucun asset n'est téléchargé au runtime.
+  //
+  // Un fichier non compressé se charge toujours : l'extension est ignorée
+  // quand elle est absente.
+  loader.setMeshoptDecoder(MeshoptDecoder);
   const gltf = await loader.loadAsync(url);
   const racine = gltf.scene;
 
@@ -136,24 +145,27 @@ export async function chargerVoiture(url, basDesPneus = -0.67) {
   for (const nom of NOMS_ROUES) {
     const noeud = racine.getObjectByName(nom);
     if (!noeud) continue;
-    // Rayon mesuré sur la géométrie brute du pneu, sans passer par Box3 :
-    // `setFromObject` travaille en coordonnées monde, donc après la rotation
-    // arbitraire portée par le nœud, ce qui gonfle la boîte alignée sur les
-    // axes et surestime le rayon de moitié.
+    // Rayon mesuré dans le repère du VÉHICULE, et non sur la géométrie brute.
+    //
+    // Lire la boîte de la géométrie seule suppose que ses coordonnées sont
+    // déjà à l'échelle réelle. C'est faux dès que le fichier est quantifié :
+    // `KHR_mesh_quantization` normalise les positions et reporte l'échelle
+    // sur les nœuds, si bien qu'une roue de 0,31 m ressortait à 0,96 m après
+    // compression. Les roues auraient alors tourné trois fois trop lentement.
+    //
+    // `setFromObject` applique toute la chaîne de transformations, donc rend
+    // la dimension vraie quelle que soit la façon dont le fichier est encodé.
+    // On la ramène dans le repère du véhicule pour rester indépendant de
+    // l'orientation propre du nœud.
     //
     // On retient la MÉDIANE des trois dimensions : la boîte d'une roue est un
     // disque, deux dimensions valent le diamètre et la troisième la largeur.
-    const dim = { x: 0, y: 0, z: 0 };
-    noeud.traverse((o) => {
-      if (!o.isMesh || !o.geometry) return;
-      o.geometry.computeBoundingBox();
-      const bb = o.geometry.boundingBox;
-      dim.x = Math.max(dim.x, bb.max.x - bb.min.x);
-      dim.y = Math.max(dim.y, bb.max.y - bb.min.y);
-      dim.z = Math.max(dim.z, bb.max.z - bb.min.z);
-    });
-    const tri = [dim.x, dim.y, dim.z].sort((p, q) => p - q);
-    const diam = tri[1] * echelle;
+    conteneur.updateWorldMatrix(true, true);
+    const boiteRoue = new THREE.Box3().setFromObject(noeud);
+    const dimRoue = new THREE.Vector3();
+    boiteRoue.getSize(dimRoue);
+    const tri = [dimRoue.x, dimRoue.y, dimRoue.z].sort((p, q) => p - q);
+    const diam = tri[1];
     if (diam > 0.1) rayon = diam / 2;
 
     const pivots = enveloppper(noeud);

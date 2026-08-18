@@ -14,10 +14,11 @@
     "fetch-facades": "node tools/fetch-facades.mjs"
   },
   "dependencies": {
-    "three": "^0.170.0",
-    "@dimforge/rapier3d-compat": "^0.14.0"
+    "@dimforge/rapier3d-compat": "^0.14.0",
+    "three": "^0.170.0"
   },
   "devDependencies": {
+    "@gltf-transform/cli": "^4.4.2",
     "vite": "^6.0.0"
   }
 }
