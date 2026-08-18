@@ -21,6 +21,7 @@ import { chargerVoiture, animerRoues } from './carmodel.js';
 import { AudioEngine } from './audio.js';
 import { Qualite, PROFILS, PROFIL_DEFAUT } from './quality.js';
 import { GrilleInstances } from './spatial.js';
+import { Minicarte } from './minimap.js';
 
 // Modèle du véhicule piloté.
 //
@@ -839,81 +840,23 @@ async function init() {
   const deltaTmp = new THREE.Vector3();   // écart de vitesse, détection de choc
   const eulerTmp = new THREE.Euler();     // conversions de cap
   const posTmp = new THREE.Vector3();     // position du véhicule, lue une fois par frame
+  // Vecteur propre à la minicarte : elle est dessinée après que `posTmp` a
+  // servi au reste de la frame, et le partager exposerait à un écrasement
+  // silencieux si l'ordre des appels changeait.
+  const posCarte = new THREE.Vector3();
   // Structures brutes réutilisées pour le rayon Rapier de la caméra.
   const camRayOrig = { x: 0, y: 0, z: 0 };
   const camRayDir = { x: 0, y: 0, z: 0 };
   const camRay = new RAPIER.Ray(camRayOrig, camRayDir);
 
   // --- Minicarte ----------------------------------------------------------
-  const mapCanvas = el('minimap');
-  const mctx = mapCanvas.getContext('2d');
-  const MAP_SIZE = 190;
-  mapCanvas.width = mapCanvas.height = MAP_SIZE * devicePixelRatio;
-  mctx.scale(devicePixelRatio, devicePixelRatio);
-  const MAP_SCALE = 0.22; // px par mètre
-
-  function drawMinimap() {
-    const p = car.position;
-    const yaw = eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y;
-    mctx.save();
-    mctx.clearRect(0, 0, MAP_SIZE, MAP_SIZE);
-    mctx.beginPath();
-    mctx.arc(MAP_SIZE / 2, MAP_SIZE / 2, MAP_SIZE / 2 - 2, 0, Math.PI * 2);
-    mctx.fillStyle = 'rgba(12,16,22,0.82)';
-    mctx.fill();
-    mctx.clip();
-
-    mctx.translate(MAP_SIZE / 2, MAP_SIZE / 2);
-    mctx.rotate(-yaw); // la carte tourne avec la voiture
-    mctx.translate(-p.x * MAP_SCALE, -p.z * MAP_SCALE);
-
-    const range = 420;
-    mctx.lineCap = 'round';
-    for (const r of data.roads) {
-      if (!r.drivable) continue;
-      const [x0, z0] = r.pts[0];
-      if (Math.abs(x0 - p.x) > range && Math.abs(z0 - p.z) > range) continue;
-      mctx.beginPath();
-      for (let i = 0; i < r.pts.length; i++) {
-        const [x, z] = r.pts[i];
-        i ? mctx.lineTo(x * MAP_SCALE, z * MAP_SCALE) : mctx.moveTo(x * MAP_SCALE, z * MAP_SCALE);
-      }
-      // Code couleur repris des cartes routières : jaune pour les axes
-      // principaux, blanc pour la desserte, teinte distincte pour les ponts.
-      mctx.strokeStyle = r.bridge ? '#7fd4ff'
-        : r.rondPoint ? '#f0a63c'
-        : r.width >= 8 ? '#e8c34a' : '#b9c2cc';
-      mctx.lineWidth = Math.max(1, r.width * MAP_SCALE * 0.9);
-      mctx.stroke();
-    }
-    // Équipements remarquables : une pastille colorée par catégorie, pour
-    // repérer mairie, écoles et commerces d'un coup d'œil.
-    if (data.poi?.equipements) {
-      for (const e of data.poi.equipements) {
-        if (Math.abs(e.x - p.x) > range || Math.abs(e.z - p.z) > range) continue;
-        mctx.beginPath();
-        mctx.arc(e.x * MAP_SCALE, e.z * MAP_SCALE, 2.6, 0, Math.PI * 2);
-        mctx.fillStyle = '#' + e.info.couleur.toString(16).padStart(6, '0');
-        mctx.fill();
-        mctx.lineWidth = 0.8;
-        mctx.strokeStyle = 'rgba(255,255,255,.75)';
-        mctx.stroke();
-      }
-    }
-    mctx.restore();
-
-    // Flèche du véhicule, toujours au centre.
-    mctx.save();
-    mctx.translate(MAP_SIZE / 2, MAP_SIZE / 2);
-    mctx.beginPath();
-    mctx.moveTo(0, -7); mctx.lineTo(5, 6); mctx.lineTo(0, 3); mctx.lineTo(-5, 6);
-    mctx.closePath();
-    mctx.fillStyle = '#ff3b30';
-    mctx.strokeStyle = '#fff';
-    mctx.lineWidth = 1.2;
-    mctx.fill(); mctx.stroke();
-    mctx.restore();
-  }
+  // Le dessin lui-même est dans `minimap.js` : il ne dépend que du canvas, des
+  // données cartographiques et de la position du véhicule.
+  const minicarte = new Minicarte(el('minimap'), data);
+  const drawMinimap = () => minicarte.dessiner(
+    car.lirePosition(posCarte),
+    eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y,
+  );
 
   // --- Compteur (aiguille + chiffres) -------------------------------------
   const needle = el('needle');
