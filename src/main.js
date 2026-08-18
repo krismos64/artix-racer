@@ -20,6 +20,7 @@ import { chargerVoiture, animerRoues } from './carmodel.js';
 
 import { AudioEngine } from './audio.js';
 import { Qualite, PROFILS, PROFIL_DEFAUT } from './quality.js';
+import { GrilleInstances } from './spatial.js';
 
 // Modèle du véhicule piloté.
 //
@@ -472,7 +473,8 @@ async function init() {
   }
 
   await progress(42, "Construction de la ville (3481 bâtiments)...");
-  const { collisionTris, group: cityGroup, foyers, lampHeads, placesEpi } = buildWorld(scene, data);
+  const { collisionTris, group: cityGroup, foyers, lampHeads, placesEpi,
+    instances: instancesVegetation } = buildWorld(scene, data);
 
   // Éclairage public : les lanternes projettent réellement de la lumière sur
   // la chaussée à la tombée du jour.
@@ -600,6 +602,19 @@ async function init() {
   }, PROFIL_DEFAUT);
   qualite.appliquer();
   diag(`Profil graphique : ${qualite.profil.nom}`);
+
+  // --- Découpage spatial de la végétation ---------------------------------
+  // Les arbres sont le poste le plus lourd de la scène : 3 500 instances pour
+  // 1,18 million de triangles à eux seuls, dessinés en entier quel que soit
+  // l'endroit où se trouve la voiture, la sphère englobante d'un InstancedMesh
+  // couvrant toute la commune. La grille les range par distance et n'en
+  // dessine que la part utile.
+  const grilleVegetation = instancesVegetation
+    ? new GrilleInstances(instancesVegetation.meshes, instancesVegetation.positions)
+    : null;
+  if (grilleVegetation) {
+    diag(`Découpage spatial : ${grilleVegetation.total} arbres instanciés`);
+  }
 
   // --- Monde physique -----------------------------------------------------
   await progress(66, 'Génération des collisions...');
@@ -1364,6 +1379,11 @@ async function init() {
     // Les lampadaires proches de la voiture s'allument réellement : le pool de
     // lumières est réaffecté à chaque frame aux foyers les plus proches.
     eclairage.update(posVoiture, nuitFacteur);
+
+    // Végétation : seules les instances à portée sont dessinées. La grille ne
+    // se réordonne que lorsque le véhicule a franchi une fraction de cellule,
+    // le tri restant valable entre-temps.
+    grilleVegetation?.maj(posVoiture.x, posVoiture.z, qualite.profil.distanceDetails);
     el('night-badge').classList.toggle('hidden', !night);
 
     // --- Caméra -------------------------------------------------------------
@@ -1584,6 +1604,7 @@ async function init() {
   // `setHeure` permet de sauter directement à une heure du cycle jour/nuit, ce
   // qui rend l'éclairage nocturne testable sans attendre que le temps tourne.
   window.__game = { car, world, scene, camera, renderer, composer, data, spawn, SPEC, audio, collisionTris: verts, RAPIER,
+    qualite, grilleVegetation,
     setHeure: (h) => { timeOfDay = ((h % 24) + 24) % 24; },
     getHeure: () => timeOfDay };
 

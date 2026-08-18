@@ -1426,6 +1426,9 @@ export function buildWorld(scene, data) {
     lampHeads: lamps?.userData.lampHeads ?? null,
     // Places en épi des aires OSM, pour y garer des véhicules bien orientés.
     placesEpi,
+    // Maillages instanciés éligibles au découpage spatial, avec la position de
+    // chaque instance.
+    instances: trees?.userData.instances ?? null,
   };
 }
 
@@ -1742,6 +1745,13 @@ function plantTrees(data, relief = null) {
   if (branches.instanceColor) branches.instanceColor.needsUpdate = true;
   if (leaves.instanceColor) leaves.instanceColor.needsUpdate = true;
   group.add(trunks, branches, leaves);
+  // Exposé pour le découpage spatial : les trois maillages partagent le même
+  // ordre d'instances et doivent être réordonnés ensemble, sinon le feuillage
+  // d'un arbre se retrouverait sur le fût d'un autre.
+  group.userData.instances = {
+    meshes: [trunks, branches, leaves],
+    positions: positions.map(([x, z]) => [x, z]),
+  };
   return group;
 }
 
