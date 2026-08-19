@@ -657,6 +657,22 @@ export function buildWorld(scene, data) {
   // d'enrobé. On remplit chaque aire de bandes parallèles à son grand axe,
   // espacées de la largeur réglementaire d'une place.
   const LARG_PLACE = 2.5, LONG_PLACE = 5.0;
+  // Stationnement en épi : les places sont inclinées à 45° sur le bord, pas
+  // perpendiculaires. C'est ce que montrent les panoramiques de l'avenue du
+  // 18e Régiment d'Infanterie, et c'est la disposition courante dans le bourg,
+  // la manœuvre d'entrée se faisant dans le sens de circulation.
+  //
+  // Jusqu'au 19/08/2026 le module portait le nom « épi » mais posait de la
+  // bataille : traits et véhicules suivaient la normale au bord, donc 90°.
+  //
+  // Les cotes se déduisent de l'angle. Une place de 2,5 x 5,0 m inclinée de
+  // `EPI_ANGLE` occupe `LARG_PLACE / sin(angle)` le long du bord, et
+  // `LONG_PLACE * sin + LARG_PLACE * cos` en profondeur : à 45°, 3,54 m de
+  // pas pour 5,30 m de profondeur, contre 2,50 et 5,00 en bataille.
+  const EPI_ANGLE = Math.PI / 4;
+  const EPI_SIN = Math.sin(EPI_ANGLE), EPI_COS = Math.cos(EPI_ANGLE);
+  const PAS_EPI = LARG_PLACE / EPI_SIN;
+  const PROF_EPI = LONG_PLACE * EPI_SIN + LARG_PLACE * EPI_COS;
   for (const p of data.parkings ?? []) {
     if (p.station) continue;   // une station-service n'a pas de places marquées
     // Grand axe de l'aire, par analyse en composantes principales : les places
@@ -680,7 +696,7 @@ export function buildWorld(scene, data) {
       vMin = Math.min(vMin, v); vMax = Math.max(vMax, v);
     }
     // Une aire trop étroite ne porte pas de rangée lisible.
-    if (uMax - uMin < LONG_PLACE || vMax - vMin < LARG_PLACE * 2) continue;
+    if (uMax - uMin < PROF_EPI || vMax - vMin < LARG_PLACE * 2) continue;
     const altM = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + ROAD_Y + 0.005;
 
     // Les places bordent les deux GRANDS côtés de l'aire, nez vers le bord, et
@@ -708,7 +724,7 @@ export function buildWorld(scene, data) {
     // a aucune.
     const LARG_VOIE = 6.0;
     const largeurAire = vMax - vMin;
-    const deuxRangees = largeurAire >= 2 * LONG_PLACE + LARG_VOIE;
+    const deuxRangees = largeurAire >= 2 * PROF_EPI + LARG_VOIE;
 
     // Bord retenu quand une seule rangée tient : le plus éloigné du bâti, la
     // desserte se faisant par l'autre. À défaut de bâti connu à ce stade de la
@@ -719,12 +735,12 @@ export function buildWorld(scene, data) {
       const longueurBord = (sens) => {
         const vDep = sens > 0 ? vMin : vMax;
         let n = 0;
-        for (let u = uMin; u <= uMax; u += LARG_PLACE) {
+        for (let u = uMin; u <= uMax; u += PAS_EPI) {
           for (let d = 0; d < largeurAire; d += PAS_SONDE) {
             const v = vDep + sens * d;
             if (pointInPoly(cx + ux * u + vx * v, cz + uz * u + vz * v, p.pts)) {
               // Le bord ne compte que s'il peut recevoir une place entière.
-              const vi = v + sens * LONG_PLACE;
+              const vi = v + sens * PROF_EPI;
               if (pointInPoly(cx + ux * u + vx * vi, cz + uz * u + vz * vi, p.pts)) n++;
               break;
             }
@@ -736,7 +752,9 @@ export function buildWorld(scene, data) {
     }
     const sensActifs = deuxRangees ? [1, -1] : [sensRetenu];
 
-    for (let u = uMin + LARG_PLACE; u < uMax - 0.5; u += LARG_PLACE) {
+    // Le pas suit l'inclinaison : une place à 45° occupe 3,54 m le long du
+    // bord, non 2,50. Garder l'ancien pas ferait chevaucher les véhicules.
+    for (let u = uMin + PAS_EPI; u < uMax - 0.5; u += PAS_EPI) {
       for (const sens of sensActifs) {
         const vDepart = sens > 0 ? vMin : vMax;
         let vBord = null;
@@ -748,13 +766,32 @@ export function buildWorld(scene, data) {
           }
         }
         if (vBord === null) continue;
-        // Le trait de séparation part du bord et s'enfonce d'une longueur de
-        // place vers l'intérieur.
-        const v0 = vBord, v1 = vBord + sens * LONG_PLACE;
-        const ax = cx + ux * u + vx * v0, az = cz + uz * u + vz * v0;
-        const bx = cx + ux * u + vx * v1, bz = cz + uz * u + vz * v1;
+        // Le trait de séparation part du bord et s'enfonce en diagonale : il
+        // matérialise le flanc d'une place inclinée, donc il avance le long du
+        // bord en même temps qu'il s'y enfonce. Un trait perpendiculaire
+        // dessinerait de la bataille sous des véhicules posés en épi.
+        //
+        // `sensEpi` fait pencher toutes les places d'une même rangée du même
+        // côté, comme sur un parking réel : deux rangées face à face penchent
+        // en sens inverse, la manœuvre d'entrée se faisant vers l'avant dans
+        // chaque sens de circulation.
+        const sensEpi = sens > 0 ? 1 : -1;
+        // Vecteur directeur de la place, unitaire : c'est lui qui porte le
+        // trait comme l'axe du véhicule, dosé par le sinus et le cosinus de
+        // l'inclinaison. Le déduire de la boîte englobante donnait un trait de
+        // 6,37 m orienté à 33,7°, au lieu de 5,00 m à 45° : il dépassait au
+        // fond de la place et ne suivait pas les véhicules.
+        const dux = sensEpi * EPI_COS, dvz = sens * EPI_SIN;
+        const v0 = vBord, u0 = u;
+        const u1 = u0 + dux * LONG_PLACE, v1 = v0 + dvz * LONG_PLACE;
+        const ax = cx + ux * u0 + vx * v0, az = cz + uz * u0 + vz * v0;
+        const bx = cx + ux * u1 + vx * v1, bz = cz + uz * u1 + vz * v1;
         if (!pointInPoly(bx, bz, p.pts)) continue;
-        const nx = ux * 0.06, nz = uz * 0.06;
+        // Épaisseur perpendiculaire AU TRAIT, non à l'axe du parking : prise
+        // le long de `u`, elle cisaillait le ruban et le rétrécissait à 10 cm.
+        const tux = -dvz, tvz = dux;    // normale au vecteur directeur
+        const nx = (ux * tux + vx * tvz) * 0.06;
+        const nz = (uz * tux + vz * tvz) * 0.06;
         margePos.push(
           ax - nx, altM(ax, az), az - nz, ax + nx, altM(ax, az), az + nz,
           bx - nx, altM(bx, bz), bz - nz,
@@ -762,12 +799,13 @@ export function buildWorld(scene, data) {
           bx - nx, altM(bx, bz), bz - nz,
         );
 
-        // Une place occupe l'intervalle entre ce trait et le suivant. Le
-        // véhicule s'y range perpendiculairement au bord, capot vers
-        // l'extérieur ou en marche arrière selon les habitudes.
-        const uc = u + LARG_PLACE / 2;
+        // Une place occupe l'intervalle entre ce trait et le suivant. Son
+        // centre part du même vecteur directeur : à mi-longueur de la place le
+        // long de la diagonale, décalé d'un demi-pas le long du bord pour se
+        // placer entre les deux traits qui l'encadrent.
+        const uc = u0 + dux * (LONG_PLACE / 2) + sensEpi * (PAS_EPI / 2);
         if (uc > uMax - 0.5) continue;
-        const vc = vBord + sens * (LONG_PLACE / 2);
+        const vc = v0 + dvz * (LONG_PLACE / 2);
         const px2 = cx + ux * uc + vx * vc, pz2 = cz + uz * uc + vz * vc;
         if (!pointInPoly(px2, pz2, p.pts)) continue;
         const graine = Math.abs(px2 * 13.7 + pz2 * 29.3);
@@ -777,9 +815,17 @@ export function buildWorld(scene, data) {
         placesEpi.push({
           x: px2, z: pz2,
           y: (relief ? relief.hauteurRoute(px2, pz2) : 0) + ROAD_Y,
-          // La normale au bord donne l'axe du véhicule.
-          cap: Math.atan2(-sens * vx, -sens * vz)
-            + (hash(graine + 7.7) > 0.45 ? 0 : Math.PI),
+          // L'axe du véhicule suit la diagonale de la place, pas la normale au
+          // bord : c'est ce qui distingue l'épi de la bataille. On compose la
+          // normale (qui pointe vers le fond) et la direction du bord, dosées
+          // par le sinus et le cosinus de l'angle.
+          //
+          // Pas de demi-tour aléatoire ici, contrairement à la bataille : une
+          // place inclinée ne s'occupe que dans un sens, celui de la manœuvre.
+          // Même vecteur directeur que le trait, retourné : le véhicule pointe
+          // vers le fond de la place, le trait s'en éloigne. Les faire dériver
+          // de la même source est ce qui garantit qu'ils restent alignés.
+          cap: Math.atan2(ux * dux + vx * dvz, uz * dux + vz * dvz),
           graine,
         });
       }

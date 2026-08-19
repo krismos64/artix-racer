@@ -190,41 +190,15 @@ export async function chargerVoiture(url, basDesPneus = -0.67) {
   let volant = null;
   if (colonne) volant = enveloppper(colonne);
 
-  // Poste de conduite : plutôt que des cotes devinées, on part de la position
-  // réelle du volant une fois tout le recalage appliqué. Les yeux du conducteur
-  // se tiennent en arrière et au-dessus de lui.
-  const siege = new THREE.Vector3(-0.36, 1.10, 0.10);
-  if (volant) {
-    conteneur.updateWorldMatrix(true, true);
-    const pv = new THREE.Vector3();
-    // Le pivot, pas le nœud : l'enveloppement a remis ce dernier à l'origine.
-    volant.braquage.getWorldPosition(pv);
-    conteneur.worldToLocal(pv);
-    // L'habitacle de ce concept-car est un volume fermé, sans transparence
-    // exploitable depuis l'intérieur : une caméra placée à hauteur d'yeux n'y
-    // voit que de la carrosserie. On la porte donc au ras du pare-brise, juste
-    // au-dessus du capot — le compromis habituel quand l'intérieur n'est pas
-    // conçu pour être filmé de dedans.
-    const boiteHab = new THREE.Box3().setFromObject(conteneur);
-    const sommet = new THREE.Vector3(0, boiteHab.max.y, 0);
-    conteneur.worldToLocal(sommet);
-    siege.set(pv.x, sommet.y + 0.04, pv.z + 0.55);
-  } else {
-    // Modèle sans intérieur : l'Audi R8 est une carrosserie extérieure seule,
-    // sans volant ni habitacle. Les cotes en dur d'un autre véhicule y
-    // placeraient la caméra n'importe où, donc on déduit le poste de conduite
-    // du gabarit réel : au ras du pavillon, avancé au tiers avant, décalé du
-    // côté conducteur. Le rendu vaut celui d'une caméra capot.
-    const boiteHab = new THREE.Box3().setFromObject(conteneur);
-    const sommet = new THREE.Vector3(0, boiteHab.max.y, 0);
-    conteneur.worldToLocal(sommet);
-    siege.set(-0.36, sommet.y + 0.04, LONGUEUR_CIBLE * 0.14);
-  }
-
-  // Ombres portées : la carrosserie projette, l'habitacle reçoit.
+  // Le véhicule ne projette pas d'ombre, choix du 19/08/2026 : sa tache au sol
+  // décrochait en roulage. Il continue d'en recevoir, sans quoi il resterait en
+  // pleine lumière sous un porche ou à l'ombre d'un immeuble.
+  //
+  // Le drapeau se pose ici, sur chaque maillage : le fixer sur le conteneur
+  // seul ne suffit pas, `castShadow` n'étant pas hérité dans Three.js.
   racine.traverse((o) => {
     if (!o.isMesh) return;
-    o.castShadow = true;
+    o.castShadow = false;
     o.receiveShadow = true;
     // Certains exports laissent les matériaux en double face, ce qui double
     // inutilement le coût de rasterisation sur un volume fermé.
@@ -235,7 +209,6 @@ export async function chargerVoiture(url, basDesPneus = -0.67) {
     car: conteneur,
     roues,
     volant,
-    siege,
     rayonRoue: rayon,
     echelle,
     // Compatibilité avec l'ancien contrat d'appel.

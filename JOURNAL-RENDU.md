@@ -1517,3 +1517,388 @@ panneau absent qu'un panneau planté au milieu de la voie.
 Aucun de ces écarts n'est grave pris isolément. Ils méritent d'être connus
 parce qu'ils faussent toute comparaison entre ce qu'annonce la documentation et
 ce que montre l'écran.
+
+## Retrait de la caméra intérieure (19/08/2026)
+
+Vue supprimée, pas réparée. La touche `C` fait défiler quatre positions au lieu
+de cinq : poursuite, capot, cinématique, aérienne.
+
+**La cause est dans le modèle, pas dans le code de caméra.** L'Audi R8 du
+projet est une carrosserie extérieure seule : `carmodel.js` y trouve bien une
+colonne de direction (`InteriorSteeringCylinder`), donc un volant animable,
+mais ni siège, ni planche de bord, ni garnitures. Une caméra posée à hauteur
+d'yeux dans ce volume ne cadre que l'envers de la tôle.
+
+**Le repli déduit ne valait rien.** Le code plaçait le poste de conduite au ras
+du pavillon d'après la boîte englobante, avancé à 0,14 fois la longueur cible,
+décalé de 0,36 m côté conducteur. Le commentaire du fichier l'admettait déjà :
+« le rendu vaut celui d'une caméra capot ». Garder deux entrées de menu pour un
+même cadrage n'apporte rien, et celle-ci n'avait jamais été constatée à l'écran
+depuis le passage à l'Audi.
+
+**Ce qui a été retiré** : la branche `camMode === 2` de `main.js` avec ses cotes
+d'yeux, la variable `siegeImporte` et son affectation, tout le calcul de `siege`
+dans `carmodel.js` (les deux branches, avec et sans volant) et son export.
+
+**Ce qui reste, et pourquoi** : le volant lui-même, qui tourne au braquage et se
+voit en caméra capot ; `camSide`, encore utilisé par le décalage latéral de la
+caméra cinématique ; `LONGUEUR_CIBLE`, qui sert à l'échelle du modèle.
+
+**Renumérotation, le seul risque réel du chantier.** La suppression d'une entrée
+au milieu de `CAMS` décale les indices suivants. Trois endroits lisent `camMode`
+en dur en dehors de la chaîne de branches : l'anti-traversée, qui vaut pour la
+poursuite et la cinématique et passe donc de `=== 3` à `=== 2` ; le lissage
+embarqué, qui ne garde que le capot ; et l'affichage du HUD, qui passe par
+`CAMS[camMode]` et suit tout seul. Un défilement complet des quatre vues est ce
+qui vérifie ce genre de retrait, pas une capture d'une seule d'entre elles.
+
+**Réintroduire cette vue suppose un modèle d'habitacle**, pas un meilleur calcul
+de position.
+
+## Minicarte : fluidité, portée et couronne cardinale (19/08/2026)
+
+Symptôme rapporté : la minicarte avance par à-coups, alors que le jeu tourne à
+60 fps autour d'elle.
+
+**La cause n'est pas le coût du dessin, c'est sa cadence.** `drawMinimap()`
+était appelé depuis le bloc du `streetTimer` de `main.js`, un compteur de 0,5 s
+dont le rôle est de chercher le nom de la rue la plus proche. La carte héritait
+de cette période : **2 images par seconde**. À 50 km/h le véhicule parcourt 7 m
+entre deux dessins. Le reste du HUD étant fluide, l'écart sautait aux yeux.
+
+Voilà pourquoi la piste du coût de dessin était la mauvaise : la carte ne
+coûtait presque rien, elle était simplement dessinée trente fois trop rarement.
+
+**Deux défauts trouvés dans le filtre de portée**, qui interdisaient de monter
+la cadence sans y toucher :
+
+```js
+if (Math.abs(x0 - pos.x) > PORTEE && Math.abs(z0 - pos.z) > PORTEE) continue;
+```
+
+Le `&&` n'écarte une voie que si elle est lointaine **sur les deux axes à la
+fois** : une route à 3 km au nord mais alignée en x passait le filtre. Et le
+test portait sur `pts[0]` seul, donc une départementale dont le premier point
+est proche était tracée sur toute sa longueur, très au-delà du disque.
+
+**Correctifs, dans l'ordre où ils comptent :**
+
+1. l'appel sort du `streetTimer` et passe dans le bloc HUD, à chaque image
+2. les voies carrossables sont préparées une fois dans le constructeur
+   (couleur et épaisseur figées) et indexées dans une grille de cellules de
+   240 m, chaque voie étant inscrite dans **toutes** les cellules que sa boîte
+   englobante touche, un `Set` réutilisé dédoublonnant au dessin
+3. la portée passe de 420 m à 472 m, valeur déduite du rayon réel du disque
+   (95 px à 0,22 px/m) plutôt que posée à la main. Elle augmente, mais le
+   filtre écarte enfin ce qui est hors du cercle
+
+**Mesuré sur la donnée réelle**, 902 voies carrossables et 129 positions
+échantillonnées le long du réseau : **353 voies parcourues par dessin avant,
+150,5 après, soit -57,4 %**. La grille compte 1 658 cellules.
+
+Le coût absolu par image reste à relever à l'écran : `__game.mesureCarte()`
+moyenne 300 dessins et rend le temps en ms, le nombre de voies retenues et la
+part du budget de 16,7 ms. La sonde fait vingt passes à blanc avant de chrono-
+métrer, sans quoi le premier appel fausse la moyenne.
+
+**Cap lissé.** La carte tourne de `-cap`, et le lacet instantané de la caisse
+sur ses suspensions la faisait vibrer. L'interpolation se fait sur l'écart
+ramené dans [-PI, PI] : sans ce repliement, le passage de +179° à -179° fait
+faire un tour complet à la carte. C'est le piège classique de tout lissage
+d'angle.
+
+**Couronne cardinale**, la demande d'indication de direction. Les quatre points
+sont posés sur le pourtour et tournent avec la carte, le nord en rouge. Le cap
+chiffré (`247° O`) s'affiche au sommet du disque.
+
+**Le cap chiffré était faux à la première écriture**, signalé par Christophe qui
+voyait une inversion. Deux conversions manquaient, et non une seule. D'abord
+`osm.js` projette en **x = est, z = sud** : le vecteur avant du véhicule à cap
+nul est +z, donc plein sud, alors que l'affichage annonçait « 000° N ». Ensuite
+la rotation autour de Y de Three.js suit le sens trigonométrique quand un compas
+compte dans le sens horaire. La formule juste est `180 - cap`.
+
+**Corriger une seule des deux donne un résultat qui a l'air meilleur.** Le seul
+décalage de 180° remet le nord et le sud d'aplomb, et échange l'est et l'ouest :
+un essai sur l'axe nord-sud aurait validé une correction fausse. C'est la table
+des seize directions comparée au `atan2` du vecteur avant qui l'a montré, pas
+un coup d'œil au HUD.
+
+**La couronne suivait la carte, donc elle était fausse avec elle.** Un premier
+contrôle l'avait déclarée juste : il comparait sa position à la rotation
+`rotate(-cap)` alors en place, c'est-à-dire à une référence elle-même fausse.
+Vérifier un élément contre un autre élément du même dessin ne prouve rien ; il
+faut le comparer à la position du point cardinal dans le monde.
+
+**La carte tournait à l'envers et à contresens**, signalé par Christophe : « quand
+je tourne à droite lui tourne à gauche ». Deux défauts superposés dans le même
+`ctx.rotate(-cap)` :
+
+- **un retournement de 180°** : `osm.js` projette en x = est, **z = sud**, donc
+  le vecteur avant du véhicule à cap nul est +z, vers le **bas** du canvas. La
+  carte montrait la route déjà parcourue au-dessus de la flèche
+- **un sens inversé** : la rotation autour de Y de Three.js suit le sens
+  trigonométrique, quand le canvas, dont l'axe y descend, tourne dans l'autre
+
+La rotation juste est **`PI + cap`**. Les quatre candidats ont été départagés sur
+table plutôt qu'à l'œil, avec deux critères : l'avant du véhicule doit tomber en
+haut du disque, et sa main droite à droite.
+
+| Rotation | Résultat |
+| --- | --- |
+| `-cap` (en place) | juste à 90° et 270° seulement |
+| `PI - cap` | juste à 0° et 180° seulement |
+| `PI + cap` | **juste aux quatre caps** |
+| `+cap` | faux partout |
+
+**C'est ce qui rendait le défaut difficile à nommer** : l'ancienne valeur tombait
+juste sur deux caps sur quatre, donc la carte paraissait correcte selon la
+direction suivie et fausse ailleurs.
+
+**Le cap chiffré, lui, ne dépend pas de la rotation du canvas** : il décrit une
+direction dans le monde. Sa formule `180 - cap` reste valable, revérifiée après
+coup plutôt que supposée.
+
+Contrôle final sur douze caps et quatre critères simultanés (avant en haut, main
+droite à droite, couronne alignée sur le tracé, cap chiffré conforme au `atan2`
+du vecteur avant) : concordance complète. La flèche centrale, elle,
+pointe toujours vers le haut : c'est la conséquence de la rotation de la carte,
+et cela reste juste. Chaque lettre reçoit une pastille sombre, sans quoi elle
+devient illisible dès qu'une voie jaune passe dessous.
+
+Reste à constater à l'écran : la fluidité en roulage, le chiffre de
+`mesureCarte()`, et la lisibilité de la couronne en centre-bourg.
+
+## La voiture flottait dans l'herbe (19/08/2026)
+
+Symptôme rapporté par Christophe : hors chaussée, la voiture paraît surélevée,
+et son ombre portée se voit au sol sous elle.
+
+**Deux surfaces distinctes, une seule visible.** Le terrain porte deux champs
+d'altitude, construits par `terrasser()` dans `terrain.js` :
+
+- `naturel`, le relief IGN interpolé, sur lequel la chaussée est posée
+- `h`, le même relief creusé sous les emprises de route, pour que l'herbe ne
+  ressorte jamais au-dessus de l'asphalte entre deux nœuds de polyligne
+
+`world.js` dessine le maillage d'herbe sur `h`, **abaissé de `GARDE_SOL`**
+(0,35 m). Le heightfield de collision, lui, était bâti sur `naturel` seul. Hors
+route les deux champs sont égaux, le terrassement ne creusant que sous la
+voirie : la voiture roulait donc **31 cm au-dessus de l'herbe dessinée**
+(0,35 de garde moins les 0,04 d'enfoncement du heightfield), sur une surface
+invisible.
+
+**L'ombre de contact aggravait le tout** : posée à `hauteurEn + 0,02` sans la
+garde de sol, elle flottait 33 cm au-dessus du gazon, sous une voiture qui
+flottait de 31. D'où l'ombre nettement détachée que montre le symptôme.
+
+**La correction ne consiste pas à réduire `GARDE_SOL`.** Cette garde protège
+l'asphalte du terrain qui remonte entre deux nœuds, et le chantier du 16/08 a
+montré qu'elle sert encore (dépassement ramené à 0,15 m au pire, 4,7 cm sur le
+maillage affiché, tous sous la garde donc invisibles). La faute est que physique
+et rendu lisaient deux champs différents.
+
+**Règle retenue**, portée par `terrain.solVisible(x, z, garde)` :
+
+```
+creuse = naturel - terrasse          // 0 dans l'herbe, GARDE_SOL sous la route
+sol    = terrasse - garde + 2*creuse
+```
+
+Elle satisfait les deux extrémités et raccorde linéairement entre elles :
+
+| Situation | `creuse` | Sol physique | Résultat |
+| --- | --- | --- | --- |
+| Hors chaussée | 0 | `terrasse - garde` | le sol d'herbe dessiné, écart nul |
+| Cœur d'emprise | `garde` | `naturel` | la chaussée est portée |
+| Frange de 4 m | intermédiaire | interpolé | raccord continu |
+
+**Le seuil binaire était le piège à éviter.** `terrasser()` estompe son
+creusement sur 4 m au bord de chaque emprise ; basculer d'un régime à l'autre
+par un test aurait créé une marche verticale de 35 cm tout le long des routes,
+plus haute que le rayon des roues. Avec l'interpolation, la frange monte à
+**8,8 % de pente**, franchissable sans à-coup.
+
+**Trois fausses formules avant la bonne**, toutes écartées sur table plutôt
+qu'à l'écran : `max(herbe, min(nat, terrasse))` échouait sur les trois cas de
+figure, `max(herbe, nat - garde + creuse)` ne tombait juste qu'aux extrémités
+et manquait la frange. C'est le tableau à trois colonnes (hors route, sous
+route, bord d'emprise) qui a départagé, chaque candidate étant confrontée au
+résultat attendu dans chacune.
+
+**Défaut voisin corrigé au passage** : `spawn.y` utilisait `hauteurEn`, donc le
+terrain terrassé, alors que le point d'apparition est choisi sur une voie. La
+voiture naissait 35 cm trop bas, suspensions écrasées dès la première frame.
+`aller()` employait déjà `hauteurRoute` et portait le commentaire expliquant
+pourquoi ; la ligne d'apparition ne l'avait pas suivi.
+
+Reste à constater à l'écran : les roues au contact de l'herbe, l'ombre plaquée
+sous la voiture, et l'absence de ressaut en franchissant le bord de chaussée.
+
+## Suppression de l'ombre portée du véhicule (19/08/2026)
+
+Demande de Christophe : sur la route et les trottoirs, l'ombre de la voiture
+n'est ni réaliste ni fluide.
+
+**Deux ombres coexistaient, et ce n'était pas celle qu'on croit.** Le
+`blob` de `main.js`, dégradé radial plaqué au sol, ne s'affiche que lorsque les
+ombres portées sont coupées (`blob.visible = !shadowsHigh`), en remplacement.
+Les ombres étant actives par défaut, l'ombre visible était bien celle de la
+carte d'ombre du soleil.
+
+**Pourquoi elle décrochait**, ce qui explique le manque de fluidité constaté :
+la carte d'ombre n'est pas recalculée à chaque image (voir le chantier du
+budget de frame), et son volume est resserré autour du véhicule. Une ombre de
+décor, immobile, supporte ce rafraîchissement paresseux ; l'ombre d'un objet
+qui se déplace à 50 km/h, non.
+
+**Relevé au passage : la chaussée ne reçoit pas les ombres.** `roadMesh` n'a
+pas de `receiveShadow`, contrairement aux accotements (`accotements.js`) et au
+sol d'herbe. Ce qu'on prend pour une ombre sur l'asphalte vient donc du terrain
+qui passe dessous, ou du trottoir voisin. À garder en tête avant de chercher un
+défaut d'ombre côté route.
+
+**Le drapeau se pose sur chaque maillage, pas sur le conteneur** : `castShadow`
+n'est pas hérité dans Three.js. Poser `carMesh.castShadow = false` sur le
+conteneur du GLB ne suffit pas, `carmodel.js` le remettant à `true` sur chaque
+maillage interne au chargement. Trois endroits traités :
+
+- `main.js`, sur le conteneur
+- `carmodel.js`, dans le `traverse` du modèle importé
+- `carmesh.js`, caisse et pneus du modèle procédural de secours, pour que le
+  comportement ne dépende pas du véhicule chargé
+
+**`receiveShadow` reste actif** sur le véhicule : il doit continuer de
+s'assombrir sous un porche ou au pied d'un immeuble, faute de quoi il paraîtrait
+lumineux dans une rue à l'ombre.
+
+**Les activations en masse ne le rattrapent pas** : les trois `traverse` qui
+posent `castShadow` sur les maillages de plus de 5 000 sommets parcourent
+`cityGroup`, quand la voiture est ajoutée à `scene` directement.
+
+Le `blob` est conservé tel quel, toujours conditionné à `!shadowsHigh` : ombres
+coupées, il reste le seul ancrage au sol du véhicule.
+
+Reste à constater à l'écran : l'absence d'ombre de voiture en roulage, et le
+fait que le véhicule s'assombrit toujours en passant à l'ombre d'un bâtiment.
+Gain de frame attendu sur la passe d'ombre, non mesuré.
+
+## Stationnement en épi de l'avenue du 18e RI (19/08/2026)
+
+Christophe fournit un panoramique Panoramax de l'avenue face à l'église et la
+capture du jeu au même endroit. La photo montre du stationnement **en épi des
+deux côtés**, véhicules inclinés en diagonale sur le bord. Le jeu affichait une
+**file continue de véhicules dans l'axe**, au bord de l'asphalte.
+
+**Deux défauts distincts, corrigés l'un après l'autre.** Le premier tenait à
+l'emplacement des véhicules, le second à leur orientation ; le second n'est
+apparu qu'une fois le premier réglé, Christophe ayant dû redire que l'épi n'est
+pas la bataille.
+
+**Les places en épi existaient déjà, personne ne s'y garait.** Les cinq emprises
+de parking OSM de la zone passent toutes le filtre de marquage et produisent
+**90 places** :
+
+| Emprise | Dimensions | Rangées | Places |
+| --- | --- | --- | --- |
+| way 1356201162 | 37 x 9 m | 1 | 14 |
+| way 1201716511 | 22 x 5 m | 1 | 0 |
+| way 1201716512 | 24 x 7 m | 1 | 0 |
+| way 856988510 | 58 x 15 m | 1 | 21 |
+| way 34146558 | 72 x 66 m | 2 | 55 |
+
+**Deux dispositifs se superposaient.** `parkedcars.js` pose du stationnement de
+rue le long de toute voie carrossable assez large, à `r.width / 2 + 0.87 - 0.35`
+de l'axe, soit **4,4 m** pour une `tertiary` de 7,5 m. Les emprises de parking,
+elles, sont centrées 13 à 33 m plus loin. Résultat : une file au bord de la
+chaussée, et des places marquées vides à côté.
+
+**Correctif** : les emprises de parking rejoignent la grille des zones interdites
+au stationnement de rue, aux côtés des carrefours et des passages piétons. Le
+mécanisme existait, il ne connaissait pas les parkings.
+
+**Le piège était la grille elle-même.** `estInterdit` ne consulte que les
+cellules voisines à plus ou moins une, soit 25 m. Inscrire chaque emprise dans
+la seule cellule de son centre laissait les grandes aires invisibles depuis
+leurs propres bords, là où la voie les longe :
+
+| Emprise | Rayon + marge | Couvert par ±1 cellule ? |
+| --- | --- | --- |
+| way 1356201162 | 23,0 m | oui |
+| way 856988510 | 34,0 m | **non** |
+| way 34146558 | 52,8 m | **non** |
+
+Chaque emprise est donc inscrite dans **toutes** les cellules que sa portée
+recouvre, comme les voies de la minicarte plus tôt dans la journée. Deux fois
+le même piège en un jour, sur deux modules sans rapport : une entrée rangée à
+son seul centre n'est trouvable que depuis son centre.
+
+**Mesuré sur les 127 emprises de la commune** : 228 emplacements de rue écartés
+sur 3 334, soit **6,8 %**. Sur l'avenue du 18e RI, **20 emplacements tombent à
+7**, laissant la place aux 90 places en épi.
+
+### Second défaut : le module posait de la bataille, pas de l'épi
+
+Une fois la chaussée dégagée, l'orientation restait fausse. Le module nommé
+`placesEpi` prenait **la normale au bord** comme axe du véhicule, soit 90° :
+c'est du stationnement en bataille. L'épi range les véhicules **en diagonale**,
+classiquement à 45°, ce que montre le panoramique.
+
+Le nom du module masquait l'erreur depuis l'origine : « places en épi » se lit
+comme une description de ce qui est produit, alors que ce n'était qu'une
+intention.
+
+**Les cotes découlent de l'angle**, elles ne se posent pas à la main. Une place
+de 2,5 x 5,0 m inclinée d'un angle `a` occupe `2,5 / sin(a)` le long du bord et
+`5,0 sin(a) + 2,5 cos(a)` en profondeur :
+
+| Angle | Pas le long du bord | Profondeur |
+| --- | --- | --- |
+| 90° (bataille, avant) | 2,50 m | 5,00 m |
+| 60° | 2,89 m | 5,58 m |
+| **45° (épi, retenu)** | **3,54 m** | **5,30 m** |
+| 30° | 5,00 m | 4,67 m |
+
+Cinq endroits à reprendre ensemble, le pas de balayage compris : le garder à
+2,50 m aurait fait chevaucher les véhicules inclinés.
+
+**Le sens d'inclinaison suit la rangée.** `sensEpi` fait pencher toutes les
+places d'un même bord du même côté, et les deux rangées face à face en sens
+inverse : caps de 135° et -45° sur un bord horizontal, soit 90° d'écart. C'est
+le chevron caractéristique d'un parking en épi. Le demi-tour aléatoire de la
+bataille disparaît : une place inclinée ne s'occupe que dans le sens de sa
+manœuvre.
+
+**Coût en places** : 90 en bataille, **51 en épi** sur les emprises de l'avenue,
+angle mesuré à 45,0° sur les trois qui en portent. La perte de 43 % est le
+compromis réel de l'épi, une place inclinée consommant 41 % de bord en plus.
+
+### Troisième défaut : les traits n'ont pas suivi les véhicules
+
+Christophe constate que les voitures se garent bien en épi, mais que le marquage
+au sol est resté en travers. Deux erreurs dans la géométrie du trait, la même
+cause derrière les deux : **je l'avais construit à partir de la boîte
+englobante au lieu du vecteur directeur de la place.**
+
+| Grandeur | Attendu | Obtenu | Cause |
+| --- | --- | --- | --- |
+| Longueur du trait | 5,00 m | **6,37 m** | il allait jusqu'à `PROF_EPI` (5,30), profondeur totale de la rangée, au lieu de `LONG_PLACE`, longueur d'un flanc |
+| Angle au bord | 45° | **33,7°** | composantes non dosées par sinus et cosinus |
+| Largeur du ruban | 12 cm | **10 cm** | épaisseur prise le long de `u`, donc oblique au trait, qui s'en trouvait cisaillé |
+
+Le trait dépassait ainsi de 1,37 m au fond de la place, sous un angle qui
+n'était celui d'aucun véhicule.
+
+**Correctif : une seule source pour les trois.** Un vecteur directeur unitaire
+`(sensEpi·cos, sens·sin)` porte désormais le trait, le centre de la place et le
+cap du véhicule. L'épaisseur du ruban est prise sur sa normale. Faire dériver
+véhicule et marquage de la même quantité est ce qui garantit qu'ils ne peuvent
+plus diverger : c'est la correction de fond, les trois chiffres du tableau n'en
+étant que les symptômes.
+
+Vérifié sur les deux rangées : trait de **5,000 m à 45,0°**, alignement
+trait/véhicule à **1,0000**, épaisseur perpendiculaire à 0 près. Sur les
+emprises de l'avenue, **51 traits pour 51 places**, soit un par place.
+
+Reste à constater à l'écran : les traits sous les véhicules et dans leur axe, le
+chevron entre les deux rangées de la grande aire, et la chaussée dégagée.

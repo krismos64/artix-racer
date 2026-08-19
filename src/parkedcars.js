@@ -123,6 +123,40 @@ function trouverPlaces(data, relief, roadY, passages = []) {
   for (const [x, z] of carrefours) ajouterInterdit(x, z, 9);
   for (const p of passages) ajouterInterdit(p.x, p.z, 6);
 
+  // Emprises de stationnement : là où une aire OSM borde la voie, les véhicules
+  // se rangent sur ses places marquées, en épi, et non le long de la chaussée.
+  // Poser les deux produisait une double file, celle de rue occupant le bord de
+  // l'asphalte pendant que les places en épi restaient vides plus loin.
+  //
+  // Constaté avenue du 18e Régiment d'Infanterie le 19/08/2026 : le panoramique
+  // montre du stationnement perpendiculaire des deux côtés, le jeu affichait une
+  // file continue dans l'axe, à 4,4 m du milieu de la voie.
+  //
+  // L'exclusion est inscrite dans TOUTES les cellules que l'emprise recouvre,
+  // et non dans celle de son seul centre : `estInterdit` ne consulte que les
+  // cellules voisines à plus ou moins une, soit 25 m, quand l'aire du Leclerc
+  // porte un rayon de 48,8 m. Rangée au centre, elle serait invisible depuis
+  // ses propres bords, précisément là où la voie la longe.
+  for (const p of data.parkings ?? []) {
+    if (p.station) continue;   // une station-service n'a pas de places
+    let cx = 0, cz = 0;
+    for (const [x, z] of p.pts) { cx += x; cz += z; }
+    cx /= p.pts.length; cz /= p.pts.length;
+    let rayon = 0;
+    for (const [x, z] of p.pts) rayon = Math.max(rayon, Math.hypot(x - cx, z - cz));
+    const portee = rayon + 4;
+    const r2 = portee * portee;
+    const ci0 = Math.floor((cx - portee) / CELL), ci1 = Math.floor((cx + portee) / CELL);
+    const cj0 = Math.floor((cz - portee) / CELL), cj1 = Math.floor((cz + portee) / CELL);
+    for (let ci = ci0; ci <= ci1; ci++) {
+      for (let cj = cj0; cj <= cj1; cj++) {
+        const k = `${ci},${cj}`;
+        if (!interdits.has(k)) interdits.set(k, []);
+        interdits.get(k).push([cx, cz, r2]);
+      }
+    }
+  }
+
   const estInterdit = (x, z) => {
     const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
     for (let ox = -1; ox <= 1; ox++) {

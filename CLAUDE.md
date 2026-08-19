@@ -153,6 +153,23 @@ supprimé le 18/08/2026. Anticrénelage **SMAA** sous la touche `A`. Ni feu
 tricolore ni panneau de sens interdit, les uns comme les autres inventés et
 retirés le même jour.
 
+**Quatre vues** sous la touche `C` : poursuite, capot, cinématique, aérienne.
+La vue intérieure a été retirée le 19/08/2026, l'Audi n'ayant pas d'habitacle.
+
+**Le véhicule ne projette pas d'ombre** depuis le 19/08/2026 : sa tache au sol
+décrochait en roulage, la carte d'ombre n'étant pas recalculée à chaque image.
+Il en reçoit toujours. Le drapeau se pose sur chaque maillage (`carmodel.js`,
+`carmesh.js`, `main.js`), `castShadow` n'étant pas hérité dans Three.js.
+
+**Minicarte redessinée à chaque image** depuis le 19/08/2026, contre deux fois
+par seconde auparavant : elle était accrochée au `streetTimer`. Rotation
+`PI + cap`, couronne cardinale et cap chiffré. Grille de 240 m dans
+`minimap.js`, 353 voies parcourues par dessin ramenées à 150.
+
+**Stationnement en épi à 45°**, non plus en bataille : traits, centres de place
+et caps de véhicule dérivent d'un même vecteur directeur. Là où une emprise de
+parking borde la voie, le stationnement de rue s'efface (`parkedcars.js`).
+
 **Profils graphiques** (`quality.js`) : Performance, Équilibré, Qualité sous
 la touche `J`, Équilibré par défaut. Ils règlent ensemble pixel ratio, échelle
 du GTAO, ombres, brouillard, lampadaires calculés, passants et anticrénelage.
@@ -205,14 +222,24 @@ Trois pièges de mesure sont détaillés au journal : mesurer sans sonde, compar
 5. **Chaussée portée de 0,281 à 0,376** de la clarté d'une façade le
    19/08/2026, cible 0,47. La crainte de dépasser le trottoir était fondée :
    un premier essai l'y portait à 1,26 fois. Détail au journal
-6. **Pertes silencieuses entre donnée et rendu** : 328 arbres plantés sur 415
-   relevés, 5 panneaux de priorité, 45 équipements sur 102. Détail et causes
-   dans le journal
+6. **Pertes silencieuses entre donnée et rendu** : 5 panneaux de priorité,
+   45 équipements sur 102. Détail et causes dans le journal. La perte des
+   arbres est **élucidée le 19/08/2026** : `RAYON_MAX = 2000` dans `poi.js`
+   écarte les 87 sujets situés entre 2 002 et 2 586 m. Relever le rayon les
+   ramène, au coût d'une périphérie plus dense
 7. **Les 57 panonceaux d'équipements n'existent pas dans la rue** : choix de
    lisibilité, à trancher si la fidélité prime. Leur écart au commerce annoncé
    est borné à 14 m depuis le 19/08/2026, médiane 9,2 m
-8. **Caméra intérieure dégradée** depuis le passage à l'Audi, qui n'a pas
-   d'habitacle. Jamais vérifiée à l'écran
+8. **Le chantier du 19/08/2026 n'a pas été constaté à l'écran par Claude** :
+   ni `chrome-devtools` ni l'extension Chrome ne se connectaient ce jour-là.
+   Minicarte, sol d'herbe, ombres et stationnement en épi ont été validés par
+   le calcul et par les captures de Christophe, jamais par capture directe.
+   Les trois défauts d'orientation de la minicarte et l'inversion épi/bataille
+   ont tous été trouvés par lui, pas par la mesure : refaire une passe visuelle
+   dès que le navigateur répond
+9. **Sonde `__game.mesureCarte()`** posée le 19/08/2026 pour chiffrer le coût
+   d'un dessin de minicarte, jamais relevée. La cadence est passée de 2 à 60
+   images par seconde : le poste doit être mesuré avant d'être tenu pour gratuit
 
 ### Bâtiments modélisés un par un
 

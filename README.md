@@ -29,7 +29,7 @@ npm run build && npm run preview
 | ↓ / S | Freiner ; maintenir à l'arrêt engage la marche arrière (limitée à 30 km/h) |
 | ← / → | Diriger |
 | Espace | Frein à main (drift) |
-| C | Changer de caméra (poursuite, capot, intérieur, cinématique, aérienne) |
+| C | Changer de caméra (poursuite, capot, cinématique, aérienne) |
 | G | Boîte automatique ou manuelle |
 | E / X | Monter / descendre un rapport (en manuel) |
 | R | Réapparaître au point de départ |
@@ -137,6 +137,30 @@ pastilles de la même couleur.
 Les lieux ainsi signalés incluent la Mairie d'Artix, l'Église Saint-Pierre, le
 Collège Jean Moulin, les écoles Jean Sarrailh et Jean Moulin, la Gendarmerie,
 l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
+
+### La minicarte
+
+Dessinée en canvas 2D plutôt qu'avec une seconde caméra : un tracé vectoriel des
+seules voies carrossables coûte moins cher et reste net à cette taille.
+
+Elle tourne avec le véhicule, la route devant lui vers le haut du disque. Une
+couronne cardinale en marque le pourtour, le nord en rouge, et le cap suivi
+s'affiche en degrés au sommet. La flèche centrale garde sa direction, puisque
+c'est la carte qui pivote sous elle.
+
+Les voies sont préparées une fois au chargement et rangées dans une grille de
+cellules de 240 m : le dessin ne parcourt que le voisinage du véhicule, 150
+voies au lieu de 353. C'est ce qui permet de la redessiner à chaque image, là où
+elle était accrochée au compteur qui cherche le nom de la rue et n'était
+rafraîchie que deux fois par seconde.
+
+### Ombres
+
+Le décor projette ses ombres, le véhicule non. La carte d'ombre du soleil n'est
+pas recalculée à chaque image et son volume reste resserré autour de la voiture :
+une ombre de bâtiment, immobile, s'en accommode, celle d'un véhicule lancé à
+50 km/h décrochait. La carrosserie continue de recevoir les ombres du décor,
+sans quoi elle resterait lumineuse au pied d'un immeuble.
 
 ### LiDAR HD : la forme réelle de chaque toiture
 
@@ -344,9 +368,20 @@ ambiante calcule déjà, et n'ajoute donc aucun rendu de géométrie.
 
 Les **127 aires de stationnement** de la commune, soit dix hectares d'enrobé,
 sont reprises d'OpenStreetMap avec leur marquage de places : elles n'étaient pas
-demandées à Overpass jusqu'ici et manquaient donc entièrement. Les places sont
-réparties perpendiculairement au grand axe de chaque aire, à la largeur
-réglementaire de 2,50 m.
+demandées à Overpass jusqu'ici et manquaient donc entièrement.
+
+Les places sont disposées **en épi, inclinées à 45°** sur le bord de l'aire,
+comme le montrent les panoramiques de l'avenue du 18e Régiment d'Infanterie.
+Deux rangées se faisant face penchent en sens inverse, dessinant le chevron
+caractéristique d'un parking de bourg. Les cotes découlent de l'angle : une
+place de 2,50 m sur 5,00 m inclinée à 45° occupe 3,54 m le long du bord pour
+5,30 m de profondeur. Le marquage et les véhicules dérivent d'un même vecteur
+directeur, ce qui les empêche de diverger.
+
+Là où une aire borde la voie, le stationnement de rue s'efface : les véhicules
+se rangent sur les places marquées plutôt que le long de la chaussée. Sans cette
+règle, une file occupait le bord de l'asphalte pendant que les places restaient
+vides à côté.
 
 S'y ajoute le mobilier urbain que la circulation côtoie : bancs, corbeilles,
 abribus, et les bornes anti-stationnement qui bordent l'îlot du carrefour de la
@@ -405,8 +440,9 @@ sans signification physique, reste ainsi portée un cran plus bas et n'entraîne
 pas l'axe de rotation.
 
 Le modèle n'a pas d'habitacle : c'est une carrosserie extérieure seule, sans
-volant ni sièges. La caméra intérieure se rabat donc sur une position déduite du
-gabarit, au ras du pavillon, ce qui revient à une vue capot.
+sièges ni planche de bord. La caméra intérieure a été retirée pour cette raison
+le 19/08/2026 : une vue depuis le poste de conduite n'y montrait que de la
+carrosserie. La caméra capot occupe cette place.
 
 Vue pile de l'arrière, la voiture masque ses propres roues derrière son bouclier,
 comme le fait la vraie : le débord de carrosserie mesure 0,147 m par côté contre

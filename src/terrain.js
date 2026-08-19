@@ -190,6 +190,27 @@ export class Terrain {
     return this.echantillonner(this.naturel ?? this.h, x, z);
   }
 
+  // Altitude de la surface que le joueur VOIT sous ses roues : l'herbe hors
+  // chaussée, l'asphalte sur la voie. C'est ce que doivent suivre le terrain de
+  // collision et l'ombre de contact, faute de quoi la voiture roule sur une
+  // surface invisible et paraît flotter.
+  //
+  // `world.js` abaisse le maillage d'herbe de `garde` sous le terrain terrassé,
+  // tandis que la chaussée reste sur le terrain naturel. Entre les deux, la
+  // frange où `terrasser()` estompe son creusement impose un raccord continu :
+  //
+  //   creusement nul   -> terrasse - garde, le sol d'herbe dessiné
+  //   creusement plein -> naturel, ce qui porte la chaussée
+  //
+  // d'où l'interpolation linéaire, qui évite la marche qu'un seuil créerait au
+  // bord de chaque route.
+  solVisible(x, z, garde) {
+    const terrasse = this.echantillonner(this.h, x, z);
+    if (!this.naturel) return terrasse - garde;
+    const creuse = this.echantillonner(this.naturel, x, z) - terrasse;
+    return terrasse - garde + 2 * creuse;
+  }
+
   echantillonner(champ, x, z) {
     const demi = TAILLE / 2;
     const fx = (x + demi) / this.pas;

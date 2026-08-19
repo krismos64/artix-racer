@@ -731,16 +731,37 @@ async function init() {
     // rangées par colonnes, l'axe Z du heightfield correspondant à notre Z.
     const n = TERRAIN_RES + 1;
     const heights = new Float32Array(n * n);
-    // La physique roule sur le terrain NATUREL, celui qui porte la chaussée
-    // visible. Le creusement pratiqué sous les routes ne sert qu'à empêcher
-    // l'herbe de ressortir par-dessus l'asphalte : le reproduire ici ferait
-    // rouler la voiture 35 cm sous la route qu'elle voit.
-    const champ = (terrain.naturel ?? terrain.h).slice();
+    // Le heightfield porte tout : la chaussée n'entre pas dans le maillage de
+    // collision (`world.js`), seuls les ponts et les bâtiments y sont. Il doit
+    // donc concilier deux exigences que le terrain sépare :
+    //
+    // - sous la route, suivre le terrain NATUREL, sur lequel la chaussée est
+    //   posée. Suivre le champ terrassé y ferait rouler la voiture 35 cm sous
+    //   l'asphalte qu'elle voit
+    // - dans l'herbe, suivre le sol VISIBLE, c'est-à-dire le champ terrassé
+    //   abaissé de la garde de sol. C'est le champ que `world.js` donne aux
+    //   sommets du maillage d'herbe
+    //
+    // Prendre `naturel` partout, ce qui était fait jusqu'au 19/08/2026,
+    // laissait la voiture rouler 31 cm au-dessus de l'herbe dessinée : elle
+    // paraissait flotter, son ombre portée visible sous les roues.
+    //
+    // Hors des emprises de route, `h` et `naturel` sont égaux, le terrassement
+    // ne creusant que sous la voirie. Le minimum des deux surfaces donne donc
+    // exactement le sol visible dans l'herbe, et le naturel sous la chaussée.
+    // La règle est celle de `terrain.solVisible()`, appliquée ici directement
+    // sur les tableaux : les indices de grille étant connus, l'interpolation
+    // bilinéaire de la méthode n'aurait rien à interpoler.
+    const naturel = terrain.naturel ?? terrain.h;
+    const terrasse = terrain.h;
 
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
+        const idx = j * n + i;
+        const creuse = naturel[idx] - terrasse[idx];
+        const sol = terrasse[idx] - GARDE_SOL + 2 * creuse;
         // Rapier indexe [colonne * n + ligne] ; on transpose en conséquence.
-        heights[i * n + j] = champ[j * n + i] + ROAD_Y - 0.04;
+        heights[i * n + j] = sol + ROAD_Y - 0.04;
       }
     }
     world.createCollider(
@@ -832,7 +853,11 @@ async function init() {
   // Hauteur d'équilibre : la voiture est posée pile sur ses suspensions,
   // sinon la chute initiale écrase un seul coin et la fait basculer.
   // Sur terrain accidenté, la hauteur d'apparition suit l'altitude locale.
-  spawn.y = restingHeight(ROAD_Y + (terrain ? terrain.hauteurEn(spawn.x, spawn.z) : 0));
+  // `hauteurRoute` et non `hauteurEn`, pour la raison exposée dans `aller()` :
+  // le point d'apparition est choisi sur une voie, et la chaussée repose sur le
+  // terrain naturel. Le terrain terrassé l'y faisait naître 35 cm trop bas,
+  // suspensions écrasées dès la première frame.
+  spawn.y = restingHeight(ROAD_Y + (terrain ? terrain.hauteurRoute(spawn.x, spawn.z) : 0));
   const car = new Car(RAPIER, world, spawn);
   // Déplacement direct depuis la console, pour inspecter un quartier précis
   // sans avoir à y rouler : aller(x, z, cap).
@@ -859,10 +884,9 @@ async function init() {
   // cycle jour/nuit ; le modèle importé porte les siens dans sa texture.
   let carMesh, wheelMeshes, headMat, tailMat;
   let modeleImporte = false;
-  // Éléments animés du modèle importé : roues, volant, rayon de roulement et
-  // position du siège conducteur pour la caméra intérieure.
+  // Éléments animés du modèle importé : roues, volant et rayon de roulement.
   let rouesImportees = null, volantImporte = null;
-  let rayonRoueImporte = 0.32, siegeImporte = null;
+  let rayonRoueImporte = 0.32;
   try {
     const importe = await chargerVoiture(MODELE_VOITURE,
       ANCHOR_Y - SPEC.wheelRadius);
@@ -873,7 +897,6 @@ async function init() {
     rouesImportees = importe.rouesDetectees ? importe.roues : null;
     volantImporte = importe.volant;
     rayonRoueImporte = importe.rayonRoue;
-    siegeImporte = importe.siege;
     modeleImporte = true;
     diag(`Modèle importé : échelle ${importe.echelle.toFixed(3)}, `
       + `${importe.roues.length} roues, rayon ${importe.rayonRoue.toFixed(3)} m, `
@@ -884,7 +907,13 @@ async function init() {
     carMesh = proc.car; wheelMeshes = proc.wheels;
     headMat = proc.headMat; tailMat = proc.tailMat;
   }
-  carMesh.castShadow = true;
+  // La carrosserie ne projette plus d'ombre, retiré le 19/08/2026. Sur la
+  // chaussée et les trottoirs, la carte d'ombre du soleil rendait sous le
+  // véhicule une tache aux contours instables : le volume d'ombre est resserré
+  // autour de la voiture et la carte n'est pas recalculée à chaque image, si
+  // bien que l'ombre décrochait du véhicule en roulage. Le décor continue de
+  // projeter la sienne, bâtiments et arbres compris.
+  carMesh.castShadow = false;
   scene.add(carMesh);
 
   // Ombre de contact : un dégradé radial plaqué au sol sous la voiture.
@@ -922,7 +951,7 @@ async function init() {
   const audio = new AudioEngine();
 
   // --- Caméras ------------------------------------------------------------
-  const CAMS = ['Poursuite', 'Capot', 'Intérieur', 'Cinématique', 'Aérienne'];
+  const CAMS = ['Poursuite', 'Capot', 'Cinématique', 'Aérienne'];
   let camMode = 0;
   const camPos = new THREE.Vector3();
   const camLook = new THREE.Vector3();
@@ -942,9 +971,8 @@ async function init() {
   const deltaTmp = new THREE.Vector3();   // écart de vitesse, détection de choc
   const eulerTmp = new THREE.Euler();     // conversions de cap
   const posTmp = new THREE.Vector3();     // position du véhicule, lue une fois par frame
-  // Vecteur propre à la minicarte : elle est dessinée après que `posTmp` a
-  // servi au reste de la frame, et le partager exposerait à un écrasement
-  // silencieux si l'ordre des appels changeait.
+  // Vecteur propre à la minicarte : le partager avec `posTmp` exposerait à un
+  // écrasement silencieux, l'ordre des appels dans la frame pouvant changer.
   const posCarte = new THREE.Vector3();
   // Structures brutes réutilisées pour le rayon Rapier de la caméra.
   const camRayOrig = { x: 0, y: 0, z: 0 };
@@ -955,9 +983,14 @@ async function init() {
   // Le dessin lui-même est dans `minimap.js` : il ne dépend que du canvas, des
   // données cartographiques et de la position du véhicule.
   const minicarte = new Minicarte(el('minimap'), data);
-  const drawMinimap = () => minicarte.dessiner(
+  // Dessinée à chaque image. Elle l'était auparavant depuis le bloc du
+  // `streetTimer`, à 2 images par seconde : la carte avançait par sauts de 7 m
+  // à 50 km/h. Le dessin ne parcourt que les voies à portée, par la grille de
+  // `minimap.js`, ce qui rend la cadence pleine abordable.
+  const drawMinimap = (dt) => minicarte.dessiner(
     car.lirePosition(posCarte),
     eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y,
+    dt,
   );
 
   // --- Compteur (aiguille + chiffres) -------------------------------------
@@ -1399,7 +1432,12 @@ async function init() {
 
       // L'ombre de contact suit la voiture, à plat, orientée selon son cap.
       const yaw = eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y;
-      blob.position.set(cp.x, (terrain ? terrain.hauteurEn(cp.x, cp.z) : 0) + ROAD_Y + 0.02, cp.z);
+      // Posée sur le sol RÉELLEMENT dessiné, garde de sol comprise : sans elle,
+      // l'ombre flottait 33 cm au-dessus de l'herbe, sous une voiture qui
+      // flottait de 31. `solVisible` applique la même règle que le heightfield.
+      blob.position.set(cp.x,
+        (terrain ? terrain.solVisible(cp.x, cp.z, GARDE_SOL) : -GARDE_SOL)
+          + ROAD_Y + 0.02, cp.z);
       blob.rotation.set(-Math.PI / 2, 0, -yaw);
       // Elle s'estompe quand la voiture décolle.
       blob.material.opacity = car.airborne ? 0.25 : 0.85;
@@ -1554,23 +1592,7 @@ async function init() {
       targetPos.copy(p).addScaledVector(fwd, 1.3).addScaledVector(up, 0.28);
       targetLook.copy(p).addScaledVector(fwd, 18).addScaledVector(up, 0.15);
       fov = 72 + speedT * 10;
-    } else if (camMode === 2) { // Intérieur
-      // Position des yeux du conducteur. Le modèle importé fournit les cotes
-      // de son propre habitacle ; à défaut on retombe sur celles du modèle
-      // procédural, dont le pavillon culmine à 0,73.
-      const s = siegeImporte;
-      const lat = s ? s.x : -0.36;
-      const haut = s ? s.y - 0.66 : 0.46;
-      const avant = s ? s.z : 0.10;
-      camSide.set(1, 0, 0).applyQuaternion(q);
-      targetPos.copy(p).addScaledVector(fwd, avant)
-        .addScaledVector(up, haut)
-        .addScaledVector(camSide, lat);
-      // Regard à l'horizontale depuis la hauteur des yeux : viser plus bas
-      // cadre le capot au lieu de la route.
-      targetLook.copy(p).addScaledVector(fwd, 16).addScaledVector(up, haut);
-      fov = 76;
-    } else if (camMode === 3) { // Cinématique : recule et s'incline
+    } else if (camMode === 2) { // Cinématique : recule et s'incline
       camSide.set(1, 0, 0).applyQuaternion(q);
       targetPos.copy(p).addScaledVector(fwd, -9).addScaledVector(camSide, 5.5);
       targetPos.y += 2.2;
@@ -1587,7 +1609,7 @@ async function init() {
     // Anti-traversée : si un mur s'interpose entre la voiture et la caméra de
     // poursuite, on rapproche la caméra jusqu'au point de contact. Sans cela,
     // la caméra passe au travers des façades en rue étroite.
-    if (camMode === 0 || camMode === 3) {
+    if (camMode === 0 || camMode === 2) {
       const depuis = camDepuis.copy(p);
       depuis.y += 1.2;
       const vers = camVers.copy(targetPos).sub(depuis);
@@ -1608,7 +1630,7 @@ async function init() {
 
     if (!camInit) { camPos.copy(targetPos); camLook.copy(targetLook); camInit = true; }
     // Lissage : plus réactif en caméra embarquée.
-    const lerp = camMode === 1 || camMode === 2 ? 1 : Math.min(1, 7 * dt);
+    const lerp = camMode === 1 ? 1 : Math.min(1, 7 * dt);
     camPos.lerp(targetPos, lerp);
     camLook.lerp(targetLook, Math.min(1, 10 * dt));
     camera.position.copy(camPos);
@@ -1619,6 +1641,7 @@ async function init() {
     }
 
     // --- HUD ---------------------------------------------------------------
+    drawMinimap(dt);
     const kmh = Math.abs(car.speedKmh);
     speedTxt.textContent = Math.round(kmh);
     gearTxt.textContent = car.gearLabel;
@@ -1640,7 +1663,6 @@ async function init() {
       streetTimer = 0.5;
       const s = nearestStreet(posTmp);
       streetTxt.textContent = s?.name ?? (car.onRoad ? 'Voie communale' : 'Hors chaussée');
-      drawMinimap();
 
       // Vitesse limite réelle de la voie : 149 routes d'Artix la portent.
       if (s?.maxspeed) {
@@ -1749,9 +1771,24 @@ async function init() {
   // `setHeure` permet de sauter directement à une heure du cycle jour/nuit, ce
   // qui rend l'éclairage nocturne testable sans attendre que le temps tourne.
   window.__game = { car, world, scene, camera, renderer, composer, data, spawn, SPEC, audio, collisionTris: verts, RAPIER,
-    qualite, grilleVegetation,
+    qualite, grilleVegetation, minicarte,
     setHeure: (h) => { timeOfDay = ((h % 24) + 24) % 24; },
-    getHeure: () => timeOfDay };
+    getHeure: () => timeOfDay,
+    // Coût d'un dessin de minicarte, moyenné sur `n` appels. Le budget de
+    // frame étant la contrainte dominante du projet, une passe de HUD portée
+    // de 2 à 60 images par seconde doit être chiffrée, pas supposée.
+    mesureCarte: (n = 300) => {
+      const p = car.lirePosition(new THREE.Vector3());
+      const cap = eulerTmp.setFromQuaternion(car.quaternion, 'YXZ').y;
+      // Une passe à blanc écarte le coût de premier appel (compilation JIT,
+      // allocation des chemins) du chiffre rapporté.
+      for (let i = 0; i < 20; i++) minicarte.dessiner(p, cap, 0.016);
+      const t0 = performance.now();
+      for (let i = 0; i < n; i++) minicarte.dessiner(p, cap, 0.016);
+      const ms = (performance.now() - t0) / n;
+      return { ms: +ms.toFixed(3), voies: minicarte.vues.size,
+        surBudget16ms: +(ms / 16.7 * 100).toFixed(1) + '%' };
+    } };
 
   requestAnimationFrame(frame);
 }

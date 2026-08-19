@@ -207,7 +207,8 @@ export function buildCarMesh(color = 0x1c2b4a) {
 
   // --- Carrosserie --------------------------------------------------------
   const body = new THREE.Mesh(buildBodyGeometry(), bodyMat);
-  body.castShadow = true;
+  // Pas d'ombre portée, comme le modèle importé : voir `carmodel.js`.
+  body.castShadow = false;
   shell.add(body);
 
   // --- Vitrages, plaqués juste au-dessus de la surface de caisse ----------
@@ -360,7 +361,7 @@ export function buildCarMesh(color = 0x1c2b4a) {
       tireMat,
     );
     tire.rotation.z = Math.PI / 2;
-    tire.castShadow = true;
+    tire.castShadow = false;
     g.add(tire);
 
     // Jante alliage à branches fines, montée de série sur les finitions
