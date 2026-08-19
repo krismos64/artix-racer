@@ -99,11 +99,18 @@ export class Car {
     const hl = SPEC.wheelBase / 2;
     // Ancrage des suspensions, au niveau du plancher (y = 0 dans le repère caisse).
     // Position locale : avant gauche, avant droite, arrière gauche, arrière droite.
+    // Propulsion arrière, comme l'Audi R8 réelle affichée à l'écran : le
+    // moteur est central-arrière, les roues avant ne font que diriger. Avec
+    // la traction avant héritée d'une compacte générique, le couple du V10
+    // saturait l'adhérence des deux seules roues motrices dès 50-70 km/h : le
+    // régime moteur grimpait librement (plus assez de charge transmissible
+    // pour le freiner) mais la vitesse stagnait, la boîte auto ne passant
+    // alors jamais le rapport suivant faute d'atteindre le régime de passage.
     this.wheels = [
-      { pos: new THREE.Vector3(-hw, ANCHOR_Y, hl), steer: true, drive: true, brakeBias: 0.62 },
-      { pos: new THREE.Vector3(hw, ANCHOR_Y, hl), steer: true, drive: true, brakeBias: 0.62 },
-      { pos: new THREE.Vector3(-hw, ANCHOR_Y, -hl), steer: false, drive: false, brakeBias: 0.38 },
-      { pos: new THREE.Vector3(hw, ANCHOR_Y, -hl), steer: false, drive: false, brakeBias: 0.38 },
+      { pos: new THREE.Vector3(-hw, ANCHOR_Y, hl), steer: true, drive: false, brakeBias: 0.62 },
+      { pos: new THREE.Vector3(hw, ANCHOR_Y, hl), steer: true, drive: false, brakeBias: 0.62 },
+      { pos: new THREE.Vector3(-hw, ANCHOR_Y, -hl), steer: false, drive: true, brakeBias: 0.38 },
+      { pos: new THREE.Vector3(hw, ANCHOR_Y, -hl), steer: false, drive: true, brakeBias: 0.38 },
     ].map((w) => ({
       ...w, compression: 0, lastCompression: 0, grounded: false, wasGrounded: false,
       slip: 0, spin: 0, contactPoint: new THREE.Vector3(), suspForce: 0,
