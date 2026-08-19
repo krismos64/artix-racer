@@ -76,6 +76,86 @@ function triangulate(pts) {
   return tris;
 }
 
+// Aire signée d'un contour, vue du dessus. Positive en sens horaire dans le
+// repère x/z du jeu, où z va vers le sud.
+function aireSignee(pts) {
+  let a = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    a += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+  }
+  return a / 2;
+}
+
+// Décrit la forme d'une emprise bâtie, pour décider du type de couverture.
+//
+// Le toit à deux pans suppose un volume simple, allongé, sans renfoncement :
+// c'est le cas de la maison béarnaise courante. Dès que l'emprise se creuse
+// (bâtiment en L, en U, corps accolés, cour intérieure), relier chaque arête à
+// un faîtage unique fait sortir des triangles hors du volume et laisse des
+// trous. Ces emprises reçoivent une couverture plate, qui se ferme proprement.
+//
+// Trois mesures, toutes tirées du seul contour :
+// - `concavite` : part des sommets rentrants. Un rectangle en compte zéro.
+// - `remplissage` : part du rectangle englobant orienté réellement bâtie. Un L
+//   plafonne vers 0,6, un U descend plus bas.
+// - `elancement` : rapport longueur sur largeur. Un carré parfait ne désigne
+//   aucune direction de faîtage fiable.
+function analyserEmprise(pts, ax, az, px, pz) {
+  const n = pts.length;
+  let rentrants = 0;
+  // Le sens de parcours n'est pas garanti dans les données : on le lit sur
+  // l'aire signée plutôt que de le supposer.
+  const sens = aireSignee(pts) > 0 ? 1 : -1;
+  for (let i = 0; i < n; i++) {
+    const [x0, z0] = pts[(i + n - 1) % n];
+    const [x1, z1] = pts[i];
+    const [x2, z2] = pts[(i + 1) % n];
+    const cross = ((x1 - x0) * (z2 - z1) - (z1 - z0) * (x2 - x1)) * sens;
+    // Seuil en aire plutôt qu'en angle : deux arêtes presque colinéaires
+    // produisent un produit vectoriel minuscule dont le signe n'a pas de sens.
+    if (cross < -0.25) rentrants++;
+  }
+
+  let cx = 0, cz = 0;
+  for (const [x, z] of pts) { cx += x; cz += z; }
+  cx /= n; cz /= n;
+  let aMin = Infinity, aMax = -Infinity, pMin = Infinity, pMax = -Infinity;
+  for (const [x, z] of pts) {
+    const dx = x - cx, dz = z - cz;
+    const a = dx * ax + dz * az, p = dx * px + dz * pz;
+    aMin = Math.min(aMin, a); aMax = Math.max(aMax, a);
+    pMin = Math.min(pMin, p); pMax = Math.max(pMax, p);
+  }
+  const longueur = aMax - aMin, largeur = pMax - pMin;
+  const rectangle = longueur * largeur;
+  const aire = Math.abs(aireSignee(pts));
+
+  return {
+    concavite: n > 0 ? rentrants / n : 0,
+    remplissage: rectangle > 1e-6 ? Math.min(1, aire / rectangle) : 1,
+    elancement: largeur > 1e-6 ? longueur / largeur : 1,
+    longueur,
+    largeur,
+    aire,
+    sommets: n,
+  };
+}
+
+// Rétrécit un contour vers son centroïde. Sert à poser l'acrotère d'un toit
+// plat : la face intérieure du muret suit le contour réduit de son épaisseur.
+// Un vrai décalage de polygone gérerait les arêtes qui se croisent ; à
+// l'échelle de quelques centimètres sur une emprise bâtie, la contraction
+// homothétique suffit et ne peut pas se retourner.
+function contracter(pts, cx, cz, marge) {
+  return pts.map(([x, z]) => {
+    const dx = x - cx, dz = z - cz;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-6) return [x, z];
+    const k = Math.max(0.02, (d - marge) / d);
+    return [cx + dx * k, cz + dz * k];
+  });
+}
+
 // Transforme une polyligne (route) en ruban continu de triangles.
 // Les bords sont calculés par bissectrice à chaque sommet : le ruban reste
 // d'un seul tenant dans les virages, sans trou ni pastille de rattrapage.
@@ -528,20 +608,41 @@ export function buildWorld(scene, data) {
       || r.surface === 'cobblestone';
 
     // Une avenue traverse le carrefour sans y avoir son milieu : tester le
-    // point central de la polyligne ne retenait qu'une voie sur dix. On découpe
-    // donc la voie segment par segment, et chaque segment part vers le maillage
-    // correspondant à son revêtement. Les sommets partagés appartiennent aux
-    // deux tronçons, sans quoi un trou s'ouvrirait à la limite du pavage.
+    // point central de la polyligne ne retenait qu'une voie sur dix. Le
+    // revêtement se décide donc segment par segment.
+    //
+    // Mais chaque segment ne peut pas devenir un ruban à lui seul. `ribbon`
+    // calcule ses bords par bissectrice à chaque sommet : sur une polyligne
+    // entière, le bord extérieur d'un virage est prolongé et le ruban reste
+    // d'un seul tenant. Sur un ruban de deux points, il n'y a pas de sommet
+    // intérieur, donc pas de bissectrice : les bords sortent perpendiculaires
+    // et deux segments consécutifs laissent un coin ouvert dans chaque virage.
+    // C'est ce qui ouvrait un triangle d'herbe à chaque changement de direction.
+    //
+    // On regroupe donc les segments CONSÉCUTIFS de même revêtement en tronçons,
+    // et chaque tronçon part d'un seul tenant vers son maillage. Le sommet de
+    // transition appartient aux deux tronçons, sans quoi un trou s'ouvrirait à
+    // la limite du pavage.
     if (!paveeParTag && !r.bridge) {
+      // Revêtement de chaque segment. Un segment compte comme pavé dès que
+      // l'une de ses extrémités tombe dans l'emprise : mieux vaut un léger
+      // débordement qu'une placette trouée là où les sommets OSM sont espacés.
+      const revSeg = [];
       for (let i = 0; i < r.pts.length - 1; i++) {
         const a = r.pts[i], b = r.pts[i + 1];
-        // Un segment compte comme pavé dès que l'une de ses extrémités tombe
-        // dans l'emprise : mieux vaut un léger débordement qu'une placette
-        // trouée là où les sommets OSM sont espacés.
-        const pave = estPavee(a[0], a[1]) || estPavee(b[0], b[1]);
-        if (pave) ribbon([a, b], r.width, ROAD_Y, pavePos, paveUv, paveNrm, relief);
-        else if (r.drivable) ribbon([a, b], r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief);
-        else ribbon([a, b], r.width, ROAD_Y - 0.03, pathPos, pathUv, pathNrm, relief);
+        revSeg.push(estPavee(a[0], a[1]) || estPavee(b[0], b[1]) ? 'pave'
+          : r.drivable ? 'route' : 'chemin');
+      }
+      let debut = 0;
+      for (let i = 0; i <= revSeg.length; i++) {
+        // Fin de tronçon : changement de revêtement, ou fin de la voie.
+        if (i < revSeg.length && revSeg[i] === revSeg[debut]) continue;
+        const troncon = r.pts.slice(debut, i + 1);
+        const rev = revSeg[debut];
+        if (rev === 'pave') ribbon(troncon, r.width, ROAD_Y, pavePos, paveUv, paveNrm, relief);
+        else if (rev === 'route') ribbon(troncon, r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief);
+        else ribbon(troncon, r.width, ROAD_Y - 0.03, pathPos, pathUv, pathNrm, relief);
+        debut = i;
       }
       continue;
     }
@@ -558,6 +659,71 @@ export function buildWorld(scene, data) {
         r.bridge ? 0.85 : 0);
     } else {
       ribbon(r.pts, r.width, ROAD_Y - 0.03, pathPos, pathUv, pathNrm, relief);
+    }
+  }
+
+  // ---- Raccords de carrefour --------------------------------------------
+  //
+  // Deux rubans qui se croisent laissent un trou en leur milieu. Chaque voie
+  // est bordée par bissectrice le long de SON tracé, mais aucune ne connaît
+  // les autres : à un carrefour en T, la voie qui s'arrête présente un bord
+  // droit, et le triangle compris entre ce bord et le flanc de la voie
+  // traversante n'appartient à personne. C'est par là que l'herbe ressort au
+  // milieu de la chaussée, et c'est le défaut le plus visible en conduite.
+  //
+  // La correction pose une pastille de raccord à chaque nœud partagé par au
+  // moins deux voies. Son rayon vient de la plus large des voies qui s'y
+  // rejoignent : elle recouvre les extrémités de ruban plutôt que de tenter de
+  // s'y ajuster au millimètre, ce qui serait fragile sur des angles quelconques.
+  //
+  // Un disque plutôt qu'un polygone ajusté : un carrefour réel est arrondi par
+  // les rayons de giration, la lecture au sol est meilleure, et la géométrie ne
+  // peut pas se retourner quel que soit l'angle des branches.
+  {
+    // Nœuds de voirie, regroupés par position. Les tracés OSM partagent leurs
+    // sommets aux intersections : deux voies qui se croisent y portent des
+    // coordonnées identiques, à l'arrondi près.
+    const noeuds = new Map();
+    for (const r of data.roads) {
+      if (!r.drivable || r.bridge) continue;
+      // Seules les extrémités et les sommets internes comptent : un sommet de
+      // courbe au milieu d'une voie n'est pas un carrefour.
+      for (const [x, z] of r.pts) {
+        // Clé au décimètre : les coordonnées reprojetées ne retombent pas
+        // exactement sur le même flottant d'une voie à l'autre.
+        const k = `${Math.round(x * 10)},${Math.round(z * 10)}`;
+        let e = noeuds.get(k);
+        if (!e) { e = { x, z, voies: new Set(), largeur: 0 }; noeuds.set(k, e); }
+        e.voies.add(r);
+        e.largeur = Math.max(e.largeur, r.width);
+      }
+    }
+
+    const SEGMENTS = 12;   // finesse de la pastille
+    for (const nd of noeuds.values()) {
+      // Un nœud qui n'appartient qu'à une seule voie n'est pas un carrefour.
+      if (nd.voies.size < 2) continue;
+      // Rayon : un peu plus que la demi-largeur de la voie la plus large, pour
+      // mordre sur les rubans et couvrir le trou sans déborder sur le trottoir.
+      const rayon = nd.largeur * 0.62;
+      const yC = (relief ? relief.hauteurRoute(nd.x, nd.z) : 0) + ROAD_Y;
+      // Éventail depuis le centre : triangulation triviale et toujours valide.
+      for (let s = 0; s < SEGMENTS; s++) {
+        const a0 = (s / SEGMENTS) * Math.PI * 2;
+        const a1 = ((s + 1) / SEGMENTS) * Math.PI * 2;
+        const x0 = nd.x + Math.cos(a0) * rayon, z0 = nd.z + Math.sin(a0) * rayon;
+        const x1 = nd.x + Math.cos(a1) * rayon, z1 = nd.z + Math.sin(a1) * rayon;
+        // Le bord de la pastille suit le terrain comme le fait la chaussée,
+        // sinon un carrefour en pente formerait une marche à sa périphérie.
+        const y0 = (relief ? relief.hauteurRoute(x0, z0) : 0) + ROAD_Y;
+        const y1 = (relief ? relief.hauteurRoute(x1, z1) : 0) + ROAD_Y;
+        roadPos.push(nd.x, yC, nd.z, x0, y0, z0, x1, y1, z1);
+        // UV en mètres, même échelle que les rubans : le raccord doit garder
+        // la granulométrie de l'enrobé voisin, sinon la pastille se lit comme
+        // une pièce rapportée.
+        roadUv.push(nd.x / 4, nd.z / 4, x0 / 4, z0 / 4, x1 / 4, z1 / 4);
+        for (let k = 0; k < 3; k++) roadNrm.push(0, 1, 0);
+      }
     }
   }
   // polygonOffset tire la chaussée vers la caméra dans le depth buffer : c'est
@@ -1027,6 +1193,13 @@ export function buildWorld(scene, data) {
   // plus possible de regrouper par palette fixe.
   const wallPos2 = [], wallCol = [], wallUv = [];
   const roofPos = [], roofCol = [], roofUv = [];
+  // Superstructures de toiture : souches de cheminée, lucarnes, blocs de
+  // ventilation. Collectées ici pendant la boucle des bâtiments, instanciées
+  // ensuite en trois appels de dessin pour toute la ville. Les poser une par
+  // une coûterait plusieurs milliers de maillages indépendants.
+  const cheminees = [];   // {x, y, z, cap, h}
+  const lucarnes = [];    // {x, y, z, cap}
+  const ventils = [];     // {x, y, z, cap}
   // Fenêtres : petits quads sombres plaqués sur les façades. C'est ce qui
   // distingue le plus nettement un bâtiment d'un simple bloc coloré.
   //
@@ -1461,74 +1634,274 @@ export function buildWorld(scene, data) {
     // partagent un mur, elles n'ont pas d'égout entre elles.
     const DEBORD_MAX = 0.4;
 
-    // Deux points de faîtage, aux extrémités du grand axe. Leur retrait décide
-    // de la forme : faible, le faîtage court jusqu'aux pignons (toit à deux
-    // pans) ; marqué, les extrémités s'inclinent (croupe). Le LiDAR tranche par
-    // bâtiment ; sans lui, un retrait moyen convient aux deux cas.
+    // Contour débordé, calculé une fois : il sert aux deux types de couverture
+    // et à la dalle de sécurité. Chaque sommet est poussé vers l'extérieur de
+    // son propre débord, un bâtiment pouvant être mitoyen d'un côté et dégagé
+    // de l'autre, ce qui est le cas de tous les immeubles de bout de rangée.
+    const contour = b.pts.map(([x, z]) => {
+      const d = Math.min(DEBORD_MAX, distVoisin(b, x, z) * 0.5);
+      const l = Math.hypot(x - cx, z - cz) || 1;
+      return [x + (x - cx) / l * d, z + (z - cz) / l * d];
+    });
+
+    // Écrit un sommet de couverture : position, teinte, et UV projetées sur les
+    // axes du toit pour que les rangs de tuiles courent parallèlement au
+    // faîtage. Une projection sur les axes du monde les ferait tourner d'un
+    // bâtiment à l'autre, ce qui se remarque immédiatement vu d'en haut.
+    const poserToit = (x, y, z, col) => {
+      roofPos.push(x, y, z);
+      roofCol.push(col.r, col.g, col.b);
+      const dx = x - cx, dz = z - cz;
+      roofUv.push((dx * ax + dz * az) / 1.4, (dx * px2 + dz * pz2) / 1.4);
+    };
+
+    // Forme de l'emprise : c'est elle qui décide du type de couverture.
+    const forme = analyserEmprise(b.pts, ax, az, px2, pz2);
+
+    // Le toit à deux pans suppose un volume simple. Trois conditions, toutes
+    // nécessaires : peu de sommets rentrants, une emprise qui remplit son
+    // rectangle englobant, et un minimum d'élancement pour que la direction du
+    // faîtage ait un sens. Un bâtiment en L qui passe ce test produirait des
+    // triangles hors du volume, et c'est exactement ce qui trouait les toits.
     //
-    // Le retrait est corrigé par le remplissage de l'emprise, c'est-à-dire la
-    // part du rectangle englobant réellement bâtie. À Artix, 90 % des emprises
-    // sont découpées (bâtiments en L, en U, corps accolés) : sur celles-là, un
-    // faîtage courant d'un bout à l'autre relie des sommets très éloignés et
-    // fait éclater la toiture en éventail. Un faîtage plus court, ramené vers
-    // le centre, produit un volume cohérent.
-    const rectangle = (longMax - longMin) * larMax * 2;
-    const remplissage = rectangle > 0
-      ? Math.min(1, surface / rectangle) : 1;
-    // 1 sur une emprise rectangulaire, jusqu'à 0.45 sur une emprise très
-    // découpée : le faîtage se raccourcit d'autant.
-    const compacite = Math.max(0.45, Math.min(1, (remplissage - 0.3) / 0.5));
-    const retraitBase = lidar
-      ? (lidar.t === 2 ? larMax * 0.1 : larMax * 0.5)
-      : larMax * 0.35;
-    const demiLong = (longMax - longMin) / 2;
-    const retrait = Math.min(
-      demiLong * 0.85,
-      retraitBase + demiLong * (1 - compacite) * 0.8,
-    );
-    const f1x = cx + ax * (longMin + retrait), f1z = cz + az * (longMin + retrait);
-    const f2x = cx + ax * (longMax - retrait), f2z = cz + az * (longMax - retrait);
+    // Le LiDAR peut trancher dans les deux sens : quand il a mesuré une
+    // couverture à deux pans (t === 2), on lui fait confiance même sur une
+    // emprise moyennement régulière, la mesure valant mieux que la déduction.
+    // Le nombre de sommets rentrants compte en ABSOLU, pas en proportion.
+    // L'emprise médiane d'Artix n'a que 6 sommets : un seul décrochement y pèse
+    // 0,167, si bien qu'un seuil en ratio de 0,12 rejetait au toit plat des
+    // maisons parfaitement simples portant un unique retour de façade. Mesuré
+    // sur les 2 540 emprises de la commune, le passage au critère absolu rend
+    // les deux pans à 178 bâtiments (45,3 % contre 52,3 %), sans laisser passer
+    // les formes en L, qui portent deux décrochements ou davantage.
+    const rentrants = Math.round(forme.concavite * forme.sommets);
+    const formeSimple = rentrants <= 1
+      && forme.remplissage >= 0.72
+      && forme.elancement >= 1.15
+      && forme.sommets <= 12;
+    // Quand le LiDAR a mesuré une couverture à deux pans, la mesure prime sur
+    // la déduction : on accepte alors une emprise sensiblement moins régulière.
+    const deuxPans = lidar && lidar.t === 2
+      ? rentrants <= 3 && forme.remplissage >= 0.55
+      : formeSimple && !platte;
 
-    for (let i = 0; i < n; i++) {
-      const [x1, z1] = b.pts[i];
-      const [x2, z2] = b.pts[(i + 1) % n];
-      // Chaque arête de mur est débordée vers l'extérieur, puis reliée au
-      // segment de faîtage le plus proche.
-      // Débord propre à chaque sommet : un bâtiment peut être mitoyen d'un
-      // côté et dégagé de l'autre, ce qui est le cas de tous les immeubles de
-      // bout de rangée.
-      const d1 = Math.min(DEBORD_MAX, distVoisin(b, x1, z1) * 0.5);
-      const d2 = Math.min(DEBORD_MAX, distVoisin(b, x2, z2) * 0.5);
-      const e1x = x1 + (x1 - cx) / (Math.hypot(x1 - cx, z1 - cz) || 1) * d1;
-      const e1z = z1 + (z1 - cz) / (Math.hypot(x1 - cx, z1 - cz) || 1) * d1;
-      const e2x = x2 + (x2 - cx) / (Math.hypot(x2 - cx, z2 - cz) || 1) * d2;
-      const e2z = z2 + (z2 - cz) / (Math.hypot(x2 - cx, z2 - cz) || 1) * d2;
-
-      // Le sommet du faîtage retenu est celui dont la projection est la plus
-      // proche du milieu de l'arête : c'est ce qui crée les deux pans.
-      const mx = (x1 + x2) / 2 - cx, mz = (z1 + z2) / 2 - cz;
-      const along = mx * ax + mz * az;
-      const fx = along < 0 ? f1x : f2x, fz = along < 0 ? f1z : f2z;
-
-      roofPos.push(e1x, top, e1z, e2x, top, e2z, fx, faitageY, fz);
-      for (let k = 0; k < 3; k++) roofCol.push(rc.r, rc.g, rc.b);
-      // UV projetées sur les axes du toit : les rangs de tuiles courent
-      // parallèlement au faîtage, comme sur une couverture réelle. Une
-      // projection sur les axes du monde les ferait tourner d'un bâtiment à
-      // l'autre, ce qui se remarque immédiatement vu d'en haut.
-      for (const [ux, uz] of [[e1x, e1z], [e2x, e2z], [fx, fz]]) {
-        const dx = ux - cx, dz = uz - cz;
-        roofUv.push((dx * ax + dz * az) / 1.4, (dx * px2 + dz * pz2) / 1.4);
+    // Dalle de sécurité, posée juste sous la couverture et sur toute l'emprise
+    // débordée. Elle ne se voit jamais sur un toit correct : sa raison d'être
+    // est qu'un défaut résiduel de la couverture (triangle manquant, arête qui
+    // ne se referme pas) laisse voir une surface opaque de la teinte du toit,
+    // et non le ciel ni l'intérieur du bâtiment.
+    //
+    // 6 cm sous l'égout : assez pour ne pas rivaliser avec la couverture dans
+    // le tampon de profondeur, assez peu pour rester cachée derrière le débord
+    // vue depuis la rue comme depuis une caméra légèrement surélevée.
+    const DALLE = 0.06;
+    {
+      let tris = triangulate(contour);
+      // Repli en éventail : l'algorithme d'oreilles échoue sur les contours qui
+      // portent des sommets colinéaires, fréquents dans les emprises du
+      // cadastre. Une dalle mal triangulée reste préférable à pas de dalle,
+      // puisqu'elle n'est qu'un fond opaque.
+      if (!tris.length && contour.length >= 3) {
+        tris = [];
+        for (let i = 1; i < contour.length - 1; i++) tris.push([0, i, i + 1]);
+      }
+      // Teinte assombrie : la dalle joue le rôle du sous-face de toiture, vue
+      // par en dessous à travers un éventuel défaut. Une teinte identique à la
+      // couverture trahirait le rattrapage sur les toits à faible pente.
+      const dc = rc.clone().multiplyScalar(0.62);
+      const yD = top - DALLE;
+      for (const [i, j, k] of tris) {
+        poserToit(contour[i][0], yD, contour[i][1], dc);
+        poserToit(contour[j][0], yD, contour[j][1], dc);
+        poserToit(contour[k][0], yD, contour[k][1], dc);
       }
     }
 
-    // Panneau de faîtage reliant les deux sommets : ferme la toiture entre
-    // les croupes des deux extrémités.
-    roofPos.push(f1x, faitageY, f1z, f2x, faitageY, f2z, cx, faitageY, cz);
-    for (let k = 0; k < 3; k++) roofCol.push(rc.r, rc.g, rc.b);
-    for (const [ux, uz] of [[f1x, f1z], [f2x, f2z], [cx, cz]]) {
-      const dx = ux - cx, dz = uz - cz;
-      roofUv.push((dx * ax + dz * az) / 1.4, (dx * px2 + dz * pz2) / 1.4);
+    if (!deuxPans) {
+      // ---- Couverture plate ou à faible pente ------------------------------
+      //
+      // Toute emprise que le toit à deux pans ne peut pas couvrir proprement
+      // passe ici : bâtiments en L, en U, corps accolés, contours irréguliers,
+      // et les grands volumes agricoles ou commerciaux réellement plats.
+      //
+      // La surface est triangulée par oreilles sur le contour débordé, donc
+      // fermée par construction : chaque triangle appartient à l'intérieur du
+      // polygone, aucun ne peut traverser un renfoncement comme le faisait
+      // l'éventail vers un faîtage unique.
+      //
+      // Une inclinaison très faible remplace le plan strictement horizontal :
+      // elle suffit à ce que la lumière ne rende pas toutes les toitures d'un
+      // gris identique, et elle imite la pente d'écoulement d'un toit-terrasse.
+      let tris = triangulate(contour);
+      if (!tris.length && contour.length >= 3) {
+        tris = [];
+        for (let i = 1; i < contour.length - 1; i++) tris.push([0, i, i + 1]);
+      }
+      // Hauteur d'un point de la couverture : le versant s'incline le long de
+      // l'axe transversal, comme un rejet d'eau vers un seul bord.
+      const inclin = Math.min(pente, platte ? 0.35 : 0.8);
+      const denom = larMax > 0.5 ? larMax : 1;
+      const altPlat = (x, z) => {
+        const t = ((x - cx) * px2 + (z - cz) * pz2) / denom;   // -1 à 1
+        return top + inclin * (0.5 + t * 0.5);
+      };
+      for (const [i, j, k] of tris) {
+        const [xi, zi] = contour[i], [xj, zj] = contour[j], [xk, zk] = contour[k];
+        poserToit(xi, altPlat(xi, zi), zi, rc);
+        poserToit(xj, altPlat(xj, zj), zj, rc);
+        poserToit(xk, altPlat(xk, zk), zk, rc);
+      }
+
+      // Acrotère : le muret qui borde un toit-terrasse et masque la couverture
+      // depuis la rue. Sans lui, un toit plat se termine sur une arête vive où
+      // le mur et la couverture se rencontrent à angle droit, ce qui se lit
+      // comme un bloc coupé net.
+      //
+      // Il ferme aussi la tranche entre l'égout et la couverture inclinée :
+      // c'est cette bande verticale qui, laissée ouverte, laissait voir
+      // l'intérieur du volume sur les emprises un peu pentues.
+      const ACROTERE = platte ? 0.42 : 0.26;
+      const EPAIS = 0.16;
+      const interieur = contracter(contour, cx, cz, EPAIS);
+      // Teinte du muret : plus proche du mur que de la couverture, un acrotère
+      // étant maçonné et enduit comme la façade qu'il prolonge.
+      const ac = new THREE.Color(wr, wg, wb).multiplyScalar(0.94);
+      for (let i = 0; i < contour.length; i++) {
+        const j = (i + 1) % contour.length;
+        const [x1, z1] = contour[i], [x2, z2] = contour[j];
+        const [u1, v1] = interieur[i], [u2, v2] = interieur[j];
+        // Le sommet du muret domine la couverture de sa hauteur propre, prise
+        // au point le plus haut du versant pour qu'il ne soit jamais noyé.
+        const h1 = altPlat(x1, z1) + ACROTERE;
+        const h2 = altPlat(x2, z2) + ACROTERE;
+        const b1 = top - DALLE, b2 = top - DALLE;
+
+        // Face extérieure, dans le prolongement de la façade.
+        poserToit(x1, b1, z1, ac); poserToit(x2, b2, z2, ac); poserToit(x2, h2, z2, ac);
+        poserToit(x1, b1, z1, ac); poserToit(x2, h2, z2, ac); poserToit(x1, h1, z1, ac);
+        // Couronnement : la tranche horizontale visible d'en haut.
+        poserToit(x1, h1, z1, ac); poserToit(x2, h2, z2, ac); poserToit(u2, h2, v2, ac);
+        poserToit(x1, h1, z1, ac); poserToit(u2, h2, v2, ac); poserToit(u1, h1, v1, ac);
+        // Face intérieure, qui plonge vers la couverture.
+        const ci1 = altPlat(u1, v1), ci2 = altPlat(u2, v2);
+        poserToit(u1, h1, v1, ac); poserToit(u2, h2, v2, ac); poserToit(u2, ci2, v2, ac);
+        poserToit(u1, h1, v1, ac); poserToit(u2, ci2, v2, ac); poserToit(u1, ci1, v1, ac);
+      }
+    } else {
+      // ---- Couverture à deux pans -----------------------------------------
+      //
+      // Réservée aux emprises simples et allongées, où relier chaque arête au
+      // faîtage produit un volume cohérent. C'est la maison béarnaise courante.
+      //
+      // Deux points de faîtage, aux extrémités du grand axe. Leur retrait
+      // décide de la forme : faible, le faîtage court jusqu'aux pignons (toit à
+      // deux pans) ; marqué, les extrémités s'inclinent (croupe). Le LiDAR
+      // tranche par bâtiment ; sans lui, un retrait moyen convient aux deux cas.
+      const retraitBase = lidar
+        ? (lidar.t === 2 ? larMax * 0.1 : larMax * 0.5)
+        : larMax * 0.35;
+      const demiLong = (longMax - longMin) / 2;
+      // Le retrait ne dépend plus du remplissage : l'emprise est régulière par
+      // construction ici, puisque les formes découpées sont parties au toit
+      // plat. C'est ce couplage qui faisait éclater les toitures en éventail.
+      const retrait = Math.min(demiLong * 0.85, retraitBase);
+      const f1x = cx + ax * (longMin + retrait), f1z = cz + az * (longMin + retrait);
+      const f2x = cx + ax * (longMax - retrait), f2z = cz + az * (longMax - retrait);
+
+      for (let i = 0; i < n; i++) {
+        const [e1x, e1z] = contour[i];
+        const [e2x, e2z] = contour[(i + 1) % n];
+
+        // Le sommet du faîtage retenu est celui dont la projection est la plus
+        // proche du milieu de l'arête : c'est ce qui crée les deux pans.
+        const mx = (e1x + e2x) / 2 - cx, mz = (e1z + e2z) / 2 - cz;
+        const along = mx * ax + mz * az;
+        const fx = along < 0 ? f1x : f2x, fz = along < 0 ? f1z : f2z;
+
+        poserToit(e1x, top, e1z, rc);
+        poserToit(e2x, top, e2z, rc);
+        poserToit(fx, faitageY, fz, rc);
+
+        // Fermeture de la rive : la bande verticale entre l'égout débordé et le
+        // sommet du mur. Sans elle, le débord de toiture flotte au-dessus du
+        // vide et on voit sous la couverture depuis une caméra basse, ce qui
+        // est très lisible en conduite le long d'une rangée de maisons.
+        const [w1x, w1z] = b.pts[i];
+        const [w2x, w2z] = b.pts[(i + 1) % n];
+        const rcSous = rc.clone().multiplyScalar(0.55);
+        poserToit(w1x, top - DALLE, w1z, rcSous);
+        poserToit(w2x, top - DALLE, w2z, rcSous);
+        poserToit(e2x, top, e2z, rcSous);
+        poserToit(w1x, top - DALLE, w1z, rcSous);
+        poserToit(e2x, top, e2z, rcSous);
+        poserToit(e1x, top, e1z, rcSous);
+      }
+
+      // Panneau de faîtage reliant les deux sommets : ferme la toiture entre
+      // les croupes des deux extrémités.
+      poserToit(f1x, faitageY, f1z, rc);
+      poserToit(f2x, faitageY, f2z, rc);
+      poserToit(cx, faitageY, cz, rc);
+    }
+
+    // ---- Superstructures de toiture ---------------------------------------
+    //
+    // Une ligne de toits parfaitement nue se lit comme une maquette. Quelques
+    // souches de cheminée et lucarnes suffisent à casser cette régularité, et
+    // ce sont elles qu'on remarque en roulant le long d'une rangée de maisons.
+    //
+    // Elles restent volontairement rares : les poser sur tous les bâtiments
+    // donnerait un centre-bourg hérissé, ce qui est aussi faux que le contraire.
+    // Le tirage est déterministe (dérivé du centroïde), donc identique à chaque
+    // lancement, et il ne retient qu'une part des bâtiments.
+    //
+    // Seuls les bâtiments assez grands en portent : une dépendance de jardin de
+    // 12 m² n'a ni cheminée ni lucarne, et une souche y serait à l'échelle du
+    // bâtiment entier.
+    if (surface > 45 && hTotal > 3.4) {
+      const gs = hash(Math.abs(ctrX * 3.71 + ctrZ * 9.13) + 17.3);
+
+      // Cheminée : sur un toit à deux pans, elle se pose près du faîtage, là
+      // où elle se trouve réellement. Sur un toit plat, elle est reportée vers
+      // le centre de l'emprise, à l'écart de l'acrotère.
+      if (gs < 0.42) {
+        // Décalage le long du faîtage, pour que deux maisons voisines n'aient
+        // pas leur souche au même endroit.
+        const t = (hash(gs * 23.1) - 0.5) * 0.55;
+        const sx = cx + ax * (longMax - longMin) * t;
+        const sz = cz + az * (longMax - longMin) * t;
+        // Hauteur de souche : elle dépasse le faîtage de 40 à 90 cm.
+        const hSouche = 0.4 + hash(gs * 51.7) * 0.5;
+        const yBase = deuxPans ? top + pente * 0.55 : top + 0.1;
+        cheminees.push({ x: sx, y: yBase, z: sz, cap: theta, h: hSouche + (deuxPans ? pente * 0.45 : 0.35) });
+      }
+
+      // Lucarne : réservée aux toits à deux pans assez pentus, seuls à pouvoir
+      // en porter une. Sur un toit plat elle n'aurait aucun sens.
+      if (deuxPans && pente > 0.9 && larMax > 3.2 && hash(gs * 7.7) < 0.30) {
+        // Posée à mi-pente, sur le versant tiré au sort.
+        const versant = hash(gs * 13.3) < 0.5 ? 1 : -1;
+        const le = (hash(gs * 31.9) - 0.5) * (longMax - longMin) * 0.5;
+        const lx = cx + ax * le + px2 * larMax * 0.45 * versant;
+        const lz = cz + az * le + pz2 * larMax * 0.45 * versant;
+        lucarnes.push({ x: lx, y: top + pente * 0.42, z: lz, cap: theta + (versant > 0 ? 0 : Math.PI) });
+      }
+
+      // Blocs de ventilation : machinerie de toiture-terrasse, présente sur les
+      // volumes commerciaux et agricoles, jamais sur l'habitat.
+      if (!deuxPans && surface > 320 && hash(gs * 3.3) < 0.55) {
+        const nb = 1 + Math.floor(hash(gs * 61.1) * 3);
+        for (let v = 0; v < nb; v++) {
+          const u = (hash(gs * 71.3 + v * 5.1) - 0.5) * (longMax - longMin) * 0.55;
+          const w = (hash(gs * 83.7 + v * 11.9) - 0.5) * larMax * 1.1;
+          ventils.push({
+            x: cx + ax * u + px2 * w,
+            y: top + 0.12,
+            z: cz + az * u + pz2 * w,
+            cap: theta,
+          });
+        }
+      }
     }
   });
 
@@ -1652,6 +2025,82 @@ export function buildWorld(scene, data) {
     m.name = 'toitures';
     m.receiveShadow = true;
     group.add(m);
+  }
+
+  // ---- Superstructures instanciées ---------------------------------------
+  //
+  // Trois appels de dessin pour toute la ville, quelle que soit la quantité :
+  // une souche de cheminée est une boîte, une lucarne un prisme, un bloc de
+  // ventilation une boîte plate. Les poser en maillages indépendants coûterait
+  // plusieurs milliers d'objets pour un gain visuel identique.
+  {
+    const dummy = new THREE.Object3D();
+
+    if (cheminees.length) {
+      // Souche de brique ou d'enduit, section carrée. La géométrie est unitaire
+      // et l'échelle porte la hauteur réelle, propre à chaque bâtiment.
+      const g = new THREE.BoxGeometry(0.6, 1, 0.6);
+      // L'origine passe en pied de souche : l'échelle en hauteur la fait alors
+      // pousser vers le haut, sans avoir à corriger la position.
+      g.translate(0, 0.5, 0);
+      const m = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({
+        color: 0xa8907c, roughness: 0.92,
+      }), cheminees.length);
+      cheminees.forEach((c, i) => {
+        dummy.position.set(c.x, c.y, c.z);
+        dummy.rotation.set(0, -c.cap, 0);
+        dummy.scale.set(1, c.h, 1);
+        dummy.updateMatrix();
+        m.setMatrixAt(i, dummy.matrix);
+      });
+      m.instanceMatrix.needsUpdate = true;
+      m.receiveShadow = true;
+      m.name = 'cheminees';
+      group.add(m);
+    }
+
+    if (lucarnes.length) {
+      // Lucarne simplifiée : un petit volume posé sur le versant, avec sa joue
+      // avant plus claire qui lit comme une fenêtre de toit. La forme reste
+      // sommaire, elle n'est vue que de loin et de biais.
+      const g = new THREE.BoxGeometry(1.15, 0.85, 1.0);
+      g.translate(0, 0.30, 0);
+      const m = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({
+        color: 0xb9b3a6, roughness: 0.86,
+      }), lucarnes.length);
+      lucarnes.forEach((l, i) => {
+        dummy.position.set(l.x, l.y, l.z);
+        dummy.rotation.set(0, -l.cap, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        m.setMatrixAt(i, dummy.matrix);
+      });
+      m.instanceMatrix.needsUpdate = true;
+      m.receiveShadow = true;
+      m.name = 'lucarnes';
+      group.add(m);
+    }
+
+    if (ventils.length) {
+      // Bloc de ventilation de toiture-terrasse : caisson métallique clair,
+      // très reconnaissable sur les grandes surfaces commerciales.
+      const g = new THREE.BoxGeometry(1.5, 0.7, 1.1);
+      g.translate(0, 0.35, 0);
+      const m = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({
+        color: 0x9ba0a4, roughness: 0.62, metalness: 0.22,
+      }), ventils.length);
+      ventils.forEach((v, i) => {
+        dummy.position.set(v.x, v.y, v.z);
+        dummy.rotation.set(0, -v.cap, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        m.setMatrixAt(i, dummy.matrix);
+      });
+      m.instanceMatrix.needsUpdate = true;
+      m.receiveShadow = true;
+      m.name = 'ventilations';
+      group.add(m);
+    }
   }
 
   // ---- Voies ferrées -----------------------------------------------------

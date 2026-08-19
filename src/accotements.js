@@ -105,13 +105,48 @@ export class Accotements {
       const rev = REVETEMENTS[cle];
       const tab = parRev.get(cle);
 
+      // Normale de bissectrice à chaque sommet de la voie, calculée une fois
+      // pour toute la polyligne.
+      //
+      // Une normale prise sur le seul segment courant change brutalement d'un
+      // segment au suivant : au sommet d'un virage, la bande sortante part dans
+      // une direction et l'entrante dans une autre, si bien que les deux
+      // trottoirs se croisent à l'intérieur du virage et s'écartent à
+      // l'extérieur. C'est le même défaut que celui des rubans de chaussée, et
+      // il se soigne de la même façon : la bissectrice des deux directions
+      // donne un bord continu, avec un facteur d'élargissement qui compense
+      // l'angle pour que la largeur reste constante en travers.
+      const normales = [];
+      for (let i = 0; i < r.pts.length; i++) {
+        let inX = 0, inZ = 0, outX = 0, outZ = 0;
+        if (i > 0) {
+          const l = Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]) || 1;
+          inX = (r.pts[i][0] - r.pts[i - 1][0]) / l;
+          inZ = (r.pts[i][1] - r.pts[i - 1][1]) / l;
+        }
+        if (i < r.pts.length - 1) {
+          const l = Math.hypot(r.pts[i + 1][0] - r.pts[i][0], r.pts[i + 1][1] - r.pts[i][1]) || 1;
+          outX = (r.pts[i + 1][0] - r.pts[i][0]) / l;
+          outZ = (r.pts[i + 1][1] - r.pts[i][1]) / l;
+        }
+        if (i === 0) { inX = outX; inZ = outZ; }
+        if (i === r.pts.length - 1) { outX = inX; outZ = inZ; }
+        let bx = inX + outX, bz = inZ + outZ;
+        const bl = Math.hypot(bx, bz);
+        if (bl < 1e-6) { bx = inX; bz = inZ; } else { bx /= bl; bz /= bl; }
+        // Élargissement borné, comme sur les rubans : sur un angle aigu, un
+        // facteur non borné produirait une pointe démesurée.
+        const cosHalf = Math.max(0.35, inX * bx + inZ * bz);
+        normales.push([-bz, bx, Math.min(1 / cosHalf, 2.5)]);
+      }
+
       for (let i = 0; i < r.pts.length - 1; i++) {
         const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
         const dx = x2 - x1, dz = z2 - z1;
         const len = Math.hypot(dx, dz);
         if (len < 0.5) continue;
-        const ux = dx / len, uz = dz / len;
-        const nx = -uz, nz = ux;
+        const [n1x0, n1z0, k1] = normales[i];
+        const [n2x0, n2z0, k2] = normales[i + 1];
 
         // Découpage en pas courts : sur une pente, une bande d'un seul tenant
         // ne suivrait pas le terrain et rouvrirait le trou qu'elle doit fermer.
@@ -125,18 +160,27 @@ export class Accotements {
             const ax = x1 + dx * t0, az = z1 + dz * t0;
             const bx = x1 + dx * t1, bz = z1 + dz * t1;
 
+            // Normale interpolée entre les deux sommets du segment : le bord
+            // pivote progressivement dans le virage au lieu de casser net.
+            const na = t0, nb = t1;
+            const n1x = n1x0 + (n2x0 - n1x0) * na, n1z = n1z0 + (n2z0 - n1z0) * na;
+            const n2xi = n1x0 + (n2x0 - n1x0) * nb, n2zi = n1z0 + (n2z0 - n1z0) * nb;
+            const ka = k1 + (k2 - k1) * na, kb = k1 + (k2 - k1) * nb;
+
             // Bord intérieur : au ras de la chaussée, à son altitude.
-            const i1x = ax + nx * bordChaussee * cote, i1z = az + nz * bordChaussee * cote;
-            const i2x = bx + nx * bordChaussee * cote, i2z = bz + nz * bordChaussee * cote;
+            const i1x = ax + n1x * bordChaussee * ka * cote;
+            const i1z = az + n1z * bordChaussee * ka * cote;
+            const i2x = bx + n2xi * bordChaussee * kb * cote;
+            const i2z = bz + n2zi * bordChaussee * kb * cote;
             const y1 = altRoute(ax, az) - rev.creux;
             const y2 = altRoute(bx, bz) - rev.creux;
 
             // Bord extérieur : à la largeur de l'accotement, raccordé au
             // terrain visible. C'est ce raccord qui coud la route au sol.
-            const e1x = ax + nx * (bordChaussee + rev.largeur) * cote;
-            const e1z = az + nz * (bordChaussee + rev.largeur) * cote;
-            const e2x = bx + nx * (bordChaussee + rev.largeur) * cote;
-            const e2z = bz + nz * (bordChaussee + rev.largeur) * cote;
+            const e1x = ax + n1x * (bordChaussee + rev.largeur) * ka * cote;
+            const e1z = az + n1z * (bordChaussee + rev.largeur) * ka * cote;
+            const e2x = bx + n2xi * (bordChaussee + rev.largeur) * kb * cote;
+            const e2z = bz + n2zi * (bordChaussee + rev.largeur) * kb * cote;
 
             if (!rev.exhaussement) {
               // Bande de plain-pied : elle descend jusqu'au terrain, sans
@@ -168,14 +212,14 @@ export class Accotements {
             const h = rev.exhaussement;
             // Ligne de caniveau, un peu en contrebas de la chaussée : c'est ce
             // creux qui pose une ombre continue au pied de la bordure.
-            const c1x = i1x + nx * 0.18 * cote, c1z = i1z + nz * 0.18 * cote;
-            const c2x = i2x + nx * 0.18 * cote, c2z = i2z + nz * 0.18 * cote;
+            const c1x = i1x + n1x * 0.18 * cote, c1z = i1z + n1z * 0.18 * cote;
+            const c2x = i2x + n2xi * 0.18 * cote, c2z = i2z + n2zi * 0.18 * cote;
             const cy1 = y1 - CANIVEAU, cy2 = y2 - CANIVEAU;
             // Pied puis tête de bordure, cette dernière chanfreinée.
-            const p1x = c1x + nx * 0.02 * cote, p1z = c1z + nz * 0.02 * cote;
-            const p2x = c2x + nx * 0.02 * cote, p2z = c2z + nz * 0.02 * cote;
-            const t1x = p1x + nx * CHANFREIN * cote, t1z = p1z + nz * CHANFREIN * cote;
-            const t2x = p2x + nx * CHANFREIN * cote, t2z = p2z + nz * CHANFREIN * cote;
+            const p1x = c1x + n1x * 0.02 * cote, p1z = c1z + n1z * 0.02 * cote;
+            const p2x = c2x + n2xi * 0.02 * cote, p2z = c2z + n2zi * 0.02 * cote;
+            const t1x = p1x + n1x * CHANFREIN * cote, t1z = p1z + n1z * CHANFREIN * cote;
+            const t2x = p2x + n2xi * CHANFREIN * cote, t2z = p2z + n2zi * CHANFREIN * cote;
             const ty1 = cy1 + h, ty2 = cy2 + h;
 
             // Le trottoir suit la chaussée en altitude, pas le terrain : une
