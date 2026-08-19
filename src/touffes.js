@@ -11,6 +11,7 @@
 // position déterminée par leur coordonnée de grille. Deux passages au même
 // endroit donnent donc exactement la même herbe.
 import * as THREE from 'three';
+import { anisotropie } from './textures.js';
 
 // Bruit déterministe : deux appels avec la même cellule donnent la même
 // touffe, quel que soit le trajet suivi pour y arriver.
@@ -88,7 +89,7 @@ function texturerBrins(taille = 64) {
   t.colorSpace = THREE.SRGBColorSpace;
   // Pas de répétition : chaque quad porte la touffe entière.
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  t.anisotropy = 4;
+  t.anisotropy = anisotropie();
   return t;
 }
 

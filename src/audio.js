@@ -56,34 +56,46 @@ export class AudioEngine {
     this.chargerMusique();
   }
 
-  // Table d'onde d'un cycle moteur complet. Chaque période contient les quatre
-  // explosions d'un cycle quatre temps : une attaque brutale suivie d'une
+  // Table d'onde d'un cycle moteur complet. Chaque période contient les cinq
+  // explosions d'un banc de cylindres en V10 à 90° sur un cycle quatre temps
+  // (l'Audi R8 réelle en porte un) : une attaque brutale suivie d'une
   // décroissance, avec un léger déséquilibre entre cylindres. C'est ce qui
   // donne le grain caractéristique, impossible à obtenir avec des sinusoïdes.
+  //
+  // Passé de quatre à cinq explosions par cycle (le précédent moteur était un
+  // 4 cylindres) : plus d'impulsions rapprochées à régime égal, ce qui donne
+  // le grain plus dense et plus haut perché d'un V10 comparé à un 4 cylindres.
   buildWavetable() {
     const ctx = this.ctx;
     const N = 2048;
     const cycle = new Float32Array(N);
 
-    // Quatre explosions par cycle, d'amplitude légèrement inégale : aucun
-    // moteur réel n'a quatre cylindres parfaitement identiques.
-    const amplitudes = [1.0, 0.94, 0.98, 0.91];
-    for (let c = 0; c < 4; c++) {
-      const debut = Math.floor((c / 4) * N);
-      const duree = Math.floor(N / 4);
+    // Cinq explosions par cycle, d'amplitude légèrement inégale : aucun
+    // moteur réel n'a ses cylindres parfaitement identiques.
+    const CYLINDRES = 5;
+    const amplitudes = [1.0, 0.94, 0.98, 0.91, 0.96];
+    for (let c = 0; c < CYLINDRES; c++) {
+      const debut = Math.floor((c / CYLINDRES) * N);
+      const duree = Math.floor(N / CYLINDRES);
       for (let i = 0; i < duree; i++) {
         const t = i / duree;
         // Attaque très raide, décroissance exponentielle : profil d'une
-        // détonation dans un cylindre.
-        const enveloppe = t < 0.06
-          ? t / 0.06
-          : Math.exp(-(t - 0.06) * 7.5);
+        // détonation dans un cylindre. Décroissance un peu plus rapide (9 au
+        // lieu de 7,5) : les impulsions, plus rapprochées à cinq par cycle,
+        // se chevaucheraient sinon en un bourdonnement continu au lieu de
+        // rester détachées.
+        const enveloppe = t < 0.05
+          ? t / 0.05
+          : Math.exp(-(t - 0.05) * 9.0);
         // Contenu spectral riche : la combustion n'est pas un son pur.
         const contenu = Math.sin(t * Math.PI * 2 * 3)
           + 0.55 * Math.sin(t * Math.PI * 2 * 7 + 1.1)
           + 0.30 * Math.sin(t * Math.PI * 2 * 13 + 2.3)
           + 0.18 * Math.sin(t * Math.PI * 2 * 23 + 0.7);
-        cycle[(debut + i) % N] += enveloppe * contenu * amplitudes[c] * 0.34;
+        // Facteur ramené de 0,34 à 0,27 : cinq impulsions superposées dans un
+        // même cycle somment plus d'énergie que quatre, sans quoi la table
+        // saturait avant même la conversion en série de Fourier.
+        cycle[(debut + i) % N] += enveloppe * contenu * amplitudes[c] * 0.27;
       }
     }
 
@@ -117,12 +129,13 @@ export class AudioEngine {
     this.engineFilter.frequency.value = 900;
     this.engineFilter.Q.value = 1.2;
 
-    // Résonance d'échappement.
+    // Résonance d'échappement, renforcée (Q et gain plus hauts) pour la
+    // sonorité plus présente d'un échappement de sportive.
     this.exhaustPeak = ctx.createBiquadFilter();
     this.exhaustPeak.type = 'peaking';
     this.exhaustPeak.frequency.value = 180;
-    this.exhaustPeak.gain.value = 7;
-    this.exhaustPeak.Q.value = 1.1;
+    this.exhaustPeak.gain.value = 9;
+    this.exhaustPeak.Q.value = 1.4;
 
     this.engineBus.connect(this.engineFilter).connect(this.exhaustPeak).connect(this.sfxBus);
 
@@ -137,7 +150,7 @@ export class AudioEngine {
     const harmonics = [
       { mult: 0.5, gain: 0.16, type: 'sawtooth' },  // sous-harmonique (grave)
       { mult: 1.0, gain: 0.14, type: 'sawtooth' },
-      { mult: 2.0, gain: 0.10, type: 'square' },    // ordre 2 du 4 cylindres
+      { mult: 2.0, gain: 0.10, type: 'square' },    // second ordre du V10
       { mult: 3.0, gain: 0.05, type: 'sawtooth' },
     ];
     this.oscs = harmonics.map((h) => {
@@ -269,14 +282,17 @@ export class AudioEngine {
       v.osc.frequency.setTargetAtTime(fCycle, now, 0.025);
     }
 
-    // Fréquence de base : régime / 60 * (cylindres / 2) pour un 4 cylindres.
-    const f0 = Math.max(12, (state.rpm / 60) * 2);
+    // Fréquence de base : régime / 60 * (cylindres / 2), soit 5 pour un V10.
+    const f0 = Math.max(12, (state.rpm / 60) * 5);
     for (const o of this.oscs) {
       o.osc.frequency.setTargetAtTime(f0 * o.mult, now, 0.03);
     }
 
     const load = state.throttle;
-    const rpmNorm = (state.rpm - 850) / 6350;
+    // Bornes reprises de `SPEC.idleRpm` / `SPEC.maxRpm` (car.js), dupliquées
+    // ici en dur : ce module reste sans dépendance, mais toute évolution du
+    // régime moteur doit être répercutée aux deux endroits.
+    const rpmNorm = (state.rpm - 900) / 7600;
 
     // Volume moteur : audible au ralenti, plus fort en charge. Baissé d'un
     // tiers environ, il couvrait la musique à pleine charge.
@@ -285,9 +301,10 @@ export class AudioEngine {
     // sensation de moteur qui « prend ses tours ».
     set(this.engineFilter.frequency, 480 + load * 3400 + rpmNorm * rpmNorm * 4200);
     set(this.engineFilter.Q, 1.1 + load * 1.6);
-    set(this.exhaustPeak.gain, 5 + load * 9);
-    // La résonance d'échappement monte avec le régime, comme un vrai silencieux.
-    this.exhaustPeak.frequency.setTargetAtTime(120 + rpmNorm * 190, now, 0.08);
+    set(this.exhaustPeak.gain, 7 + load * 11);
+    // La résonance d'échappement monte avec le régime, comme un vrai
+    // silencieux, sur une plage élargie pour suivre le régime plus haut.
+    this.exhaustPeak.frequency.setTargetAtTime(130 + rpmNorm * 260, now, 0.08);
 
     // Voix d'explosion : dominantes en charge, discrètes en décélération.
     for (const v of this.voixMoteur) {

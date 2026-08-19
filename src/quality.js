@@ -15,11 +15,19 @@ export const PROFILS = {
   performance: {
     nom: 'Performance',
     pixelRatioMax: 1.0,
+    // Filtrage anisotrope, plafonné ensuite par ce que le GPU accepte.
+    // Il ne joue que sur les surfaces vues en fuyante, la chaussée d'abord,
+    // dont la texture se répète 34 fois : sans lui, l'enrobé bave au loin.
+    // Le coût porte sur la bande passante mémoire, pas sur la géométrie.
+    anisotropieMax: 4,
     gtaoEchelle: 0.5,
     ombres: false,
     ombreCarte: 1024,
-    brouillardProche: 200,
-    brouillardLoin: 700,
+    // Resserré pour couvrir la disparition des petits objets à
+    // `distanceDetails` : au-delà, un lampadaire ou une cheminée qui sort du
+    // champ de rendu se voit fondre dans la brume plutôt que disparaître net.
+    brouillardProche: 60,
+    brouillardLoin: 260,
     lampesCalculees: 8,
     passants: 70,
     smaa: false,
@@ -32,11 +40,15 @@ export const PROFILS = {
   equilibre: {
     nom: 'Équilibré',
     pixelRatioMax: 1.5,
+    anisotropieMax: 16,
     gtaoEchelle: 0.5,
-    ombres: true,
+    // Désactivées par défaut, sur les trois profils : voir la note de
+    // `shadowsHigh` dans main.js. La touche O les réactive quel que soit le
+    // profil, `ombreCarte` restant prêt pour ce cas.
+    ombres: false,
     ombreCarte: 2048,
-    brouillardProche: 320,
-    brouillardLoin: 1250,
+    brouillardProche: 100,
+    brouillardLoin: 460,
     lampesCalculees: 20,
     passants: 140,
     smaa: true,
@@ -46,11 +58,12 @@ export const PROFILS = {
   qualite: {
     nom: 'Qualité',
     pixelRatioMax: 2.0,
+    anisotropieMax: 16,
     gtaoEchelle: 0.75,
-    ombres: true,
+    ombres: false,
     ombreCarte: 2048,
-    brouillardProche: 420,
-    brouillardLoin: 1600,
+    brouillardProche: 160,
+    brouillardLoin: 720,
     lampesCalculees: 28,
     passants: 180,
     smaa: true,

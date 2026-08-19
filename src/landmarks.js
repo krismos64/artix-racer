@@ -5,6 +5,7 @@
 // (Wikimedia Commons, CC BY-SA, Jean Michel Etchecolonea) : façade blanche,
 // toit mansardé en ardoise à forte pente, rangée de lucarnes, R+1 sur comble.
 import * as THREE from 'three';
+import { anisotropie } from './textures.js';
 
 // Reconstruit le rectangle englobant orienté d'une emprise : longueur, largeur
 // et cap du grand axe. Les bâtiments publics étant sensiblement rectangulaires,
@@ -55,7 +56,7 @@ function textureDevise() {
   ctx.fillText('LIBERTÉ  ÉGALITÉ  FRATERNITÉ', L / 2, H / 2);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.anisotropy = anisotropie();
   return t;
 }
 
@@ -112,7 +113,7 @@ function textureEnseigne() {
 
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.anisotropy = anisotropie();
   return t;
 }
 
@@ -136,7 +137,7 @@ function texturePanonceau() {
   ctx.fillText('E', S / 2, S / 2 + S * 0.02);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.anisotropy = anisotropie();
   return t;
 }
 
@@ -1082,7 +1083,7 @@ function textureEnseigneCommerce(nom, fond, encre) {
   ctx.fillText(nom, L / 2, H / 2);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.anisotropy = anisotropie();
   return t;
 }
 

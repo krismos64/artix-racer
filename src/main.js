@@ -8,6 +8,7 @@ import { parsePOI } from './poi.js';
 import { buildSignage } from './signage.js';
 import { buildLandmarks } from './landmarks.js';
 import { ShaderContours } from './contours.js';
+import { ShaderArcade } from './arcade.js';
 import { Pietons } from './pedestrians.js';
 import { EclairagePublic } from './streetlights.js';
 import { VoituresGarees } from './parkedcars.js';
@@ -20,6 +21,7 @@ import { chargerVoiture, animerRoues } from './carmodel.js';
 
 import { AudioEngine } from './audio.js';
 import { Qualite, PROFILS, PROFIL_DEFAUT } from './quality.js';
+import { poserAnisotropie } from './textures.js';
 import { GrilleInstances } from './spatial.js';
 import { Minicarte } from './minimap.js';
 import { Touffes } from './touffes.js';
@@ -197,6 +199,12 @@ async function init() {
   // visuel faible en jeu. 1,5x est le bon compromis netteté / fluidité.
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.setSize(innerWidth, innerHeight);
+  // Filtrage anisotrope des textures générées, posé avant la construction de
+  // la ville : les textures sont créées une fois, et la valeur retenue est
+  // celle qui vaut au moment de leur construction. Le GPU du M4 accepte 16,
+  // là où le code figeait 4 ou 8 selon les textures.
+  poserAnisotropie(Math.min(renderer.capabilities.getMaxAnisotropy(),
+    PROFILS[PROFIL_DEFAUT].anisotropieMax));
   // Les ombres sont réglées plus bas, une fois la ville construite : c'est là
   // que se décide quels maillages les projettent. Elles sont actives par
   // défaut, la touche O les coupe.
@@ -208,7 +216,10 @@ async function init() {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x9fc4e8);
-  scene.fog = new THREE.Fog(0x9fc4e8, 320, 1250);
+  // Valeurs initiales du profil Équilibré : `qualite.appliquer()` les
+  // reprend juste après la construction de la ville, mais le ciel et le
+  // premier rendu ont besoin d'un brouillard cohérent avant cet appel.
+  scene.fog = new THREE.Fog(0x9fc4e8, 100, 460);
 
   // Dôme de ciel : un fond uni donne un horizon plat et artificiel. Un dégradé
   // du zénith vers l'horizon, plus quelques nuages, installe la profondeur.
@@ -456,6 +467,19 @@ async function init() {
     // restent portés par le renderer et ne doivent pas être neutralisés ici.
     composer.addPass(new OutputPass());
 
+    // Grade arcade (touche V) : contraste, saturation, vignettage et grain,
+    // pour un rendu de jeu de course plutôt qu'une reconstitution littérale.
+    // APRÈS OutputPass, jamais avant : cette passe travaille sur une image
+    // déjà tone-mappée (ACES) et en espace sRGB, la même que celle qui
+    // s'affiche à l'écran. Le premier essai la plaçait avant OutputPass, sur
+    // l'image linéaire ; la chaussée, quasi noire à ce stade, se faisait
+    // alors écraser à zéro par la courbe de contraste, conçue pour une image
+    // déjà en plage perceptuelle 0-1.
+    const arcade = new ShaderPass(ShaderArcade);
+    arcade.enabled = false;
+    composer.addPass(arcade);
+    composer.userData.arcade = arcade;
+
     // Redimensionnement complet de la chaîne de passes.
     //
     // `EffectComposer` capture le pixel ratio du renderer À SA CONSTRUCTION et
@@ -569,7 +593,7 @@ async function init() {
 
   await progress(42, "Construction de la ville (3481 bâtiments)...");
   const { collisionTris, group: cityGroup, foyers, lampHeads, placesEpi,
-    instances: instancesVegetation, vitrages, eau } = buildWorld(scene, data);
+    instances: groupesInstancies, vitrages, eau } = buildWorld(scene, data);
 
   // Éclairage public : les lanternes projettent réellement de la lumière sur
   // la chaussée à la tombée du jour.
@@ -650,21 +674,26 @@ async function init() {
     scene.add(lm.group);
     diag(`Repères modélisés : ${lm.traites.length}`);
   }
-  // Ombres actives par défaut : c'est ce qui sépare le plus nettement un
-  // rendu de jeu d'une maquette. Le volume d'ombre suit le véhicule et reste
-  // resserré, ce qui borne le coût ; la touche O permet de les couper sur une
-  // machine modeste.
-  let shadowsHigh = true;
-  renderer.shadowMap.enabled = true;
+  // Ombres désactivées par défaut, décidé le 19/08/2026 : au volant, la
+  // tache portée par les bâtiments sur la chaussée gênait plus la lisibilité
+  // qu'elle n'ancrait la scène au sol. Coûtaient 0,6 ms sur 10 à 12 ms de
+  // frame (mesuré au chronomètre GPU le 18/08/2026), donc ce choix ne vise
+  // pas la fluidité mais la visibilité en conduite. La touche O les
+  // réactive.
+  let shadowsHigh = false;
+  renderer.shadowMap.enabled = false;
   // Seuls les gros maillages projettent : les bâtiments portent l'essentiel de
   // l'ombre, le mobilier urbain n'apporterait presque rien pour un coût de passe
   // supplémentaire. `noShadowCast` exclut le terrain, qui dépasse largement le
   // seuil sans rien apporter à la passe.
+  // `castShadow` est posé même si les ombres démarrent coupées : le profil
+  // appliqué juste après (`qualite.appliquer()`) peut les réactiver sans
+  // reparcourir la ville, et la touche O les bascule à la volée.
   cityGroup.traverse((o) => {
     if (o.isMesh && !o.userData.noShadowCast
-      && o.geometry.attributes.position.count > 5000) o.castShadow = true;
+      && o.geometry.attributes.position.count > 5000) o.castShadow = shadowsHigh;
   });
-  el('shadow-state').textContent = 'ACTIVÉES';
+  el('shadow-state').textContent = shadowsHigh ? 'ACTIVÉES' : 'DÉSACTIVÉES';
 
   // --- Profils graphiques -------------------------------------------------
   // Les réglages de rendu sont regroupés dans `quality.js`. Le profil
@@ -706,17 +735,24 @@ async function init() {
   qualite.appliquer();
   diag(`Profil graphique : ${qualite.profil.nom}`);
 
-  // --- Découpage spatial de la végétation ---------------------------------
-  // Les arbres sont le poste le plus lourd de la scène : 3 500 instances pour
-  // 1,18 million de triangles à eux seuls, dessinés en entier quel que soit
-  // l'endroit où se trouve la voiture, la sphère englobante d'un InstancedMesh
-  // couvrant toute la commune. La grille les range par distance et n'en
-  // dessine que la part utile.
-  const grilleVegetation = instancesVegetation
-    ? new GrilleInstances(instancesVegetation.meshes, instancesVegetation.positions)
-    : null;
-  if (grilleVegetation) {
-    diag(`Découpage spatial : ${grilleVegetation.total} arbres instanciés`);
+  // --- Découpage spatial des maillages instanciés -------------------------
+  // Un InstancedMesh n'est écarté par le frustum culling qu'en bloc : sa
+  // sphère englobante couvre toutes ses instances, et il est donc dessiné en
+  // entier quel que soit l'endroit où se trouve la voiture. La grille range
+  // les instances par distance et n'en dessine que la part utile.
+  //
+  // Trois familles concernées : les arbres (3 500 instances, 1,18 million de
+  // triangles), les lampadaires (jusqu'à 1 200) et les véhicules garés (880
+  // au plus, avec leurs quatre roues et leurs feux). Chacune a sa propre
+  // grille : leurs portées d'affichage n'ont pas de raison de coïncider, et
+  // le tampon de réordonnancement d'une grille ne sert qu'à elle.
+  const groupesGrilles = [...groupesInstancies, garees.group?.userData.instances]
+    .filter(Boolean);
+  const grillesInstances = groupesGrilles.map(
+    (g) => new GrilleInstances(g.meshes, g.positions, g.ratios ? { ratios: g.ratios } : {}),
+  );
+  for (const g of grillesInstances) {
+    diag(`Découpage spatial : ${g.total} entités instanciées`);
   }
 
   // --- Monde physique -----------------------------------------------------
@@ -1344,6 +1380,14 @@ async function init() {
         diag(`Rendu dessin animé : ${c.enabled ? 'activé' : 'désactivé'}`);
       }
     }
+    if (tapped('v')) {
+      const arc = composer?.userData?.arcade;
+      if (arc) {
+        arc.enabled = !arc.enabled;
+        el('arcade-state').textContent = arc.enabled ? 'ACTIVÉ' : 'DÉSACTIVÉ';
+        diag(`Grade arcade : ${arc.enabled ? 'activé' : 'désactivé'}`);
+      }
+    }
     if (tapped('a')) {
       const s = composer?.userData?.smaa;
       if (s) {
@@ -1557,10 +1601,10 @@ async function init() {
     // lumières est réaffecté à chaque frame aux foyers les plus proches.
     eclairage.update(posVoiture, nuitFacteur);
 
-    // Végétation : seules les instances à portée sont dessinées. La grille ne
-    // se réordonne que lorsque le véhicule a franchi une fraction de cellule,
-    // le tri restant valable entre-temps.
-    grilleVegetation?.maj(posVoiture.x, posVoiture.z, qualite.profil.distanceDetails);
+    // Arbres, lampadaires, véhicules garés : seules les instances à portée
+    // sont dessinées. Chaque grille ne se réordonne que lorsque le véhicule a
+    // franchi une fraction de cellule, le tri restant valable entre-temps.
+    for (const g of grillesInstances) g.maj(posVoiture.x, posVoiture.z, qualite.profil.distanceDetails);
     // Touffes de premier plan : coupées sur le profil Performance, où le
     // budget va d'abord à la ville elle-même. La replantation n'a réellement
     // lieu qu'au franchissement d'une cellule, soit tous les 2,4 m.
@@ -1728,6 +1772,17 @@ async function init() {
       // La passe d'occlusion recrée ses cibles au redimensionnement : on
       // rebranche ses textures tant que les contours sont actifs.
       if (composer.userData?.contours?.enabled) composer.userData.majContours();
+      const arcade = composer.userData?.arcade;
+      if (arcade?.enabled) {
+        // Résolution réelle du rendu, pixel ratio compris : c'est elle que le
+        // vignettage utilise pour rester circulaire quel que soit le format.
+        arcade.uniforms.resolution.value.set(
+          renderer.domElement.width, renderer.domElement.height);
+        // Fait varier le grain d'une image à l'autre plutôt que de le figer à
+        // l'écran ; l'amplitude du sinus dans le shader rend la période sans
+        // conséquence visible.
+        arcade.uniforms.temps.value = now;
+      }
       composer.render();
     } else renderer.render(scene, camera);
   }
@@ -1771,7 +1826,7 @@ async function init() {
   // `setHeure` permet de sauter directement à une heure du cycle jour/nuit, ce
   // qui rend l'éclairage nocturne testable sans attendre que le temps tourne.
   window.__game = { car, world, scene, camera, renderer, composer, data, spawn, SPEC, audio, collisionTris: verts, RAPIER,
-    qualite, grilleVegetation, minicarte,
+    qualite, grillesInstances, minicarte,
     setHeure: (h) => { timeOfDay = ((h % 24) + 24) % 24; },
     getHeure: () => timeOfDay,
     // Coût d'un dessin de minicarte, moyenné sur `n` appels. Le budget de

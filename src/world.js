@@ -5,7 +5,7 @@ import { couleurMur, couleurToit } from './bdtopo.js';
 import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce,
   texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage,
   texturerNormalesEau, bruit,
-  relief as carteRelief } from './textures.js';
+  relief as carteRelief, anisotropie } from './textures.js';
 import { TAILLE as TERRAIN_TAILLE, RESOLUTION as TERRAIN_RES } from './terrain.js';
 
 // Altitude de la chaussée. Sert de référence commune au rendu, au maillage
@@ -367,7 +367,7 @@ function grassTexture() {
   // bruit ; plus bas, la répétition du carré se remarque.
   t.repeat.set(34, 34);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
+  t.anisotropy = anisotropie();
   return t;
 }
 
@@ -386,9 +386,13 @@ export function buildWorld(scene, data) {
   let eauNormales = null;
   // Grain de crépi, partagé par tous les bâtiments : une seule texture en
   // mémoire, répétée sur les UV déjà calculées à l'échelle du mètre.
-  const enduit = texturerEnduit(256);
+  // 512 plutôt que 256 : une façade de 8 m de haut ne disposait que de 32
+  // pixels de texture par mètre, ce qui lissait le crépi en aplat dès qu'on
+  // s'approchait. Ces deux textures sont uniques et partagées par les 3 500
+  // bâtiments, le quadruplement ne pèse donc que sur elles.
+  const enduit = texturerEnduit(512);
   enduit.repeat.set(1, 1);
-  const tuile = texturerTuile(256);
+  const tuile = texturerTuile(512);
 
   // ---- Sol général -------------------------------------------------------
   // Le plan est subdivisé : avec 4 sommets seulement, l'interpolation de
@@ -1207,7 +1211,7 @@ export function buildWorld(scene, data) {
   // qui varie d'une baie à l'autre, et l'indication d'une pièce éclairée. Les
   // fenêtres allumées reçoivent une teinte chaude que le canal d'émission
   // reprend, ce qui évite un second maillage pour quelques centaines de baies.
-  const winPos = [], winCol = [];
+  const winPos = [], winCol = [], winEmi = [];
   // Encadrement des baies, en maillage séparé : un dormant clair autour d'une
   // vitre sombre est ce qui rend une fenêtre lisible de loin, bien plus que la
   // teinte du vitrage lui-même.
@@ -1481,12 +1485,16 @@ export function buildWorld(scene, data) {
             // Les rez-de-chaussée le sont un peu plus souvent, commerces et
             // pièces de vie s'y trouvant.
             const allume = gv > (e === 0 ? 0.90 : 0.945);
+            // La teinte portée par la couleur de sommet est TOUJOURS celle
+            // d'une vitre éteinte, y compris pour une baie déclarée allumée.
+            // Une fenêtre reste sombre de jour, que la pièce derrière soit
+            // éclairée ou non : porter le beige chaud ici la faisait ressortir
+            // en aplat plus clair que l'enduit en plein midi, sur près d'une
+            // baie sur dix. L'allumage passe désormais par le seul canal
+            // d'émission, nul le jour, ce qui laisse le rendu nocturne
+            // inchangé.
             let vr, vg, vbl;
-            if (allume) {
-              // Chaud, et nettement plus clair que le vitrage éteint : c'est
-              // cette valeur que le canal d'émission reprend la nuit.
-              vr = 1.0; vg = 0.82; vbl = 0.52;
-            } else if (gv < 0.28) {
+            if (gv < 0.28) {
               vr = 0.196; vg = 0.227; vbl = 0.278;   // gris bleuté
             } else if (gv < 0.55) {
               vr = 0.157; vg = 0.180; vbl = 0.212;   // gris neutre sombre
@@ -1496,6 +1504,14 @@ export function buildWorld(scene, data) {
               vr = 0.212; vg = 0.196; vbl = 0.176;   // volet bois, brun
             }
             for (let s = 0; s < 6; s++) winCol.push(vr, vg, vbl);
+            // Couleur d'allumage, portée par un attribut séparé : noire pour
+            // une baie éteinte, chaude pour une pièce éclairée. Le shader la
+            // reprend dans le canal d'émission, dont l'intensité suit le
+            // cycle jour/nuit. Noir n'émet rien, les baies éteintes restent
+            // donc sombres même à pleine intensité.
+            const er = allume ? 1.0 : 0, eg = allume ? 0.82 : 0,
+                  eb = allume ? 0.52 : 0;
+            for (let s = 0; s < 6; s++) winEmi.push(er, eg, eb);
 
             // Dormant : un quadrilatère un peu plus large et plus haut, en
             // saillie devant la vitre. C'est ce décrochement qui donne la
@@ -1937,6 +1953,8 @@ export function buildWorld(scene, data) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(winPos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(winCol, 3));
+    // Couleur d'allumage, lue par le shader modifié plus bas.
+    g.setAttribute('emiCouleur', new THREE.Float32BufferAttribute(winEmi, 3));
     g.computeVertexNormals();
     g.computeBoundingSphere();
     // Vitrage sombre légèrement réfléchissant : de loin, ce sont ces trouées
@@ -1955,19 +1973,36 @@ export function buildWorld(scene, data) {
     // un coût sans rapport avec ce qu'on y gagnerait. Le reflet vient de la
     // carte d'environnement de la scène, qui suffit à cette distance.
     //
-    // La teinte est portée par sommet, ce qui donne quatre nuances de vitrage
-    // et, la nuit, quelques pièces éclairées. L'émission reprend cette même
-    // couleur : à intensité nulle le jour, elle ne change rien, et de nuit
-    // seules les baies déclarées chaudes s'allument, les autres étant trop
-    // sombres pour émettre quoi que ce soit de visible.
+    // La teinte est portée par sommet, ce qui donne quatre nuances de vitrage,
+    // toutes sombres. L'allumage des pièces passe par un attribut distinct,
+    // `emiCouleur`, que le canal d'émission reprend la nuit.
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true, roughness: 0.24, metalness: 0.08,
       side: THREE.DoubleSide,
       emissive: 0xffffff, emissiveIntensity: 0,
     });
-    // L'émission d'un matériau à couleur par sommet reprend la couleur de
-    // sommet : c'est ce qui permet de n'allumer que les baies chaudes sans
-    // second maillage.
+    // L'émission suit un attribut propre (`emiCouleur`) plutôt que la couleur
+    // de sommet. Three.js multiplie sinon l'émission par la couleur de vitre,
+    // ce qui obligeait à porter le beige chaud dans la couleur elle-même : les
+    // baies allumées ressortaient alors en clair de jour, l'intensité fût-elle
+    // nulle. L'attribut vaut noir sur une baie éteinte, qui n'émet donc rien.
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>',
+          '#include <common>\nattribute vec3 emiCouleur;\nvarying vec3 vEmiCouleur;')
+        .replace('#include <begin_vertex>',
+          '#include <begin_vertex>\nvEmiCouleur = emiCouleur;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>',
+          '#include <common>\nvarying vec3 vEmiCouleur;')
+        // `totalEmissiveRadiance` vaut déjà `emissive * emissiveIntensity` à
+        // ce point du shader ; `emissiveIntensity` n'y est pas un uniform.
+        // `emissive` étant blanc, il porte donc l'intensité seule, qu'il
+        // suffit de teinter par la couleur d'allumage de la baie.
+        .replace('#include <emissivemap_fragment>',
+          '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= vEmiCouleur;');
+    };
+
     const m = new THREE.Mesh(g, mat);
     m.name = 'vitrages';
     // Pas de `renderOrder` : tous ces maillages sont opaques et écrivent la
@@ -1984,10 +2019,19 @@ export function buildWorld(scene, data) {
     g.setAttribute('position', new THREE.Float32BufferAttribute(cadrePos, 3));
     g.computeVertexNormals();
     g.computeBoundingSphere();
-    // Dormant blanc cassé, comme les menuiseries relevées sur les photos de
-    // rue d'Artix. Rendu sous la vitre, d'où un `renderOrder` inférieur.
+    // Dormant, rendu sous la vitre, d'où un `renderOrder` inférieur.
+    //
+    // Assombri de 0xece9e2 à 0xb4b6b8. Le blanc cassé d'origine ressortait à
+    // 1,37 fois la clarté de l'enduit moyen, mesuré sur les couleurs de sommet
+    // des murs : le cadre débordant de 11 cm autour d'une vitre étroite, c'est
+    // lui qui dominait la baie, et une fenêtre se lisait de la rue comme un
+    // rectangle blanc plein posé sur la façade. Le rapport est ramené à 1,07,
+    // assez pour que la menuiserie se détache du mur sans le percer.
+    //
+    // La teinte reste très légèrement plus froide que l'enduit, comme une
+    // menuiserie peinte à côté d'un crépi.
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0xece9e2, roughness: 0.7, side: THREE.DoubleSide,
+      color: 0xb4b6b8, roughness: 0.7, side: THREE.DoubleSide,
     }));
     m.renderOrder = 0;
     group.add(m);
@@ -2294,9 +2338,12 @@ export function buildWorld(scene, data) {
     eau: materiauEau,
     // Places en épi des aires OSM, pour y garer des véhicules bien orientés.
     placesEpi,
-    // Maillages instanciés éligibles au découpage spatial, avec la position de
-    // chaque instance.
-    instances: trees?.userData.instances ?? null,
+    // Groupes de maillages instanciés éligibles au découpage spatial
+    // (`spatial.js`), chacun avec la position de ses entités. Un groupe par
+    // famille d'objets répété dans toute la commune : arbres, lampadaires.
+    // Les voitures garées, construites après `buildWorld`, s'ajoutent à cette
+    // liste depuis `main.js`.
+    instances: [trees?.userData.instances, lamps?.userData.instances].filter(Boolean),
   };
 }
 
@@ -2706,6 +2753,11 @@ function placeLamps(data, relief = null) {
   g.add(poles, heads);
   g.userData.lampHeads = headMat;
   g.userData.foyers = foyers;
+  // Exposé pour le découpage spatial (`spatial.js`) : jusqu'à 1200 mâts,
+  // dessinés en entier quel que soit l'endroit où se trouve la voiture tant
+  // qu'ils ne passent pas par une `GrilleInstances`, comme c'était déjà le
+  // cas pour les arbres avant leur propre découpage.
+  g.userData.instances = { meshes: [poles, heads], positions: spots.map(([x, z]) => [x, z]) };
   return g;
 }
 

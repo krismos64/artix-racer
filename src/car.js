@@ -2,36 +2,39 @@
 // modèle de pneu type "cercle d'adhérence" (Pacejka simplifié).
 import * as THREE from 'three';
 
-// Caractéristiques proches d'une berline compacte type Golf GTI.
+// Caractéristiques proches d'une sportive GT type Audi R8 (le modèle affiché
+// à l'écran) : masse plus légère qu'une compacte, appui aéro plus franc,
+// régime moteur plus haut. Le châssis a été calé sur une compacte tant que le
+// modèle 3D restait générique ; il ne l'est plus depuis l'Audi R8.
 export const SPEC = {
-  mass: 1320,               // kg
-  wheelBase: 2.62,          // m (empattement)
-  trackWidth: 1.54,         // m (voie)
+  mass: 1620,               // kg (R8 en ordre de marche, réservoir plein)
+  wheelBase: 2.65,          // m (empattement)
+  trackWidth: 1.62,         // m (voie)
   wheelRadius: 0.33,
   suspensionRest: 0.30,         // course utile de l'amortisseur
   // Raideur calculée pour que la charge statique (1/4 du véhicule) enfonce
   // le ressort d'un tiers de sa course : réglage usuel en suspension routière.
-  suspensionStiffness: (1320 * 9.81 / 4) / (0.30 / 3),   // ≈ 32 373 N/m
+  suspensionStiffness: (1620 * 9.81 / 4) / (0.30 / 3),
   // Amortissement proche du critique (coefficient 0,45) : la caisse se pose
   // sans rebondir. c = 2·ζ·√(k·m) avec m = masse non suspendue par roue.
-  suspensionDamping: 2 * 0.45 * Math.sqrt((1320 * 9.81 / 4) / (0.30 / 3) * (1320 / 4)),
+  suspensionDamping: 2 * 0.45 * Math.sqrt((1620 * 9.81 / 4) / (0.30 / 3) * (1620 / 4)),
   maxSteer: 0.58,               // rad (~33°)
-  // Étagement type boîte 6 rapports. Les rapports courts ont été allongés :
-  // une première à 3,9 avec un pont de 4,1 démultipliait tellement que la
-  // voiture bondissait au démarrage.
+  // Étagement inchangé : déjà calé pour ne pas démultiplier à outrance en
+  // première. Le régime moteur, plus haut, en tire davantage.
   gears: [-3.3, 0, 3.4, 2.05, 1.42, 1.10, 0.90, 0.75],
   finalDrive: 3.6,
-  idleRpm: 850,
-  maxRpm: 7200,
-  shiftUpRpm: 6100,   // passage avant la zone rouge, là où le couple retombe
-  shiftDownRpm: 2400,
-  brakeTorque: 5200,
-  handbrakeTorque: 4200,
+  idleRpm: 900,
+  maxRpm: 8500,
+  shiftUpRpm: 7800,   // passage avant la zone rouge, là où le couple retombe
+  shiftDownRpm: 2800,
+  brakeTorque: 6200,
+  handbrakeTorque: 4600,
   maxReverseSpeed: 8.3,     // m/s, soit 30 km/h : limite d'un rapport de recul
-  // Traînée aéro : ½·ρ·Cx·S ≈ 0,5 × 1,225 × 0,32 × 2,1 pour une compacte.
-  dragCoef: 0.36,
+  // Traînée aéro : ½·ρ·Cx·S. Cx plus favorable qu'une compacte (carrosserie
+  // basse, diffuseur), mais le maître-couple grandit avec la largeur de voie.
+  dragCoef: 0.34,
   rollResist: 12.5,
-  cgHeight: 0.52,
+  cgHeight: 0.46,      // centre de gravité plus bas qu'une compacte
 };
 
 // Décalage vertical de l'ancrage de suspension dans le repère du véhicule.
@@ -50,20 +53,24 @@ export function restingHeight(roadY = 0.08) {
 
 // Couple moteur en fonction du régime (N·m).
 //
-// Courbe d'un moteur essence atmosphérique de compacte : maximum de 175 N·m
-// vers 3 800 tr/min, couple modeste sous 2 000 tr/min. Une courbe plafonnant
-// à 330 N·m relevait du gros diesel et rendait la voiture bien trop vive au
-// démarrage : 0 à 30 km/h en 2 s au lieu des 4 s d'une compacte réelle.
+// Courbe d'un V10 atmosphérique de sportive : 320 N·m de couple maximum vers
+// 4 500 tr/min, plateau large jusqu'à 6 800, puis chute progressive vers le
+// régime maximum à 8 500. Le bas régime reste moins creux qu'un moteur de
+// compacte, sans devenir plat pour autant : un V10 atmosphérique tire mais
+// ne « plaque » pas comme un diesel suralimenté, dont le pic de couple
+// arrive dès 1 500 tr/min.
+//
+// Calé pour un 0-100 km/h autour de 5 à 6 s et une vitesse d'équilibre
+// (couple roue = traînée aéro) proche de 250 à 260 km/h avec l'étagement et
+// le pont en place, plutôt que sur la seule vitesse théorique en dernier
+// rapport, qui dépasse très largement ce que la traînée laisse jamais
+// atteindre.
 export function engineTorque(rpm) {
   const r = THREE.MathUtils.clamp(rpm, 0, SPEC.maxRpm);
-  // Bas régime volontairement creux : c'est lui qui donnait les démarrages
-  // en trombe. Une compacte essence ne tire pas fort sous 2 000 tr/min.
-  if (r < 1200) return 95 + r * 0.038;
-  if (r < 2600) return 141 + (r - 1200) * 0.035;
-  // Plateau franc entre 3 000 et 5 000 : le moteur ne s'exprime qu'en montant
-  // dans les tours, ce qui rend la conduite en ville plus douce.
-  if (r < 5400) return 190 - Math.abs(r - 4000) * 0.009;
-  return Math.max(70, 178 - (r - 5400) * 0.045);
+  if (r < 1200) return 130 + r * 0.05;
+  if (r < 4500) return 190 + (r - 1200) * ((320 - 190) / (4500 - 1200));
+  if (r < 6800) return 320 - Math.abs(r - 5600) * 0.008;
+  return Math.max(150, 320 * 0.75 - (r - 6800) * 0.05);
 }
 
 export class Car {

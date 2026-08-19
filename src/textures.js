@@ -10,6 +10,31 @@
 // nettes à toute distance.
 import * as THREE from 'three';
 
+// Filtrage anisotrope appliqué à toutes les textures de ce module.
+//
+// La valeur était figée à 4 ou 8 selon les textures, alors que le GPU du M4 en
+// accepte 16. Le réglage se voit surtout sur les surfaces vues en fuyante, la
+// chaussée en premier : sa texture se répète 34 fois, et sans anisotropie elle
+// bave dès la vingtaine de mètres.
+//
+// Le renderer n'est pas accessible ici, et la capacité ne peut donc pas être
+// lue directement. `poserAnisotropie` la reçoit une fois au démarrage, depuis
+// main.js, et les textures construites ensuite s'y conforment. La valeur par
+// défaut reste celle d'avant ce chantier : si l'appel n'a pas lieu, rien ne
+// change.
+let ANISOTROPIE = 8;
+
+// Appelée une fois au démarrage, avec le minimum entre ce que le GPU accepte
+// (`renderer.capabilities.getMaxAnisotropy()`) et le plafond du profil.
+export function poserAnisotropie(valeur) {
+  ANISOTROPIE = Math.max(1, Math.floor(valeur));
+  return ANISOTROPIE;
+}
+
+export function anisotropie() {
+  return ANISOTROPIE;
+}
+
 // Bruit de valeur lissé, base de tous les grains.
 export function bruit(w, h, cellules, graine = 0) {
   const g = new Float32Array((cellules + 1) * (cellules + 1));
@@ -100,7 +125,7 @@ export function texturerEnrobe(taille = 512) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
+  tex.anisotropy = anisotropie();
   return tex;
 }
 
@@ -138,7 +163,7 @@ export function texturerRugositeEnrobe(taille = 256) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.NoColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = anisotropie();
   return tex;
 }
 
@@ -185,7 +210,7 @@ export function texturerNormalesEau(taille = 256) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.NoColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = anisotropie();
   return tex;
 }
 
@@ -216,7 +241,7 @@ export function texturerUsureMarquage(taille = 128) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = anisotropie();
   return tex;
 }
 
@@ -246,7 +271,7 @@ export function texturerEnduit(taille = 256) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = anisotropie();
   return tex;
 }
 
@@ -278,7 +303,7 @@ export function texturerTuile(taille = 256) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = anisotropie();
   return tex;
 }
 
@@ -332,7 +357,7 @@ export function texturerPave(taille = 256) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
+  tex.anisotropy = anisotropie();
   return tex;
 }
 
@@ -375,7 +400,7 @@ export function texturerEcorce(taille = 256) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = anisotropie();
   return tex;
 }
 

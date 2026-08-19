@@ -607,6 +607,16 @@ export class VoituresGarees {
     if (this.caisses.instanceColor) this.caisses.instanceColor.needsUpdate = true;
 
     this.group.add(this.caisses, this.roues, this.feuxAr, this.feuxAv);
+    // Exposé pour le découpage spatial (`spatial.js`) : une instance de caisse
+    // par véhicule, mais quatre roues et deux feux par extrémité, d'où les
+    // ratios. Sans lui, les 880 véhicules garés au maximum sont dessinés en
+    // entier quelle que soit la distance, la sphère englobante d'un
+    // InstancedMesh ne pouvant être écartée qu'en bloc.
+    this.group.userData.instances = {
+      meshes: [this.caisses, this.roues, this.feuxAr, this.feuxAv],
+      positions: places.map((p) => [p.x, p.z]),
+      ratios: [1, 4, 2, 2],
+    };
     scene.add(this.group);
   }
 }

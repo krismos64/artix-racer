@@ -1,5 +1,6 @@
 // Construction 3D de la signalisation et des panonceaux d'équipements.
 import * as THREE from 'three';
+import { anisotropie } from './textures.js';
 import { CATEGORIES } from './poi.js';
 
 // Fabrique une texture de panneau à partir d'un dessin canvas. Les panneaux
@@ -12,7 +13,7 @@ function texturePanneau(dessin, taille = 256) {
   dessin(ctx, taille);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.anisotropy = anisotropie();
   return t;
 }
 
@@ -96,7 +97,7 @@ function textureEquipement(nom, label, couleur) {
 
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.anisotropy = anisotropie();
   return t;
 }
 
