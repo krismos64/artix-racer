@@ -37,8 +37,9 @@ npm run build && npm run preview
 | T | Accélérer l'écoulement du temps (cycle jour/nuit) |
 | B | Klaxon |
 | M / N | Musique / son |
-| O | Ombres portées (activées par défaut, coûteuses) |
+| O | Ombres portées (désactivées par défaut, coûteuses) |
 | K | Rendu dessin animé : contours de silhouette et ombrage en paliers |
+| V | Grade couleur arcade : contraste, saturation, vignettage, grain |
 | A | Anticrénelage (SMAA, activé par défaut) |
 | J | Profil graphique : Performance, Équilibré, Qualité |
 | U | Ajustement automatique de la résolution |
@@ -228,13 +229,16 @@ Modèle à quatre roues indépendantes, dans l'esprit des simulateurs :
   statique enfonce le ressort d'un tiers de sa course
 - adhérence par cercle de friction : les efforts longitudinaux et latéraux se
   partagent une réserve d'adhérence proportionnelle à la charge sur la roue
-- moteur avec courbe de couple réaliste (plateau entre 2 200 et 4 800 tr/min),
-  boîte 6 rapports, différentiel, transmission aux roues avant
+- moteur avec courbe de couple de V10 atmosphérique (pic vers 4 500 tr/min,
+  régime maximum 8 500), boîte 6 rapports, **propulsion arrière**, comme
+  l'Audi R8 réelle affichée à l'écran
 - appui aérodynamique et traînée fonction du carré de la vitesse
 - le frein à main annule l'adhérence latérale arrière, ce qui permet le drift
 
-Performances mesurées : 0 à 50 km/h en 3,5 s, 0 à 100 en 9,1 s, 134 km/h en
-pointe, passages de rapport à 49, 80 et 116 km/h.
+Le véhicule et sa physique ont été recalés le 19/08/2026 sur l'Audi R8
+affichée, jusque-là restée sur les valeurs d'une compacte générique
+héritées de l'origine du projet (masse, couple, traction avant). Chiffres
+de performance à remesurer sur une base propre avant de les republier ici.
 
 L'adhérence chute hors chaussée (coefficient 0,72 sur l'herbe contre 1,15 sur
 l'asphalte), ce qui se sent immédiatement au volant.
@@ -246,13 +250,15 @@ elle, est un fichier lu en boucle (`public/audio/music1.m4a`). La boucle
 générative décrite plus bas reste dans le code et reprend la main si le
 fichier est absent ou illisible, plutôt que de laisser le jeu muet.
 
-- **Moteur** : une table d'onde périodique contenant les **quatre explosions
-  d'un cycle quatre temps**, avec attaque raide et décroissance exponentielle,
-  et un léger déséquilibre entre cylindres. Un banc d'oscillateurs continus
-  produit un bourdonnement de synthétiseur ; c'est la granularité des
-  détonations qui donne le grain d'un vrai moteur. La table est convertie en
-  série de Fourier (64 harmoniques) pour alimenter deux voix désaccordées,
-  auxquelles s'ajoutent bruit d'admission et sifflement de turbo
+- **Moteur** : une table d'onde périodique contenant les **cinq explosions
+  d'un cycle quatre temps** d'un V10 à 90°, comme le moteur de l'Audi R8
+  réelle (quatre jusqu'au 19/08/2026, pour le moteur générique d'origine),
+  avec attaque raide et décroissance exponentielle, et un léger déséquilibre
+  entre cylindres. Un banc d'oscillateurs continus produit un bourdonnement
+  de synthétiseur ; c'est la granularité des détonations qui donne le grain
+  d'un vrai moteur. La table est convertie en série de Fourier (64
+  harmoniques) pour alimenter deux voix désaccordées, auxquelles s'ajoutent
+  bruit d'admission et sifflement de turbo
 - **Crépitement à la décélération** : détonations irrégulières dans
   l'échappement quand on lève le pied à haut régime
 - **Soupape de décharge** : chuintement bref au passage de rapport
@@ -304,11 +310,16 @@ fichier est absent ou illisible, plutôt que de laisser le jeu muet.
   lampadaires à la tombée du jour
 - traces de pneus laissées au sol lors des glissements
 - textures d'asphalte et d'herbe générées en canvas, donc aucun asset externe
-- la **végétation n'est dessinée qu'à portée utile** : un maillage instancié
-  n'étant écarté qu'en bloc par le frustum culling, les 3 500 arbres étaient
-  dessinés en entier où que se trouve la voiture. Les instances sont
-  réordonnées par distance et seules les proches sont soumises, soit 114 arbres
-  au centre-bourg au lieu de 3 500, sans différence visible à l'écran
+- les **maillages instanciés ne sont dessinés qu'à portée utile** : un
+  `InstancedMesh` n'étant écarté qu'en bloc par le frustum culling, les
+  3 500 arbres, les lampadaires et les véhicules garés étaient chacun
+  dessinés en entier où que se trouve la voiture. Une grille par famille
+  réordonne les instances par distance et n'en soumet que les proches, soit
+  une centaine d'arbres au centre-bourg au lieu de 3 500, sans différence
+  visible à l'écran
+- **filtrage anisotrope** poussé à 16 (plafonné par profil graphique) sur
+  toutes les textures générées, la chaussée en premier : sa texture se
+  répète 34 fois, et sans lui l'enrobé bavait dès la vingtaine de mètres
 
 ### Profils graphiques
 
@@ -363,6 +374,15 @@ marquage.
 L'ensemble coûte 2,6 images par seconde, dont 0,2 pour les seuls contours. La
 passe emprunte les tampons de profondeur et de normales que l'occlusion
 ambiante calcule déjà, et n'ajoute donc aucun rendu de géométrie.
+
+### Grade arcade
+
+La touche `V` bascule un grade couleur (`arcade.js`) : contraste en S,
+saturation renforcée, vignettage doux aux bords, léger grain animé d'une
+image à l'autre. La passe s'applique **après** `OutputPass`, sur l'image déjà
+tone-mappée et en espace sRGB, jamais avant : sur l'image linéaire, la même
+courbe de contraste écrasait la chaussée en noir plein. Coût nul mesuré, une
+seule passe plein écran sans échantillonnage voisin.
 
 ### Stationnement et mobilier
 

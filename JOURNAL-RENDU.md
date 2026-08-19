@@ -1902,3 +1902,218 @@ emprises de l'avenue, **51 traits pour 51 places**, soit un par place.
 
 Reste à constater à l'écran : les traits sous les véhicules et dans leur axe, le
 chevron entre les deux rangées de la grande aire, et la chaussée dégagée.
+
+## Filtrage anisotrope et résolution des textures (19/08/2026)
+
+Les textures générées en canvas portaient une anisotropie figée à 4 ou 8 selon
+la fonction, seize valeurs en dur réparties dans six fichiers. Le GPU du
+MacBook Air M4 en accepte 16, relevé par
+`renderer.capabilities.getMaxAnisotropy()`.
+
+Le poste qui en souffrait le plus est l'enrobé : sa texture se répète 34 fois
+sur la nappe de chaussée, exactement le cas où l'anisotropie compte, une
+surface très répétée vue en fuyante. À 4, elle bavait dès la vingtaine de
+mètres.
+
+**Correctif** : `poserAnisotropie` dans `textures.js`, appelée une fois au
+démarrage depuis `main.js`, avant la construction de la ville. Le module reste
+sans dépendance au renderer, qui ne lui est pas accessible ; il reçoit la
+valeur plutôt que d'aller la chercher. Un plafond par profil graphique
+(`anisotropieMax` dans `quality.js`) : 4 en Performance, 16 sinon.
+
+Vérifié à l'écran après rechargement : **72 textures sur 73 à 16**, dont
+l'enrobé. La dernière est une texture de HUD qui ne passe pas par ce module.
+Coût nul, 59,9 fps avant comme après : l'anisotropie pèse sur la bande
+passante mémoire, pas sur la géométrie.
+
+**Enduit et tuile portés de 256 à 512.** Une façade de 8 m de haut ne disposait
+que de 32 pixels de texture par mètre. Ces deux textures sont uniques et
+partagées par les 3 542 bâtiments : le quadruplement de surface ne pèse que sur
+elles. Les deux générateurs tiennent le changement de taille sans retouche,
+tout y dérivant du paramètre (`PAS = taille / 8` pour le rythme des rangs de
+tuile).
+
+## Les fenêtres perçaient les façades en aplats blancs (19/08/2026)
+
+Symptôme constaté à l'écran : sur les façades vues de la rue, les baies ne se
+lisaient pas comme des ouvertures mais comme des rectangles blancs pleins
+posés sur le mur.
+
+**Première hypothèse, fausse.** J'ai d'abord soupçonné les vitrages
+eux-mêmes. Relevé des couleurs de sommet : les quatre teintes de vitre sont
+comprises entre 0,157 et 0,212 de luminance, donc très sombres. Ce n'était pas
+elles.
+
+**Premier vrai défaut : 9,65 % des baies portaient un beige chaud en plein
+jour.** La couleur de sommet servait à deux choses à la fois, la teinte de
+vitre et le marqueur de pièce éclairée. Une baie déclarée allumée portait donc
+`(1,0 ; 0,82 ; 0,52)` en permanence, y compris à midi, où elle ressortait plus
+claire que l'enduit. Mesuré sur les 153 204 sommets du maillage : 14 778 en
+teinte chaude, soit 9,65 % pour 8,33 % annoncés par le code, l'écart venant de
+la distribution du hachage.
+
+Correctif : un attribut de géométrie distinct, `emiCouleur`, noir sur une baie
+éteinte et chaud sur une baie allumée, lu par le canal d'émission via
+`onBeforeCompile`. La couleur de sommet redevient uniquement la teinte de
+vitre, toujours sombre. Après correction : **zéro couleur de sommet claire**,
+les 14 778 baies allumées préservées la nuit.
+
+Le shader ne compilait pas au premier essai : `emissiveIntensity` n'est pas un
+uniform du fragment shader de Three.js. `totalEmissiveRadiance` vaut déjà
+`emissive * emissiveIntensity` au point d'injection ; `emissive` étant blanc,
+il suffit de le teinter par `vEmiCouleur`. Écran noir, repéré dans la console,
+corrigé dans la foulée.
+
+**Second vrai défaut, celui qui se voyait le plus : le dormant.** Le cadre de
+menuiserie, blanc cassé à `0xece9e2`, débordait de 11 cm autour d'une vitre
+étroite. Mesuré sur les couleurs de sommet des murs : **1,37 fois la clarté de
+l'enduit moyen**. C'est lui qui dominait la baie et la faisait lire comme un
+aplat plein.
+
+| Grandeur | Avant | Après |
+| --- | --- | --- |
+| Couleur du dormant | `0xece9e2` | `0xb4b6b8` |
+| Luminance | 0,914 | 0,712 |
+| Rapport à l'enduit (0,667) | **1,37** | **1,07** |
+
+Le principe d'un dormant clair autour d'une vitre sombre était bon, et déjà
+noté au journal ; c'est la valeur qui était trop haute. Vérifié à l'écran en
+masquant le maillage des vitrages : les aplats blancs subsistaient sans eux,
+ce qui a désigné le dormant sans ambiguïté.
+
+## Découpage spatial étendu au mobilier et aux véhicules garés (19/08/2026)
+
+`spatial.js` ne servait qu'aux arbres depuis le chantier de performances. Le
+« Restant à traiter » listait les autres `InstancedMesh` comme piste non
+vérifiée, sur la foi d'un chiffre de 2 800 instances.
+
+**Relevé en jeu** : 29 maillages instanciés, **13 238 instances**, **447 996
+triangles** soumis à chaque image quelle que soit la position du véhicule. Le
+détail écarte deux candidats et en désigne deux autres.
+
+| Famille | Instances | Triangles | Décision |
+| --- | --- | --- | --- |
+| Touffes d'herbe | 3 520 | 140 800 | **écartée** : pool fixe de 38 m, déjà suivi du véhicule, `frustumCulled = false` volontaire |
+| Lampadaires (mât + lanterne) | 911 x 2 | ~38 000 | découpée |
+| Véhicules garés (caisse, roues, feux) | 880 entités | ~42 000 | découpée |
+| Cheminées, lucarnes, ventilations | 767 | 9 204 | laissée : réparties comme le bâti, gain faible |
+
+Les touffes sont le poste le plus lourd du relevé, et c'est précisément celui
+qu'il ne faut pas toucher : elles sont replantées autour du véhicule à chaque
+franchissement de cellule et ne sont jamais lointaines par construction. Un
+chiffre élevé ne désigne pas un gâchis.
+
+**Le mécanisme ne suffisait pas tel quel.** `GrilleInstances` réordonne des
+maillages qui partagent le même ordre d'instances, un pour un, comme le fût,
+la charpente et le feuillage d'un arbre. Un véhicule garé porte une instance
+de caisse, **quatre** de roue et **deux** de chaque feu. Réordonner sans en
+tenir compte aurait détaché les roues de leur caisse.
+
+Correctif : un paramètre `ratios` par maillage, valant 1 par défaut, donc
+rétrocompatible avec les arbres et les lampadaires. `deplacerInstance` échange
+des blocs de `ratio` instances consécutives au lieu d'une seule, et `count`
+est borné à `fin * ratio`.
+
+Vérifié en jeu, profil Équilibré : **3 500 arbres dont 114 dessinés**, **911
+lampadaires dont 309**, **880 véhicules dont 522**, ratios `[1, 4, 2, 2]`
+appliqués. Roulage de 290 m à 78 km/h, trois réordonnancements par grille,
+aucun artefact : pas de véhicule sans roues, pas de mât décapité.
+
+**Brouillard resserré** dans la foulée, par profil, aligné sur la distance
+d'affichage des petits objets de chacun : le pop-in du mobilier lointain se
+fond dans la brume au lieu d'apparaître net.
+
+| Profil | Avant | Après | `distanceDetails` |
+| --- | --- | --- | --- |
+| Performance | 200 - 700 | 60 - 260 | 220 |
+| Équilibré | 320 - 1250 | 100 - 460 | 400 |
+| Qualité | 420 - 1600 | 160 - 720 | 650 |
+
+## Grade arcade posé du mauvais côté du mappage de tons (19/08/2026)
+
+Ajout d'une passe de grade couleur pour un rendu de jeu de course plutôt qu'une
+reconstitution littérale : contraste en S, saturation renforcée, vignettage
+doux, grain fin animé d'une image à l'autre. Un seul `ShaderPass`, sans
+échantillonnage de voisins.
+
+**Premier placement, faux : avant `OutputPass`.** Le raisonnement était que le
+mappage de tons devait s'appliquer après le grade pour ne pas saturer les
+couleurs poussées. C'est l'inverse. Avant `OutputPass`, l'image est encore en
+espace linéaire, non tone-mappée : la chaussée et le feuillage, presque noirs
+à ce stade, se faisaient écraser à zéro par
+`(c - 0,5) x (1 + contraste) + 0,5`, une courbe conçue pour une image déjà
+répartie dans la plage perceptuelle 0-1. Constaté à l'écran : premier plan et
+arbres en noir plein, scène illisible.
+
+Correctif : la passe se place **après** `OutputPass`, sur l'image telle qu'elle
+s'affiche. Valeurs revues à la baisse dans la foulée, la première série ayant
+été calée sur le mauvais espace.
+
+| Réglage | Premier essai | Retenu |
+| --- | --- | --- |
+| Contraste | 0,18 | 0,08 |
+| Saturation | 1,22 | 1,15 |
+| Force du vignettage | 0,35 | 0,22 |
+| Grain | 0,035 | 0,025 |
+
+Vérifié de jour et de nuit : scène lisible dans les deux cas, herbe et ciel
+plus francs, léger assombrissement des coins. **59,9 fps**, coût nul.
+
+## L'Audi R8 roulait en traction avant (19/08/2026)
+
+`SPEC` gardait depuis l'origine du projet les valeurs d'une compacte générique,
+alors que le modèle affiché est une Audi R8 depuis le 18/08/2026. Christophe
+demande une voiture plus rapide et plus agressive au démarrage, et un son de
+moteur plus aigu : le décalage entre ce qui roule et ce qui s'affiche est la
+cause commune des trois.
+
+Masse portée de 1 320 à 1 620 kg, voie et empattement ajustés, centre de
+gravité abaissé de 0,52 à 0,46 m, freinage relevé. Courbe de couple refaite
+pour un V10 atmosphérique : **320 N·m vers 4 500 tr/min** contre 190 vers
+4 000, plateau jusqu'à 6 800, **régime maximum porté de 7 200 à 8 500**.
+
+Côté son, la table d'onde passe de **quatre à cinq explosions par cycle**, la
+fréquence des harmoniques résiduels de `rpm/60 x 2` à `x 5`, et la résonance
+d'échappement gagne en gain et en Q. La décroissance de l'enveloppe est
+resserrée de 7,5 à 9,0 : à cinq impulsions par cycle, elles se chevauchaient
+en un bourdonnement continu au lieu de rester détachées.
+
+### Le vrai défaut n'était pas le couple
+
+Christophe signale que la voiture ne passe pas la troisième et plafonne vers
+127 km/h en seconde. Relevé en jeu : bloquée en `gear: 2`, régime stabilisé
+vers 7 000 tr/min pour un seuil de passage à 7 800, vitesse qui stagne.
+
+**Première hypothèse, fausse** : le seuil de passage serait trop haut pour la
+nouvelle courbe. Le calcul dit le contraire, l'accélération théorique restant
+franchement positive de 6 800 à 7 900 tr/min (4,95 à 3,86 m/s²).
+
+**La cause est dans la transmission.** Relevé du glissement roue par roue à
+55 km/h, accélérateur au plancher :
+
+| Roue | `slip` |
+| --- | --- |
+| Avant gauche | **1,00** |
+| Avant droite | **0,93** |
+| Arrière gauche | 0,00 |
+| Arrière droite | 0,00 |
+
+Les deux roues motrices étaient les roues **avant**, héritées de la compacte.
+Avec 175 N·m elles transmettaient sans saturer ; avec 320 N·m elles saturent
+leur cercle d'adhérence dès 50 à 70 km/h. La force au sol est alors plafonnée
+par `gripMax = load x mu` quel que soit le couple demandé : la vitesse cesse de
+monter, donc le régime imposé par les roues aussi, et le seuil de passage n'est
+jamais atteint. Le blocage de boîte était le symptôme, pas la cause.
+
+Correctif : **propulsion arrière**, comme l'Audi R8 réelle, moteur
+central-arrière. Les roues avant ne font plus que diriger. Le transfert de
+charge en accélération joue désormais dans le bon sens, chargeant les roues
+motrices au lieu de les délester : relevé à 400 ms, 3 147 N à l'avant contre
+4 709 N à l'arrière.
+
+Confirmé résolu en conduite par Christophe. **Les mesures automatisées de cette
+session ne sont pas concluantes sur ce point** : les essais au clavier simulé
+ont produit des trajectoires incohérentes, la voiture heurtant des véhicules
+garés ou finissant contre un mur, et les chiffres de 0 à 100 relevés dans ces
+conditions ne veulent rien dire. Les performances du véhicule restent donc à
+mesurer proprement, manette en main, avant d'être republiées au README.

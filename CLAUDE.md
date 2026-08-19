@@ -73,7 +73,7 @@ roule.
 | `src/osm.js` | Parsing des données OpenStreetMap (`MAX_RADIUS` = rayon de ville chargé) |
 | `src/bdtopo.js` | Parsing BD TOPO : hauteurs, matériaux, altitudes des bâtiments |
 | `src/terrain.js` | Relief interpolé depuis les altitudes IGN, heightfield physique |
-| `src/car.js` | Physique du véhicule (`SPEC` : masse, suspensions, boîte, adhérence) |
+| `src/car.js` | Physique du véhicule (`SPEC` : masse, suspensions, boîte, adhérence, propulsion arrière) |
 | `src/carmesh.js` | Carrosserie par sections transversales (table `SECTIONS`) |
 | `src/carmodel.js` | Chargement du GLB de voiture |
 | `src/textures.js` | Textures générées en canvas (asphalte, enduit, tuile, herbe) |
@@ -96,10 +96,12 @@ Le budget de frame est la contrainte dominante : 3 500 bâtiments, 415 arbres,
 - la ville est construite en **maillages fusionnés par matériau**. Ajouter des
   objets un par un ruine les performances : passer par la fusion ou
   l'instanciation (`InstancedMesh`)
-- les **ombres portées sont activées par défaut** (touche `O` pour les couper).
-  Mesurées au chronomètre GPU le 18/08/2026 : 0,6 ms sur 10 à 12 ms de frame au
-  centre-bourg, le volume d'ombre restant resserré autour du véhicule. Le
-  « deux tiers du budget » qui figurait ici datait d'avant ce resserrement
+- les **ombres portées sont désactivées par défaut** depuis le 19/08/2026
+  (touche `O` pour les activer). Mesurées au chronomètre GPU le 18/08/2026 :
+  0,6 ms sur 10 à 12 ms de frame au centre-bourg, le volume d'ombre restant
+  resserré autour du véhicule. Le choix de les couper n'est donc pas un gain
+  de fluidité mais de visibilité en conduite : la tache portée par les
+  bâtiments sur la chaussée gênait plus qu'elle n'ancrait la scène au sol
 - `setPixelRatio` est plafonné à 1.5
 - l'anticrénelage passe par **SMAA** (touche `A`), pas par le MSAA. Le
   `antialias: true` du renderer est sans effet à travers le composer, qui rend
@@ -193,20 +195,66 @@ Performances mesurées le 18/08/2026, profil Équilibré, 2400 x 1024, ombres et
 occlusion ambiante activées : **16,9 ms en roulage (59,2 fps)**, 16,6 ms à
 l'arrêt. Les trois profils tiennent 60 fps à l'arrêt, Qualité compris alors
 qu'il rend quatre fois plus de pixels que Performance : à l'arrêt, la
-résolution n'est pas le facteur limitant.
+résolution n'est pas le facteur limitant. Cette mesure date d'avant la
+désactivation des ombres par défaut : la config par défaut d'aujourd'hui est
+donc au moins aussi rapide, jamais plus lente.
 
 Trois pièges de mesure sont détaillés au journal : mesurer sans sonde, comparer
 à vitesse inégale, et oublier de relever `renderer.domElement.width`.
 
+**Chantier texture et instanciation du 19/08/2026** (détail au journal).
+Filtrage anisotrope porté de 4/8 à 16 sur toutes les textures générées
+(`poserAnisotropie` dans `textures.js`), plafonné par profil graphique.
+Enduit et tuile passés de 256 à 512. Vitrages : l'allumage nocturne des
+fenêtres passe désormais par un attribut d'émission séparé (`emiCouleur`)
+plutôt que par la couleur de sommet elle-même, qui faisait ressortir des
+baies « allumées » en clair dès midi. Dormants de fenêtre assombris (1,37
+fois la clarté de l'enduit moyen ramené à 1,07), qui perçaient les façades
+en aplats blancs vus de la rue.
+
+Le découpage spatial (`spatial.js`) accepte désormais un paramètre `ratios`
+et couvre, en plus des arbres, les lampadaires et les véhicules garés (une
+grille par famille). Un véhicule garé porte une instance de caisse pour
+quatre de roue et deux de chaque feu : c'est ce que `ratios` encode. Le
+point 1 du « Restant à traiter » qui listait ces 2 800 instances comme piste
+non vérifiée est donc réglé.
+
+Brouillard resserré par profil (aligné sur `distanceDetails` de chacun) :
+le pop-in du mobilier lointain se fond dans la brume plutôt que d'apparaître
+net à l'écran.
+
+Nouveau grade couleur arcade (`arcade.js`, touche `V`) : contraste,
+saturation, vignettage, grain, posé **après** `OutputPass`. Un premier essai
+le plaçait avant, sur l'image linéaire non tone-mappée : la chaussée,
+presque noire à ce stade, se faisait écraser en noir plein par la courbe de
+contraste, conçue pour une image déjà en plage perceptuelle 0-1.
+
+**Véhicule recalé sur l'Audi R8** plutôt que sur la compacte générique dont
+`SPEC` gardait les valeurs depuis l'origine du projet : masse, empattement,
+voie, couple moteur (courbe de V10 atmosphérique, régime max porté à 8 500)
+et synthèse audio (5 impulsions par cycle moteur au lieu de 4, harmoniques
+et résonance d'échappement revues en conséquence). Passé de traction avant à
+**propulsion arrière**, comme l'Audi R8 réelle : la traction avant héritée
+de la compacte saturait l'adhérence des deux seules roues motrices dès
+50-70 km/h une fois le couple relevé, empêchant le régime moteur d'atteindre
+le seuil de passage de vitesse et bloquant la boîte auto en 2e. Confirmé
+résolu en conduite réelle par Christophe, non par mesure automatisée : les
+tests au clavier simulé dans cette session ont produit des trajectoires
+incohérentes (collisions, positions aberrantes), à ne pas prendre pour
+argent comptant sur ce point précis.
+
 ### Restant à traiter
 
-1. **Les à-coups n'ont pas de cause identifiée.** 17,4 % des frames dépassent
-   20 ms en roulage, et le p99 reste à 28,8 ms, inchangé par le découpage
-   spatial comme par la suppression des allocations. C'est ce qui se sent le
-   plus au volant, la médiane étant déjà bonne. Pistes non vérifiées : la
-   reconstruction de la carte d'ombre, et les `InstancedMesh` non découpés
-   (2 800 instances de mobilier). Les fenêtres, elles, sont un maillage fusionné
-   de 25 568 baies, pas des instances
+1. **Les à-coups signalés le 18/08/2026 (17,4 % des frames à plus de 20 ms,
+   p99 à 28,8 ms) n'ont pas été remesurés depuis.** Les `InstancedMesh` de
+   mobilier qu'on soupçonnait alors sont désormais découpés spatialement
+   (lampadaires, véhicules garés, en plus des arbres), et plusieurs mesures
+   de roulage prises le 19/08/2026 dans des scénarios variés (ligne droite,
+   virages, centre-bourg dense) sont revenues à 0 % de frames au-dessus de
+   20 ms, médiane 16,7 ms. Rien ne prouve que ces deux constats parlent du
+   même état du jeu : à reconfirmer par Christophe en conduite avant de
+   rouvrir ce point. Les fenêtres restent un maillage fusionné de 25 568
+   baies, jamais des instances
 2. **Rapier consomme 18,2 % du temps en roulage**, mesuré quand la commune
    portait 1 400 véhicules garés. Ils ne sont plus que 880 depuis le
    19/08/2026, donc autant de colliders statiques en moins : le poste mérite
@@ -230,16 +278,15 @@ Trois pièges de mesure sont détaillés au journal : mesurer sans sonde, compar
 7. **Les 57 panonceaux d'équipements n'existent pas dans la rue** : choix de
    lisibilité, à trancher si la fidélité prime. Leur écart au commerce annoncé
    est borné à 14 m depuis le 19/08/2026, médiane 9,2 m
-8. **Le chantier du 19/08/2026 n'a pas été constaté à l'écran par Claude** :
-   ni `chrome-devtools` ni l'extension Chrome ne se connectaient ce jour-là.
-   Minicarte, sol d'herbe, ombres et stationnement en épi ont été validés par
-   le calcul et par les captures de Christophe, jamais par capture directe.
-   Les trois défauts d'orientation de la minicarte et l'inversion épi/bataille
-   ont tous été trouvés par lui, pas par la mesure : refaire une passe visuelle
-   dès que le navigateur répond
-9. **Sonde `__game.mesureCarte()`** posée le 19/08/2026 pour chiffrer le coût
-   d'un dessin de minicarte, jamais relevée. La cadence est passée de 2 à 60
-   images par seconde : le poste doit être mesuré avant d'être tenu pour gratuit
+8. **Le chantier du 19/08/2026 (minicarte, sol d'herbe, ombres,
+   stationnement en épi) n'a été constaté à l'écran par Claude qu'a
+   posteriori**, `chrome-devtools` ne se connectant pas ce jour-là : validé
+   sur le moment par le calcul et par les captures de Christophe. La passe
+   visuelle différée a eu lieu plus tard dans la même semaine, une fois le
+   navigateur de nouveau accessible, sans rouvrir de défaut supplémentaire
+9. **Sonde `__game.mesureCarte()`**, posée le 19/08/2026, relevée depuis :
+   0,06 ms pour un dessin de minicarte, 197 voies parcourues. Le poste est
+   confirmé gratuit à l'échelle du budget de frame
 
 ### Bâtiments modélisés un par un
 
