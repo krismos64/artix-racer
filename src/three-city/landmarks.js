@@ -1032,9 +1032,12 @@ function construireImmeubleRue(dims) {
   // pizzeria à l'autre bout. La façade rue est le -z local (voir la rotation
   // du bloc IMMEUBLES_RUE).
   const DEVANTURES = [
-    { nom: 'AU COMPTOIR', sous: 'BRASSERIE', x: -12.7, larg: 8.5, fond: '#141618', encre: '#f2efe6' },
-    { nom: 'maison de la presse', sous: null, x: -1.5, larg: 7, fond: '#f2c11c', encre: '#123a6e' },
-    { nom: 'PIZZERIA', sous: null, x: 8.6, larg: 6.5, fond: '#5c2828', encre: '#f2e7d2' },
+    // x local = abscisse sur le grand axe (projection mesurée des POI).
+    { nom: 'AU COMPTOIR', sous: 'BRASSERIE', x: 12.7, larg: 8.5, fond: '#141618', encre: '#f2efe6' },
+    { nom: 'maison de la presse', sous: null, x: 1.5, larg: 7, fond: '#f2c11c', encre: '#123a6e' },
+    // Le café du bout de rangée, visible sur les panoramiques ; la pizzeria
+    // réelle est place du Général de Gaulle, pas dans cet immeuble.
+    { nom: 'CAFÉ', sous: null, x: -8.6, larg: 6.5, fond: '#5c2828', encre: '#f2e7d2' },
   ];
   const textureDeuxLignes = (d) => {
     const Lc = 1024, Hc = 150;
@@ -1343,7 +1346,7 @@ function construireDevanturesPOI(data, relief, roadY) {
   const g = new THREE.Group();
   const commerces = (data.poi?.equipements ?? []).filter((e) =>
     e.info?.icone === 'commerce' || ['pharmacy', 'bank'].includes(e.categorie));
-  const dejaModelises = new Set(['Au Comptoir', 'Maison de la Presse', 'Leclerc Express', 'Maison Chaudron']);
+  const dejaModelises = new Set(['Au Comptoir', 'Maison de la Presse', 'Leclerc Express', 'Maison Chaudron', 'CPC Invest', 'MMA']);
   const palettes = ['#9b4934', '#315d68', '#4f704f', '#7d5935', '#68435f', '#285b86'];
 
   for (const e of commerces) {
@@ -2006,6 +2009,59 @@ function construireBoulangerie() {
   return g;
 }
 
+// Devanture de commerce paramétrée, posée en absolu sur une arête mesurée :
+// bandeau à enseigne dessinée, vitrines en retrait, porte vitrée, casquette.
+function construireDevantureCommerce({ nom, sous, fond, encre, largeur }) {
+  const g = new THREE.Group();
+  const fondMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(fond), roughness: 0.55 });
+  const vitre = new THREE.MeshStandardMaterial({ color: 0x20282d, roughness: 0.22, metalness: 0.1 });
+  const panneau = new THREE.Mesh(new THREE.BoxGeometry(largeur, 2.9, 0.14), fondMat);
+  panneau.position.set(0, 1.45, 0.07);
+  g.add(panneau);
+  for (const cote of [-1, 1]) {
+    const vitrine = new THREE.Mesh(new THREE.PlaneGeometry(largeur * 0.32, 1.8), vitre);
+    vitrine.position.set(cote * largeur * 0.24, 1.22, 0.15);
+    g.add(vitrine);
+  }
+  const porte = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.1), vitre);
+  porte.position.set(0, 1.06, 0.15);
+  g.add(porte);
+  const tex = (() => {
+    const L = 1024, H = 150;
+    const c = document.createElement('canvas');
+    c.width = L; c.height = H;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = fond;
+    ctx.fillRect(0, 0, L, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = encre;
+    if (sous) {
+      ctx.font = 'bold 62px Helvetica, Arial, sans-serif';
+      ctx.fillText(nom, L / 2, 48);
+      ctx.fillStyle = '#e9e6de';
+      ctx.font = '600 34px Helvetica, Arial, sans-serif';
+      ctx.fillText(sous.split('').join(' '), L / 2, 112);
+    } else {
+      ctx.font = 'bold 74px Helvetica, Arial, sans-serif';
+      ctx.fillText(nom, L / 2, H / 2 + 4);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const enseigne = new THREE.Mesh(new THREE.PlaneGeometry(largeur * 0.9, 0.78),
+    new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55 }));
+  enseigne.position.set(0, 2.3, 0.16);
+  g.add(enseigne);
+  const casquette = new THREE.Mesh(new THREE.BoxGeometry(largeur * 0.96, 0.13, 0.6), fondMat);
+  casquette.position.set(0, 2.78, 0.32);
+  casquette.rotation.x = -0.09;
+  g.add(casquette);
+  return g;
+}
+
 export function buildLandmarks(data, relief, roadY) {
   const group = new THREE.Group();
   const traites = [];   // emprises à retirer des bâtiments ordinaires
@@ -2328,6 +2384,41 @@ export function buildLandmarks(data, relief, roadY) {
       // La devanture regarde la normale extérieure (-0.968, -0.25).
       boulangerie.rotation.y = Math.atan2(-0.968, -0.25);
       group.add(boulangerie);
+    }
+
+    // CPC Invest : bout sud de la façade avenue de l'îlot de la Poste
+    // (arête mesurée, normale (-0.97, -0.26)).
+    {
+      const cpc = construireDevantureCommerce({
+        nom: 'CPC Invest', sous: 'AGENCES IMMOBILIÈRES',
+        fond: '#2b2d30', encre: '#c98a4b', largeur: 6.5,
+      });
+      cpc.position.set(29.4, (relief ? relief.hauteurRoute(29.4, 28.8) : 0) + roadY, 28.8);
+      cpc.rotation.y = Math.atan2(-0.97, -0.26);
+      group.add(cpc);
+    }
+
+    // Agence MMA : façade carrefour de l'immeuble blanc (bât 1089, arête
+    // mesurée, normale (-0.14, 0.99)), avec les trois macarons de l'enseigne.
+    {
+      const mma = construireDevantureCommerce({
+        nom: 'MMA', sous: 'ASSURANCES',
+        fond: '#f0efe9', encre: '#00417d', largeur: 6,
+      });
+      const solM = (relief ? relief.hauteurRoute(11, -29.4) : 0) + roadY;
+      mma.position.set(11, solM, -29.4);
+      mma.rotation.y = Math.atan2(-0.14, 0.99);
+      group.add(mma);
+      const teintesMacarons = [0x0064ac, 0x00a562, 0xd42e12];
+      teintesMacarons.forEach((teinte, k) => {
+        const macaron = new THREE.Mesh(new THREE.CircleGeometry(0.34, 18),
+          new THREE.MeshStandardMaterial({ color: teinte, roughness: 0.4 }));
+        // Alignés au-dessus de la casquette, dans l'axe de la façade.
+        const dxm = (k - 1) * 0.85;
+        macaron.position.set(11 + dxm * 0.99, solM + 3.45, -29.4 - dxm * 0.14 + 0.2);
+        macaron.rotation.y = Math.atan2(-0.14, 0.99);
+        group.add(macaron);
+      });
     }
 
     // Préaux : écoles élémentaires Jean Moulin et Jean Sarrailh, posés côté

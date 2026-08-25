@@ -703,8 +703,8 @@ export function buildSignage(data, relief, roadY) {
 
     for (const e of poi.equipements) {
       if (e.info?.icone !== 'commerce') continue;
-      // Enseigne dédiée déjà modélisée dans landmarks.js.
-      if (e.nom === 'Maison Chaudron') continue;
+      // Enseignes dédiées déjà modélisées dans landmarks.js.
+      if (['Maison Chaudron', 'CPC Invest', 'MMA'].includes(e.nom)) continue;
       // Bâtiment porteur : l'emprise dont une arête passe au plus près du
       // point OSM du commerce.
       let porteur = null, meilleure = 18;
