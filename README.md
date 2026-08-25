@@ -139,6 +139,32 @@ Les lieux ainsi signalés incluent la Mairie d'Artix, l'Église Saint-Pierre, le
 Collège Jean Moulin, les écoles Jean Sarrailh et Jean Moulin, la Gendarmerie,
 l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 
+### Rendu et identité visuelle (chantier d'août 2026)
+
+- **Ciel analytique** (modèle de Preetham, SkyMaterial officielle Babylon) lié
+  à la lumière directionnelle : voile d'horizon, halo solaire et ombres
+  racontent la même heure. Réglages calés à l'écran (turbidité 2,6).
+- **IBL réelle** : l'éclairage d'ambiance PBR est rendu au démarrage depuis ce
+  ciel par une sonde de réflexion, au lieu de trois gradients de 32 pixels.
+- **SSAO2** en profil Qualité : l'occlusion ambiante assoit les bâtiments au
+  sol et creuse les angles de rue.
+- **Volets** sur les habitations, ouverts de part et d'autre de chaque baie :
+  couleur relevée sur les panoramiques Panoramax quand elle est détectée,
+  sinon palette des teintes réellement vues à Artix (bordeaux, vert, bleu-gris,
+  bois). C'est le détail qui distingue une rue béarnaise d'une maquette.
+- **Murets en galets roulés du gave**, texture et relief dédiés : l'appareil
+  des murs anciens de la plaine, immédiatement reconnaissable.
+- **Façades en pierre apparente** (meulière, pierre, fort grain mesuré sur
+  photo) texturées en galets plutôt qu'en enduit lisse.
+- **Ripisylve des saligues** : saules argentés à couronne basse et peupliers
+  en fuseau le long du gave, de ses canaux et des plans d'eau.
+- **Entrées d'agglomération bilingues** ARTIX / Artics : Artix est la première
+  commune de France de plus de 3 000 habitants à avoir adopté la signalisation
+  occitane (2000).
+- **Abribus vitrés** avec banc et cadre d'affichage.
+- Anisotropie 16 sur toutes les textures, relief du gravillon sur la chaussée,
+  micro-relief du couvert herbeux.
+
 ### La minicarte
 
 Dessinée en canvas 2D plutôt qu'avec une seconde caméra : un tracé vectoriel des
@@ -209,14 +235,36 @@ plaques d'immatriculation et visages déjà floutés. `npm run fetch-facades` y
 relève la teinte réelle des façades. La source libre est ici techniquement
 supérieure, pas un pis-aller.
 
-Ce qui manque encore : les textures photographiques de façade appliquées en
-placage, et les détails d'aménagement (mobilier urbain, enseignes).
+Depuis août 2026, l'exploitation de Panoramax va bien au-delà de la teinte :
+`scripts/panoramax-inventaire.mjs` recense les **76 365 panoramiques** de la
+zone (balayage par cellules de l'API STAC), puis `scripts/panoramax-analyse.mjs`
+choisit pour chaque bâtiment les meilleurs points de vue (distance à la façade,
+écart de gisement, occultations vérifiées contre le bâti voisin), extrait de
+chaque panoramique équirectangulaire la fenêtre exacte de la façade (gisement
+converti en colonne de pixels, hauteur BD TOPO en fenêtre verticale) et en
+tire :
+
+- la **teinte réelle du mur** (médiane robuste, ombres et végétation exclues),
+  pour 2 267 bâtiments
+- la **couleur des volets** quand ils sont détectés (349 bâtiments), qui
+  colore les volets 3D du jeu
+- un **indice de grain du parement** : les façades en pierre ou galets
+  apparents reçoivent une texture d'appareil de galets du gave au lieu de
+  l'enduit lisse
+
+Le tout tient dans `public/data/artix-panoramax.json` (110 Ko) ; seuls
+1 218 panoramiques ont dû être téléchargés, un même point de rue décrivant
+tous les bâtiments alentour.
+
+Ce qui manque encore : le placage photographique littéral des façades, et une
+partie du mobilier urbain (enseignes).
 
 ## Comment c'est fait
 
 | Composant | Rôle |
 | --- | --- |
-| [Three.js](https://threejs.org) | Rendu 3D |
+| [Babylon.js](https://babylonjs.com) | Rendu 3D (PBR, ciel analytique, IBL, SSAO2, pipeline post-process) |
+| [Three.js](https://threejs.org) | Génération de la ville (géométries et matériaux, convertis vers Babylon au chargement) |
 | [Rapier](https://rapier.rs) | Moteur physique (Rust compilé en WebAssembly) |
 | Web Audio API | Sons et musique, synthétisés en temps réel |
 | Overpass API | Extraction des données OpenStreetMap |
