@@ -2,6 +2,16 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 3) : corridor commerçant en HD
+
+- Placage HD multi-façades du corridor Leclerc -> église : 109 façades
+  (64 bâtiments, 32 multi-faces) depuis les panoramiques 5760×2880, enseignes
+  réelles lisibles. Cache HD séparé (.panoramax-cache-hd, 222 Mo).
+- Sols : 152 relevés locaux tous les 12 m dans le corridor, appliqués par
+  tronçon. Épi du centre à 78 % d'occupation (photos de journée).
+- Piège : garder le fondu de pied bas (60 cm) sur les devantures, sinon les
+  vitrines sont amputées.
+
 ## 2026-08-26 (suite 2) : feuillage alpha
 
 - Couronnes d'arbres découpées par texture d'amas de feuilles (alphaTest) :
