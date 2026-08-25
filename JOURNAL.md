@@ -2,6 +2,19 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 7) : le stationnement du centre, résolu par l'orthophoto
+
+- Leçon de méthode : pour IMPLANTER au sol (parkings, rangées, allées),
+  les panoramiques ne suffisent pas : l'ORTHOPHOTO IGN (WMS Géoplateforme,
+  data.geopf.fr, Licence Ouverte) donne la vérité en plan au décimètre.
+  curl (le SSL de python3 est cassé sur cette machine).
+- Vérité relevée : place du Général de Gaulle = esplanade piétonne pavée en
+  damier ; le parking organisé = bande en bataille côté est de l'avenue
+  (traits perpendiculaires, arbres intercalés). Codé en dur.
+- Trois allers-retours avec Christophe sur ce point : capture d'écran de sa
+  part -> diagnostic -> correction. Les captures qu'il dépose sur le Bureau
+  sont lisibles directement (Read).
+
 ## 2026-08-26 (suite 6) : itérations fidélité avec Christophe
 
 - Poste : annexes 1079/1083 retirées (elles masquaient le parvis), 18 x 11,5,
