@@ -1748,7 +1748,10 @@ function texturePoste() {
 // boîte aux lettres sur rue.
 function construirePoste(boite) {
   const g = new THREE.Group();
-  const L = boite.longueur, W = boite.largeur;
+  // L'emprise BD TOPO sous le POI est l'îlot entier (23 x 23 m) : le bureau
+  // de poste réel n'en occupe que l'aile sur rue, environ 15 x 10 m sur les
+  // panoramiques. Les cotes sont plafonnées en conséquence.
+  const L = Math.min(boite.longueur, 15), W = Math.min(boite.largeur, 10.5);
   const creme = new THREE.MeshStandardMaterial({ color: 0xefe9db, roughness: 0.85, side: THREE.DoubleSide });
   const gris = new THREE.MeshStandardMaterial({ color: 0x9c9c98, roughness: 0.9 });
   const blanc = new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.6 });
@@ -1817,11 +1820,36 @@ function construirePoste(boite) {
     }
   }
 
-  // Caisson d'enseigne LA POSTE, centré sur la façade sud (face 1).
+  // Caisson d'enseigne LA POSTE au-dessus de l'entrée, et l'inscription en
+  // GRANDES lettres sur l'étage, comme peinte sur l'enduit : c'est elle qui
+  // identifie le bâtiment depuis l'avenue.
   const enseigne = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 0.82),
     new THREE.MeshStandardMaterial({ map: texturePoste(), roughness: 0.5 }));
   enseigne.position.set(0, 2.95, W / 2 + 0.08);
   g.add(enseigne);
+  const grandesLettres = (() => {
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 160;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, 1024, 160);
+    ctx.fillStyle = '#003b7f';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 118px Helvetica, Arial, sans-serif';
+    ctx.fillText('LA POSTE', 512, 84);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const inscription = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(L * 0.72, 9), 1.15),
+    new THREE.MeshStandardMaterial({
+      map: grandesLettres, transparent: true, alphaTest: 0.2, roughness: 0.8,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
+    }));
+  // Calée juste sous la corniche, au-dessus des portes-fenêtres de l'étage.
+  inscription.position.set(0, 6.3, W / 2 + 0.06);
+  g.add(inscription);
   // Boîte aux lettres jaune sur rue : la signature d'un bureau de poste.
   const bal = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.1, 0.4),
     new THREE.MeshStandardMaterial({ color: 0xf5c500, roughness: 0.55 }));
@@ -1876,7 +1904,10 @@ export function buildLandmarks(data, relief, roadY) {
   const ANGLES_ARRONDIS = [
     // Immeuble abritant Vapozen et le Centre de Beauté Fanny, à l'angle du
     // carrefour de la mairie : R+1 sur rez-de-chaussée commercial.
-    { x: 15.2, z: 85.5, longueur: 21, largeur: 11, cap: 0.15, hauteur: 8.4 },
+    // Recalé sur la boîte orientée du bâtiment BD TOPO 1120 : l'ancien cap en
+    // dur (0,15) était perpendiculaire au cap mesuré (-1,44), le grand axe de
+    // l'immeuble barrait la rue.
+    { x: 16.8, z: 87.6, longueur: 18.7, largeur: 11, cap: 1.442, hauteur: 8.4 },
   ];
   for (const a of ANGLES_ARRONDIS) {
     // Altitude d'assise : on retient le point le plus BAS sous l'emprise. Le
