@@ -15,7 +15,6 @@ import {
   Scene,
   ShadowGenerator,
   SSAO2RenderingPipeline,
-  StandardMaterial,
   UniversalCamera,
   Vector3,
 } from '@babylonjs/core';
@@ -166,26 +165,16 @@ function createEnvironment(scene: Scene, probeMeshes: Mesh[]): void {
   // Contrainte GPU : les maillages rendus DANS la sonde ne doivent jamais
   // échantillonner l'environnement qu'elle est en train d'écrire, sous peine
   // de boucle de rétroaction (GL_INVALID_OPERATION). La sonde ne voit donc que
-  // des matériaux Standard sans texture de réflexion : le ciel analytique et
-  // un disque de sol en couleur diffuse.
-  const horizonGround = MeshBuilder.CreateDisc('horizon-ground', { radius: 2400, tessellation: 48 }, scene);
-  horizonGround.rotation.x = Math.PI / 2;
-  horizonGround.position.y = -6;
-  const groundMaterial = new StandardMaterial('horizon-ground-material', scene);
-  groundMaterial.diffuseColor = Color3.FromHexString('#7d8a5c');
-  groundMaterial.specularColor = Color3.Black();
-  groundMaterial.backFaceCulling = false;
-  groundMaterial.freeze();
-  horizonGround.material = groundMaterial;
-  horizonGround.isPickable = false;
-
+  // le ciel analytique, dont la moitié basse (sous l'horizon) fournit la
+  // composante sombre du sol. Un disque de sol dédié a été essayé puis retiré :
+  // rendu dans la vue principale, il recouvrait le ciel selon l'angle de
+  // caméra, pour un gain d'IBL imperceptible.
   const probe = new ReflectionProbe('environnement', 128, scene, true);
   probe.position.set(0, 14, 0);
   for (const mesh of probeMeshes) {
     if (mesh.material && mesh.material instanceof PBRMaterial) continue;
     probe.renderList!.push(mesh);
   }
-  probe.renderList!.push(horizonGround);
   probe.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
   scene.environmentTexture = probe.cubeTexture;
   scene.environmentIntensity = .85;

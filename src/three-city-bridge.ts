@@ -23,6 +23,7 @@ import { VoituresGarees } from './three-city/parkedcars.js';
 import { parsePOI } from './three-city/poi.js';
 import { buildSignage } from './three-city/signage.js';
 import { pointsAltitude, Terrain } from './three-city/terrain.js';
+import { poserAnisotropie } from './three-city/textures.js';
 import { buildWorld, GARDE_SOL, ROAD_Y } from './three-city/world.js';
 
 type AnyRecord = Record<string, any>;
@@ -116,7 +117,9 @@ class ThreeCityConverter {
     texture.uOffset = source.offset.x;
     texture.vOffset = source.offset.y;
     texture.hasAlpha = false;
-    texture.anisotropicFilteringLevel = 8;
+    // 16 : le maximum des GPU Apple Silicon. Le gain se voit surtout sur la
+    // chaussée vue en fuyante, dont la texture se répète des dizaines de fois.
+    texture.anisotropicFilteringLevel = 16;
     this.textures.set(source, texture);
     return texture;
   }
@@ -336,6 +339,9 @@ export async function buildFaithfulArtix(
   progress?: (percent: number, message: string) => Promise<void>,
 ): Promise<FaithfulCityResult> {
   const roofs = sources.roofs?.toits?.length ? sources.roofs : sources.roofsLegacy;
+  // Les textures canvas de la ville sont créées pendant buildWorld : fixer
+  // l'anisotropie maximale avant, sinon elles restent au réglage par défaut.
+  (poserAnisotropie as any)(16);
   const data = parseOSM(sources.osm) as AnyRecord;
   const bdtopo = (parseBDTopo as any)(sources.buildings, roofs, sources.facades, sources.panoramax) as AnyRecord;
   data.buildings = removeModeledBuildingDuplicates(data, bdtopo.batiments);

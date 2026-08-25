@@ -405,6 +405,10 @@ export function buildWorld(scene, data) {
     new THREE.PlaneGeometry(TERRAIN_TAILLE, TERRAIN_TAILLE, TERRAIN_RES, TERRAIN_RES),
     new THREE.MeshStandardMaterial({
       map: grassTexture(), color: 0xb8cf94, roughness: 1,
+      // Micro-relief du couvert herbeux, presque invisible de face mais qui
+      // supprime l'aspect « nappe » du sol au soleil rasant.
+      bumpMap: (() => { const t = grassTexture(); t.colorSpace = THREE.NoColorSpace; return t; })(),
+      bumpScale: 0.3,
       side: THREE.DoubleSide,
     }),
   );
@@ -780,6 +784,9 @@ export function buildWorld(scene, data) {
   const roadMesh = meshFromArrays(roadPos, roadUv, roadNrm,
     new THREE.MeshStandardMaterial({
       map: asphalt, roughnessMap: asphaltRug, roughness: 1,
+      // Relief du gravillon : c'est lui qui fait accrocher la lumière rasante
+      // sur la chaussee vue en fuyante, la surface la plus regardee du jeu.
+      bumpMap: carteRelief(asphalt), bumpScale: 0.22,
       color: 0xaaa8a4, side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
     }));
@@ -1223,6 +1230,11 @@ export function buildWorld(scene, data) {
   // teinte vient du matériau réel de chaque bâtiment (BD TOPO), il n'est donc
   // plus possible de regrouper par palette fixe.
   const wallPos2 = [], wallCol = [], wallUv = [];
+  // Façades en pierre apparente : meulière et pierre des fichiers fonciers,
+  // plus les murs dont l'analyse Panoramax mesure un grain de parement élevé
+  // (galets ou moellons non enduits). Elles reçoivent la texture de galets du
+  // gave au lieu de l'enduit lisse, ce que la teinte seule ne peut pas rendre.
+  const pierrePos = [], pierreCol = [], pierreUv = [];
   const roofPos = [], roofCol = [], roofUv = [];
   // Superstructures de toiture : souches de cheminée, lucarnes, blocs de
   // ventilation. Collectées ici pendant la boucle des bâtiments, instanciées
@@ -1441,9 +1453,19 @@ export function buildWorld(scene, data) {
     // Facteur d'assombrissement à une altitude donnée, 1 au niveau du sol.
     const pied = (y) => Math.max(0, 1 - (y - BASE_Y) / PIED);
     // Écrit la couleur d'un sommet de façade, salissure comprise.
+    // Un grain fort sur une teinte saturée est un bardage peint ou un tag de
+    // couleur, pas un appareil de pierre : la pierre et le galet sont presque
+    // gris. On mesure la saturation sur la teinte finale du mur.
+    const satMur = Math.max(wr, wg, wb) - Math.min(wr, wg, wb);
+    const enPierre = satMur < 0.09
+      && (b.murs === 'pierre' || b.murs === 'meuliere'
+        || (b.grain != null && b.grain > 33));
+    const mPos = enPierre ? pierrePos : wallPos2;
+    const mCol = enPierre ? pierreCol : wallCol;
+    const mUv = enPierre ? pierreUv : wallUv;
     const poserMur = (y) => {
       const t = pied(y);
-      wallCol.push(
+      mCol.push(
         wr + (solr - wr) * t,
         wg + (solg - wg) * t,
         wb + (solb - wb) * t,
@@ -1484,12 +1506,12 @@ export function buildWorld(scene, data) {
       const paliers = yMid < top - 0.05 ? [BASE_Y, yMid, top] : [BASE_Y, top];
       for (let p = 0; p < paliers.length - 1; p++) {
         const ya = paliers[p], yb = paliers[p + 1];
-        wallPos2.push(x1, ya, z1, x2, ya, z2, x2, yb, z2);
-        wallPos2.push(x1, ya, z1, x2, yb, z2, x1, yb, z1);
+        mPos.push(x1, ya, z1, x2, ya, z2, x2, yb, z2);
+        mPos.push(x1, ya, z1, x2, yb, z2, x1, yb, z1);
         poserMur(ya); poserMur(ya); poserMur(yb);
         poserMur(ya); poserMur(yb); poserMur(yb);
         const va = (ya - BASE_Y) / 3, vb = (yb - BASE_Y) / 3;
-        wallUv.push(0, va, len / 3, va, len / 3, vb, 0, va, len / 3, vb, 0, vb);
+        mUv.push(0, va, len / 3, va, len / 3, vb, 0, va, len / 3, vb, 0, vb);
       }
 
       // Mur = obstacle solide.
@@ -2057,6 +2079,29 @@ export function buildWorld(scene, data) {
     // Pas de castShadow : la passe d'ombre redessinerait les 3 500 bâtiments
     // à chaque frame, pour un gain visuel marginal en vue de conduite.
     m.name = 'murs';
+    m.receiveShadow = true;
+    group.add(m);
+  }
+
+  if (pierrePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pierrePos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(pierreCol, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(pierreUv, 2));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Pierre apparente : galets du gave, l'appareil dominant du bâti ancien de
+    // la plaine. La texture, en niveaux de gris, se multiplie par la teinte
+    // relevée de chaque façade ; le relief accroche la lumière rasante.
+    const galetsFacade = texturerGalets(256);
+    // Les UV de mur comptent une répétition tous les 3 m : on resserre le
+    // motif pour des galets d'une vingtaine de centimètres.
+    galetsFacade.repeat.set(2.2, 2.2);
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.94, side: THREE.DoubleSide,
+      map: galetsFacade, bumpMap: carteRelief(galetsFacade), bumpScale: 0.55,
+    }));
+    m.name = 'murs-pierre';
     m.receiveShadow = true;
     group.add(m);
   }
@@ -2683,6 +2728,49 @@ function plantTrees(data, relief = null) {
       }
     }
   }
+  // Ripisylve : saules et peupliers le long du gave de Pau, de ses canaux et
+  // des plans d'eau. C'est la végétation qui identifie les saligues sur les
+  // photographies du lac d'Artix : silhouettes tombantes gris-vert des saules,
+  // fuseaux sombres des peupliers, très différentes des platanes du bourg.
+  for (const w of data.water ?? []) {
+    if (w.river) {
+      for (let i = 0; i < w.pts.length - 1; i++) {
+        const [x1, z1] = w.pts[i], [x2, z2] = w.pts[i + 1];
+        const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+        if (len < 4) continue;
+        const nx = -dz / len, nz = dx / len;
+        const n = Math.max(1, Math.floor(len / 13));
+        for (let k = 0; k <= n; k++) {
+          const t = k / n;
+          const seed = Math.abs(x1 * 23 + z1 * 41 + k * 7);
+          if (hash(seed) > 0.72) continue;
+          const cote = hash(seed + 2) > 0.5 ? 1 : -1;
+          const off = (w.width ?? 6) / 2 + 2 + hash(seed + 4) * 4;
+          const px = x1 + dx * t + nx * off * cote;
+          const pz = z1 + dz * t + nz * off * cote;
+          const saule = hash(seed + 6) < 0.6;
+          positions.push([px, pz,
+            saule ? 5.5 + hash(seed + 8) * 3 : 11 + hash(seed + 8) * 6,
+            false, saule ? 'saule' : 'peuplier']);
+        }
+      }
+    } else {
+      // Berges d'un plan d'eau : arbres semés sur le contour, avec un léger
+      // retrait aléatoire qui casse l'alignement.
+      for (let i = 0; i < w.pts.length; i++) {
+        const [x1, z1] = w.pts[i];
+        const seed = Math.abs(x1 * 31 + z1 * 13 + i);
+        if (hash(seed) > 0.5) continue;
+        const saule = hash(seed + 3) < 0.65;
+        positions.push([
+          x1 + (hash(seed + 5) - 0.5) * 7,
+          z1 + (hash(seed + 7) - 0.5) * 7,
+          saule ? 5 + hash(seed + 9) * 3 : 10 + hash(seed + 9) * 6,
+          false, saule ? 'saule' : 'peuplier']);
+      }
+    }
+  }
+
   // Arbres cartographiés un par un dans OSM : 415 à Artix, à leur position
   // réelle. Ils remplacent avantageusement les plantations aléatoires le long
   // des routes, qui tombaient parfois en plein champ ou sur un trottoir.
@@ -2875,7 +2963,7 @@ function plantTrees(data, relief = null) {
   const col = new THREE.Color();
   const AXE_Y = new THREE.Vector3(0, 1, 0);
 
-  positions.forEach(([x, z, h, aligne], i) => {
+  positions.forEach(([x, z, h, aligne, essence], i) => {
     // Pied posé sur le terrain : sans cela les arbres d'un coteau flottent.
     const sol = relief ? relief.hauteurRoute(x, z) : 0;
     // Les arbres d'alignement d'Artix sont des platanes taillés en tête de
@@ -2886,7 +2974,10 @@ function plantTrees(data, relief = null) {
     // Le fût monte jusqu'à l'insertion de la charpente, pas plus haut. À 0,86
     // il ressortait au-dessus du feuillage comme un mât de parasol, la
     // couronne étant centrée plus haut et fortement aplatie.
-    const hautFut = h * (aligne ? 0.62 : 0.55);
+    // Ripisylve : le saule porte une couronne large presque posée au sol, le
+    // peuplier un fuseau étroit qui monte sur toute la hauteur.
+    const saule = essence === 'saule', peuplier = essence === 'peuplier';
+    const hautFut = h * (aligne ? 0.62 : saule ? 0.32 : peuplier ? 0.22 : 0.55);
     // Rayon proportionnel à la hauteur : l'élancement d'un platane adulte
     // tourne autour de 15 pour 1 (hauteur totale sur diamètre). Le sujet
     // d'alignement, régulièrement recépé, porte un fût un peu plus fort que
@@ -2910,7 +3001,7 @@ function plantTrees(data, relief = null) {
     else col.setHSL(0.08, 0.18 + e * 0.10, 0.09 + e * 0.05);
     trunks.setColorAt(i, col);
     branches.setColorAt(i, col);
-    const r = h * (aligne ? 0.42 : 0.34);
+    const r = h * (aligne ? 0.42 : saule ? 0.52 : peuplier ? 0.14 : 0.34);
     // Charpente greffée au sommet du fût, à l'échelle de la couronne qu'elle
     // porte : les branches doivent mordre dans le feuillage, sinon le raccord
     // se voit autant qu'avant. Une rotation propre à chaque arbre évite que
@@ -2923,14 +3014,14 @@ function plantTrees(data, relief = null) {
     q.identity();
     // Aplatissement : 0,55 donne la couronne en plateau de la taille en
     // têtard, 0,95 le houppier presque sphérique d'un arbre libre.
-    const aplat = aligne ? 0.62 : 0.95;
+    const aplat = aligne ? 0.62 : saule ? 0.78 : peuplier ? 3.4 : 0.95;
     // Centre de couronne abaissé : à 1,02 de la hauteur, le houppier coiffait
     // le fût sans le rejoindre. Il doit envelopper le haut de la charpente,
     // les branches ressortant en périphérie et non par-dessus.
     // Rotation propre à chaque arbre : les trois lobes étant décalés, une
     // orientation commune rendrait le motif répétitif immédiatement lisible.
     q.setFromAxisAngle(AXE_Y, hash(i * 1.9) * Math.PI * 2);
-    m.compose(new THREE.Vector3(x, sol + h * (aligne ? 0.84 : 0.76), z), q,
+    m.compose(new THREE.Vector3(x, sol + h * (aligne ? 0.84 : saule ? 0.58 : peuplier ? 0.55 : 0.76), z), q,
       new THREE.Vector3(r, r * aplat, r));
     leaves.setMatrixAt(i, m);
     q.identity();
@@ -2938,7 +3029,13 @@ function plantTrees(data, relief = null) {
     // conifères d'ornement (cèdres bleus) y côtoient les feuillus, avec des
     // verts nettement plus clairs et plus gris que le vert foncé uniforme.
     const t = hash(i * 3.7);
-    if (t > 0.82) {
+    if (saule) {
+      // Feuillage argenté du saule blanc, la teinte des saligues au soleil.
+      col.setHSL(0.23, 0.14 + t * 0.08, 0.46 + t * 0.10);
+    } else if (peuplier) {
+      // Vert profond et mat du peuplier noir.
+      col.setHSL(0.27, 0.30 + t * 0.10, 0.26 + t * 0.07);
+    } else if (t > 0.82) {
       // Conifère bleuté : le cèdre du carrefour est un repère du bourg.
       col.setHSL(0.34, 0.14 + t * 0.08, 0.44 + t * 0.10);
     } else if (t > 0.55) {
