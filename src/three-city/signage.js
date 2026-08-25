@@ -749,6 +749,73 @@ export function buildSignage(data, relief, roadY) {
       enseigne.rotation.y = Math.atan2(nx, nz);
       enseigne.renderOrder = 3;
       group.add(enseigne);
+
+      // Enseigne drapeau, perpendiculaire à la façade : c'est elle qu'on lit
+      // en arrivant dans l'axe de la rue, le bandeau n'étant visible que de
+      // face. La pharmacie porte sa croix verte, lumineuse comme la vraie ;
+      // les autres commerces un carré à leur teinte avec l'initiale du nom.
+      {
+        const estPharmacie = e.categorie === 'pharmacy'
+          || /pharmacie/i.test(e.nom ?? '');
+        const drapeauTex = (() => {
+          const T = 128;
+          const c = document.createElement('canvas');
+          c.width = c.height = T;
+          const ctx = c.getContext('2d');
+          if (estPharmacie) {
+            ctx.fillStyle = '#0d8a3c';
+            ctx.fillRect(0, 0, T, T);
+            ctx.fillStyle = '#e9fff0';
+            const br = T * 0.17;
+            ctx.fillRect(T / 2 - br / 2, T * 0.14, br, T * 0.72);
+            ctx.fillRect(T * 0.14, T / 2 - br / 2, T * 0.72, br);
+          } else {
+            ctx.fillStyle = '#' + teinte.toString(16).padStart(6, '0');
+            ctx.fillRect(0, 0, T, T);
+            ctx.strokeStyle = '#d8cfb8';
+            ctx.lineWidth = 5;
+            ctx.strokeRect(5, 5, T - 10, T - 10);
+            ctx.fillStyle = '#efe8d8';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `bold ${T * 0.58}px Georgia, serif`;
+            ctx.fillText((e.nom ?? '?').trim().charAt(0).toUpperCase(), T / 2, T / 2 + 4);
+          }
+          const t2 = new THREE.CanvasTexture(c);
+          t2.colorSpace = THREE.SRGBColorSpace;
+          t2.anisotropy = anisotropie();
+          return t2;
+        })();
+        const drapeauMat = new THREE.MeshStandardMaterial({
+          map: drapeauTex, roughness: 0.5, side: THREE.FrontSide,
+          // La croix de pharmacie est un caisson lumineux : émission portée
+          // par la texture, active jour et nuit comme les vraies.
+          emissive: estPharmacie ? 0xffffff : 0x000000,
+          emissiveMap: estPharmacie ? drapeauTex : null,
+          emissiveIntensity: estPharmacie ? 0.7 : 0,
+        });
+        // Ancrage à l'extrémité du bandeau, en saillie de 70 cm.
+        const axL = px + ux * (largeur / 2 + 0.25);
+        const azL = pz + uz * (largeur / 2 + 0.25);
+        const bras = new THREE.Mesh(
+          new THREE.BoxGeometry(0.06, 0.06, 0.72),
+          new THREE.MeshStandardMaterial({ color: 0x3a3f45, roughness: 0.5, metalness: 0.5 }),
+        );
+        bras.position.set(axL + nx * 0.36, sol + 3.32, azL + nz * 0.36);
+        bras.rotation.y = Math.atan2(nx, nz);
+        group.add(bras);
+        // Deux faces dos à dos : en DoubleSide, le verso serait en miroir.
+        for (const face of [1, -1]) {
+          const drapeau = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.56), drapeauMat);
+          drapeau.position.set(
+            axL + nx * 0.52 + ux * 0.012 * face,
+            sol + 2.98,
+            azL + nz * 0.52 + uz * 0.012 * face,
+          );
+          drapeau.rotation.y = Math.atan2(ux, uz) + (face > 0 ? 0 : Math.PI);
+          group.add(drapeau);
+        }
+      }
     }
   }
 
@@ -801,40 +868,52 @@ export function buildSignage(data, relief, roadY) {
     }
   }
 
-  // ---- Poteaux électriques des rues résidentielles ------------------------
-  // Hors du centre-bourg enfoui, la distribution court sur poteaux béton ou
-  // bois : ils rythment toutes les rues de lotissement sur les panoramiques.
-  // Un poteau tous les 55 m environ, d'un seul côté de la voie.
+  // ---- Poteaux électriques et téléphoniques -------------------------------
+  // Positions RÉELLES quand le relevé Panoramax existe : chaque poteau a été
+  // vu comme un bâtonnet sombre contre le ciel depuis plusieurs panoramiques,
+  // puis triangulé (scripts/panoramax-poteaux.mjs). À défaut, un semis
+  // heuristique dans les lotissements, comme avant le relevé.
   {
     const poteauGeo = new THREE.CylinderGeometry(0.07, 0.1, 7.4, 6);
     const traverseGeo = new THREE.BoxGeometry(1.0, 0.07, 0.07);
     const positionsPoteaux = [];
-    for (const r of data.roads) {
-      if (!r.drivable) continue;
-      if (!['residential', 'unclassified'].includes(r.kind)) continue;
-      const [x0, z0] = r.pts[0];
-      const dist = Math.hypot(x0, z0);
-      // Le centre-bourg est desservi en souterrain : pas de poteaux à moins
-      // de 220 m de la place.
-      if (dist < 220 || dist > 1100) continue;
-      let cumul = 30;   // premier poteau décalé de l'entrée de rue
-      for (let i = 0; i < r.pts.length - 1; i++) {
-        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
-        const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
-        if (len < 1) continue;
-        const nx = -dz / len, nz = dx / len;
-        let d = 55 - cumul;
-        while (d < len) {
-          const t = d / len;
-          const graine = Math.abs(x1 * 7.3 + z1 * 3.1 + d);
-          const px = x1 + dx * t + nx * (r.width / 2 + 1.15);
-          const pz = z1 + dz * t + nz * (r.width / 2 + 1.15);
-          positionsPoteaux.push([px, pz, Math.atan2(dx, dz), hash(graine)]);
-          d += 55;
+    const releves = data.poteauxReels?.poteaux ?? [];
+    if (releves.length >= 20) {
+      for (const q of releves) {
+        // Traverse perpendiculaire à la voie la plus proche, comme les vrais
+        // supports dont la ligne suit la rue.
+        const r = routeProche(q.x, q.z, 30);
+        positionsPoteaux.push([q.x, q.z, r.cap, hash(Math.abs(q.x * 7.3 + q.z * 3.1))]);
+      }
+    } else {
+      for (const r of data.roads) {
+        if (!r.drivable) continue;
+        if (!['residential', 'unclassified'].includes(r.kind)) continue;
+        const [x0, z0] = r.pts[0];
+        const dist = Math.hypot(x0, z0);
+        if (dist < 220 || dist > 1100) continue;
+        let cumul = 30;
+        for (let i = 0; i < r.pts.length - 1; i++) {
+          const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+          const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+          if (len < 1) continue;
+          const nx = -dz / len, nz = dx / len;
+          let d = 55 - cumul;
+          while (d < len) {
+            const t = d / len;
+            const graine = Math.abs(x1 * 7.3 + z1 * 3.1 + d);
+            positionsPoteaux.push([
+              x1 + dx * t + nx * (r.width / 2 + 1.15),
+              z1 + dz * t + nz * (r.width / 2 + 1.15),
+              Math.atan2(dx, dz), hash(graine)]);
+            d += 55;
+          }
+          cumul = (cumul + len) % 55;
         }
-        cumul = (cumul + len) % 55;
       }
     }
+    // Altitude de chaque tête, mémorisée pour les câbles.
+    const tetes = positionsPoteaux.map(([px, pz]) => solEn(relief, px, pz, roadY) + 7.05);
     if (positionsPoteaux.length) {
       const boisMat = new THREE.MeshStandardMaterial({ color: 0x74675a, roughness: 1 });
       const poteaux = new THREE.InstancedMesh(poteauGeo, boisMat, positionsPoteaux.length);
@@ -848,7 +927,6 @@ export function buildSignage(data, relief, roadY) {
         m.compose(new THREE.Vector3(px, sol + 3.7, pz), q,
           new THREE.Vector3(1, 0.94 + g * 0.12, 1));
         poteaux.setMatrixAt(i, m);
-        // La traverse en tête, perpendiculaire à la rue, porte les isolateurs.
         m.compose(new THREE.Vector3(px, sol + 7.1, pz), q, new THREE.Vector3(1, 1, 1));
         traverses.setMatrixAt(i, m);
       });
@@ -858,6 +936,84 @@ export function buildSignage(data, relief, roadY) {
       traverses.castShadow = false;
       group.add(poteaux);
       group.add(traverses);
+    }
+
+    // ---- Câbles entre poteaux --------------------------------------------
+    // Chaînage voie par voie : les poteaux à moins de 13 m d'une même rue
+    // sont triés par abscisse curviligne et reliés deux à deux. La caténaire
+    // est un ruban vertical fin qui fléchit d'une soixantaine de centimetres,
+    // double pour figurer la paire de conducteurs.
+    if (positionsPoteaux.length >= 2) {
+      const paires = new Set();
+      const liens = [];
+      for (const r of data.roads) {
+        if (!r.drivable) continue;
+        // Abscisse curviligne cumulée de chaque poteau proche de la voie.
+        const surVoie = [];
+        let base = 0;
+        for (let i = 0; i < r.pts.length - 1; i++) {
+          const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+          const dx = x2 - x1, dz = z2 - z1;
+          const l2 = dx * dx + dz * dz;
+          const len = Math.sqrt(l2);
+          if (len < 0.5) continue;
+          positionsPoteaux.forEach(([px, pz], idx) => {
+            if (Math.abs(px - x1) > len + 20 || Math.abs(pz - z1) > len + 20) return;
+            let t = ((px - x1) * dx + (pz - z1) * dz) / l2;
+            if (t < -0.05 || t > 1.05) return;
+            t = Math.max(0, Math.min(1, t));
+            const d = Math.hypot(px - (x1 + dx * t), pz - (z1 + dz * t));
+            if (d < 13) surVoie.push({ idx, s: base + t * len, d });
+          });
+          base += len;
+        }
+        surVoie.sort((a, b) => a.s - b.s);
+        for (let i = 0; i < surVoie.length - 1; i++) {
+          const a = surVoie[i], b = surVoie[i + 1];
+          if (a.idx === b.idx) continue;
+          const ecart = b.s - a.s;
+          if (ecart < 12 || ecart > 85) continue;
+          const cle = a.idx < b.idx ? `${a.idx}-${b.idx}` : `${b.idx}-${a.idx}`;
+          if (paires.has(cle)) continue;
+          paires.add(cle);
+          liens.push([a.idx, b.idx]);
+        }
+      }
+      const cablePos = [];
+      const SEGMENTS = 6, EPAISSEUR = 0.04, FLECHE = 0.6;
+      for (const [ia, ib] of liens) {
+        const [xa, za] = positionsPoteaux[ia];
+        const [xb, zb] = positionsPoteaux[ib];
+        const ya = tetes[ia], yb = tetes[ib];
+        const dx = xb - xa, dz = zb - za;
+        const len = Math.hypot(dx, dz);
+        const nx = -dz / len, nz = dx / len;   // décalage entre les deux fils
+        for (const cote of [-0.18, 0.18]) {
+          let px1 = xa + nx * cote, pz1 = za + nz * cote, py1 = ya;
+          for (let sg = 1; sg <= SEGMENTS; sg++) {
+            const t = sg / SEGMENTS;
+            const px2 = xa + dx * t + nx * cote;
+            const pz2 = za + dz * t + nz * cote;
+            // Parabole : flèche maximale au centre de la portée.
+            const py2 = ya + (yb - ya) * t - FLECHE * 4 * t * (1 - t);
+            cablePos.push(
+              px1, py1, pz1, px2, py2, pz2, px2, py2 - EPAISSEUR, pz2,
+              px1, py1, pz1, px2, py2 - EPAISSEUR, pz2, px1, py1 - EPAISSEUR, pz1,
+            );
+            px1 = px2; pz1 = pz2; py1 = py2;
+          }
+        }
+      }
+      if (cablePos.length) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(cablePos, 3));
+        g.computeVertexNormals();
+        g.computeBoundingSphere();
+        // Conducteur sombre mat : de loin un trait, exactement ce qu'il faut.
+        group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+          color: 0x26272a, roughness: 0.9, side: THREE.DoubleSide,
+        })));
+      }
     }
   }
 

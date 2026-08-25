@@ -40,6 +40,7 @@ export interface FaithfulCitySources {
   panoramax: AnyRecord | null;
   facadesPhoto: AnyRecord | null;
   sols: AnyRecord | null;
+  poteaux: AnyRecord | null;
 }
 
 export interface FaithfulCityResult {
@@ -439,6 +440,9 @@ export async function buildFaithfulArtix(
   // Sols mesurés (chaussées, parkings, usure des passages) : buildWorld et
   // buildSignage s'en servent pour caler leurs teintes sur les photos.
   data.sols = sources.sols ?? null;
+  // Poteaux triangulés depuis les panoramiques : positions réelles des
+  // supports aériens, consommées par buildSignage.
+  data.poteauxReels = sources.poteaux ?? null;
   const bdtopo = (parseBDTopo as any)(sources.buildings, roofs, sources.facades, sources.panoramax) as AnyRecord;
   data.buildings = removeModeledBuildingDuplicates(data, bdtopo.batiments);
   data.altRef = bdtopo.altRef;
