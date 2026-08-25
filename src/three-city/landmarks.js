@@ -1026,39 +1026,72 @@ function construireImmeubleRue(dims) {
   rdc.position.y = H_RDC / 2;
   g.add(rdc);
 
-  // Devantures : un bandeau sombre appliqué sur la façade rue, interrompu par
-  // les trumeaux entre commerces.
-  const nCommerces = Math.max(3, Math.round(L / 9));
-  const largCom = (L / nCommerces) * 0.78;
-  const nomsCommerces = ['AU COMPTOIR', 'MAISON DE LA PRESSE', 'TABAC', 'CAFÉ'];
-  const fondsEnseignes = ['#263b46', '#a24f31', '#4f6d5d', '#6f3941'];
-  for (let i = 0; i < nCommerces; i++) {
-    const x = -L / 2 + (L / nCommerces) * (i + 0.5);
-    const dev = new THREE.Mesh(
-      new THREE.BoxGeometry(largCom, 2.42, 0.12), devantures[i % devantures.length]);
-    dev.position.set(x, 1.35, l / 2 + 0.06);
+  // Devantures réelles de l'immeuble, relevées sur les panoramiques et
+  // positionnées par projection des POI sur le grand axe : Au Comptoir à
+  // l'extrémité côté carrefour, la Maison de la Presse vers le milieu, la
+  // pizzeria à l'autre bout. La façade rue est le -z local (voir la rotation
+  // du bloc IMMEUBLES_RUE).
+  const DEVANTURES = [
+    { nom: 'AU COMPTOIR', sous: 'BRASSERIE', x: -12.7, larg: 8.5, fond: '#141618', encre: '#f2efe6' },
+    { nom: 'maison de la presse', sous: null, x: -1.5, larg: 7, fond: '#f2c11c', encre: '#123a6e' },
+    { nom: 'PIZZERIA', sous: null, x: 8.6, larg: 6.5, fond: '#5c2828', encre: '#f2e7d2' },
+  ];
+  const textureDeuxLignes = (d) => {
+    const Lc = 1024, Hc = 150;
+    const c = document.createElement('canvas');
+    c.width = Lc; c.height = Hc;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = d.fond;
+    ctx.fillRect(0, 0, Lc, Hc);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = d.encre;
+    if (d.sous) {
+      ctx.font = 'bold 64px Georgia, serif';
+      ctx.fillText(d.nom, Lc / 2, 50);
+      ctx.font = '600 36px Helvetica, Arial, sans-serif';
+      ctx.fillText(d.sous.split('').join(' '), Lc / 2, 114);
+    } else {
+      ctx.font = 'bold 72px Helvetica, Arial, sans-serif';
+      ctx.fillText(d.nom, Lc / 2, Hc / 2 + 4);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  };
+  const vitreCom = new THREE.MeshStandardMaterial({ color: 0x20282d, roughness: 0.22, metalness: 0.1 });
+  for (const d of DEVANTURES) {
+    // La position reste dans l'emprise même si le garde-fou a rétracté L.
+    const x = Math.max(-L / 2 + d.larg / 2 + 0.4, Math.min(L / 2 - d.larg / 2 - 0.4, d.x));
+    const fondMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(d.fond), roughness: 0.55,
+    });
+    const dev = new THREE.Mesh(new THREE.BoxGeometry(d.larg, 2.42, 0.12), fondMat);
+    dev.position.set(x, 1.35, -(l / 2 + 0.06));
     g.add(dev);
-
-    // Petits auvents colorés vus dans la rue principale : ils découpent la
-    // longue façade en boutiques distinctes et renforcent le style arcade.
-    const auvent = new THREE.Mesh(
-      new THREE.BoxGeometry(largCom * .92, .16, .7), devantures[(i + 1) % devantures.length]);
-    auvent.position.set(x, 2.66, l / 2 + .37);
-    auvent.rotation.x = -.09;
+    // Vitrines en retrait de part et d'autre de la porte.
+    for (const cote of [-1, 1]) {
+      const vitrine = new THREE.Mesh(new THREE.PlaneGeometry(d.larg * 0.32, 1.75), vitreCom);
+      vitrine.position.set(x + cote * d.larg * 0.24, 1.2, -(l / 2 + 0.13));
+      vitrine.rotation.y = Math.PI;
+      g.add(vitrine);
+    }
+    const porte = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.1), vitreCom);
+    porte.position.set(x, 1.06, -(l / 2 + 0.13));
+    porte.rotation.y = Math.PI;
+    g.add(porte);
+    // Casquette au-dessus du bandeau, dans le ton de la devanture.
+    const auvent = new THREE.Mesh(new THREE.BoxGeometry(d.larg * 0.96, 0.14, 0.65), fondMat);
+    auvent.position.set(x, 2.72, -(l / 2 + 0.35));
+    auvent.rotation.x = 0.09;
     g.add(auvent);
-
     const enseigne = new THREE.Mesh(
-      new THREE.PlaneGeometry(largCom * .82, .52),
-      new THREE.MeshStandardMaterial({
-        map: textureEnseigneCommerce(
-          nomsCommerces[i % nomsCommerces.length],
-          fondsEnseignes[i % fondsEnseignes.length],
-          '#f6efe3',
-        ),
-        roughness: .72, side: THREE.DoubleSide,
-      }),
+      new THREE.PlaneGeometry(d.larg * 0.9, 0.72),
+      new THREE.MeshStandardMaterial({ map: textureDeuxLignes(d), roughness: 0.6 }),
     );
-    enseigne.position.set(x, 2.52, l / 2 + .145);
+    enseigne.position.set(x, 2.28, -(l / 2 + 0.145));
+    enseigne.rotation.y = Math.PI;
     g.add(enseigne);
   }
 
@@ -2153,6 +2186,9 @@ export function buildLandmarks(data, relief, roadY) {
     sol -= 0.3;
     const dims = retracterHorsChaussee(b.x, b.z, b.longueur, b.largeur, -b.cap);
     const imm = construireImmeubleRue(dims);
+    // Les devantures sont construites sur le -z local, qui correspond à la
+    // façade rue (normale mesurée (-0.966, -0.259)) : les génériques d'avant
+    // étaient bâties sur +z et regardaient la cour.
     imm.position.set(b.x, sol, b.z);
     imm.rotation.y = rot;
     group.add(imm);
@@ -2249,10 +2285,11 @@ export function buildLandmarks(data, relief, roadY) {
     station.rotation.y = -1.248;
     group.add(station);
 
-    // Terrasse d'Au Comptoir : au pied de la façade sud de l'immeuble 1081
-    // recentré, normale vers la rue (le POI du bar est sur le trottoir).
-    const terrasse = construireTerrasse(0.03, -0.999);
-    terrasse.position.set(44.8, (relief ? relief.hauteurRoute(44.8, -13.6) : 0) + roadY, -13.6);
+    // Terrasse d'Au Comptoir : au droit du bar (projection du POI sur le
+    // grand axe de l'immeuble), au pied de la façade rue, tables vers le
+    // trottoir. Normale de façade mesurée sur l'emprise.
+    const terrasse = construireTerrasse(-0.966, -0.259);
+    terrasse.position.set(42.5, (relief ? relief.hauteurRoute(42.5, -21.8) : 0) + roadY, -21.8);
     group.add(terrasse);
 
     // La Poste : bâtiment BD TOPO le plus proche du POI, remplacé par le
