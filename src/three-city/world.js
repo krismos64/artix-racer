@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { couleurMur, couleurToit } from './bdtopo.js';
-import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce, texturerGalets,
+import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce, texturerGalets, texturerFeuilles,
   texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage,
   texturerNormalesEau, bruit,
   relief as carteRelief, anisotropie } from './textures.js';
@@ -3054,7 +3054,16 @@ function plantTrees(data, relief = null) {
   const trunkMat = new THREE.MeshStandardMaterial({
     color: 0xffffff, map: ecorce, bumpMap: carteRelief(ecorce), bumpScale: 0.6, roughness: 1,
   });
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f6b30, roughness: 1, flatShading: true });
+  // Feuillage découpé par test alpha : la texture d'amas de feuilles dentelle
+  // la silhouette des lobes et rend le houppier poreux, le ciel passant par
+  // les vides. DoubleSide obligatoire : les trous montrent l'intérieur de la
+  // couronne. La teinte d'essence reste portée par la couleur d'instance.
+  const feuilles = texturerFeuilles(256);
+  feuilles.repeat.set(2, 2);
+  const leafMat = new THREE.MeshStandardMaterial({
+    color: 0x3f6b30, roughness: 1, flatShading: true,
+    map: feuilles, alphaTest: 0.5, side: THREE.DoubleSide,
+  });
 
   // Cyprès du centre-bourg. Les photographies de rue en montrent plusieurs
   // autour du carrefour de la mairie : une silhouette conique sombre et

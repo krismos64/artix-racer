@@ -436,6 +436,59 @@ export function texturerGalets(taille = 256) {
   return tex;
 }
 
+// Feuillage : amas de feuilles sur fond transparent, pour découper les
+// couronnes d'arbres par test alpha.
+//
+// Appliquée sur les lobes icosaédriques existants, cette texture fait deux
+// choses à la fois : elle dentelle la silhouette (les triangles du bord ne se
+// lisent plus comme des arêtes polygonales mais comme des paquets de
+// feuilles), et elle rend le houppier POREUX, le ciel passant par les vides
+// comme dans un arbre réel. Les feuilles sont dessinées en gris-vert clair :
+// le matériau multiplie par la couleur d'instance de chaque arbre, qui
+// continue de porter l'essence (platane, saule argenté, cèdre bleuté).
+export function texturerFeuilles(taille = 256) {
+  const c = canvas(taille);
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, taille, taille);
+  let s = 7717;
+  const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  // Amas d'abord : des grappes de feuilles autour de centres dispersés, la
+  // distribution réelle d'un houppier, plutôt qu'un semis uniforme qui se
+  // lirait comme du bruit.
+  const GRAPPES = 38;
+  for (let gp = 0; gp < GRAPPES; gp++) {
+    const gx = rnd() * taille, gy = rnd() * taille;
+    const nFeuilles = 18 + Math.floor(rnd() * 20);
+    for (let f = 0; f < nFeuilles; f++) {
+      const a = rnd() * Math.PI * 2;
+      const d = rnd() * taille * 0.09;
+      const fx = gx + Math.cos(a) * d, fy = gy + Math.sin(a) * d;
+      // Gamme claire : la texture MULTIPLIE la couleur d'instance, des
+      // feuilles en gris moyen assombrissaient toutes les couronnes d'un
+      // quart. Centrée vers le blanc, elle ne porte que la variation.
+      const teinte = 196 + rnd() * 59;
+      ctx.fillStyle = `rgb(${Math.round(teinte * 0.9)},${Math.round(teinte)},${Math.round(teinte * 0.82)})`;
+      ctx.save();
+      // Répétition propre : la feuille qui déborde est redessinée de l'autre
+      // côté par translation modulaire.
+      const px = ((fx % taille) + taille) % taille;
+      const py = ((fy % taille) + taille) % taille;
+      ctx.translate(px, py);
+      ctx.rotate(rnd() * Math.PI * 2);
+      ctx.beginPath();
+      const L = taille * (0.016 + rnd() * 0.02);
+      ctx.ellipse(0, 0, L, L * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = anisotropie();
+  return tex;
+}
+
 // Écorce : cannelures verticales et plaques de desquamation.
 //
 // Rendue en niveaux de gris, la teinte étant portée par la couleur d'instance
