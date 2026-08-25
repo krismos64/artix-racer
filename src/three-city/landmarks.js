@@ -1751,7 +1751,7 @@ function construirePoste(boite) {
   // L'emprise BD TOPO sous le POI est l'îlot entier (23 x 23 m) : le bureau
   // de poste réel n'en occupe que l'aile sur rue, environ 15 x 10 m sur les
   // panoramiques. Les cotes sont plafonnées en conséquence.
-  const L = Math.min(boite.longueur, 15), W = Math.min(boite.largeur, 10.5);
+  const L = Math.min(boite.longueur, 18), W = Math.min(boite.largeur, 11.5);
   const creme = new THREE.MeshStandardMaterial({ color: 0xefe9db, roughness: 0.85, side: THREE.DoubleSide });
   const gris = new THREE.MeshStandardMaterial({ color: 0x9c9c98, roughness: 0.9 });
   const blanc = new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.6 });
@@ -1823,10 +1823,13 @@ function construirePoste(boite) {
   // Caisson d'enseigne LA POSTE au-dessus de l'entrée, et l'inscription en
   // GRANDES lettres sur l'étage, comme peinte sur l'enduit : c'est elle qui
   // identifie le bâtiment depuis l'avenue.
-  const enseigne = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 0.82),
-    new THREE.MeshStandardMaterial({ map: texturePoste(), roughness: 0.5 }));
-  enseigne.position.set(0, 2.95, W / 2 + 0.08);
-  g.add(enseigne);
+  const enseigneMat = new THREE.MeshStandardMaterial({ map: texturePoste(), roughness: 0.5 });
+  for (const face of [-1, 1]) {
+    const enseigne = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 0.82), enseigneMat);
+    enseigne.position.set(0, 2.95, face * (W / 2 + 0.08));
+    enseigne.rotation.y = face > 0 ? 0 : Math.PI;
+    g.add(enseigne);
+  }
   const grandesLettres = (() => {
     const c = document.createElement('canvas');
     c.width = 1024; c.height = 160;
@@ -1842,14 +1845,18 @@ function construirePoste(boite) {
     t.anisotropy = anisotropie();
     return t;
   })();
-  const inscription = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(L * 0.72, 9), 1.15),
-    new THREE.MeshStandardMaterial({
-      map: grandesLettres, transparent: true, alphaTest: 0.2, roughness: 0.8,
-      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
-    }));
-  // Calée juste sous la corniche, au-dessus des portes-fenêtres de l'étage.
-  inscription.position.set(0, 6.3, W / 2 + 0.06);
-  g.add(inscription);
+  const lettresMat = new THREE.MeshStandardMaterial({
+    map: grandesLettres, transparent: true, alphaTest: 0.2, roughness: 0.8,
+    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
+  });
+  // Sur les DEUX longues façades : quel que soit le côté rue issu du calcul
+  // d'axes, l'inscription se lit depuis l'avenue. Calée sous la corniche.
+  for (const face of [-1, 1]) {
+    const inscription = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(L * 0.72, 11), 1.15), lettresMat);
+    inscription.position.set(0, 6.3, face * (W / 2 + 0.06));
+    inscription.rotation.y = face > 0 ? 0 : Math.PI;
+    g.add(inscription);
+  }
   // Boîte aux lettres jaune sur rue : la signature d'un bureau de poste.
   const bal = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.1, 0.4),
     new THREE.MeshStandardMaterial({ color: 0xf5c500, roughness: 0.55 }));
@@ -1861,6 +1868,42 @@ function construirePoste(boite) {
 export function buildLandmarks(data, relief, roadY) {
   const group = new THREE.Group();
   const traites = [];   // emprises à retirer des bâtiments ordinaires
+
+  // Garde-fou générique des modèles posés à la main : si un coin de la boîte
+  // mord une chaussée carrossable, les dimensions sont réduites par paliers
+  // (jusqu'à -28 %) jusqu'au dégagement. Les débords venaient toujours d'un
+  // écart entre l'emprise réelle en L et sa boîte englobante, ou d'un cap en
+  // dur erroné : ce garde-fou rend l'erreur inoffensive.
+  const retracterHorsChaussee = (x, z, longueur, largeur, rotY) => {
+    const mord = (L2, W2) => {
+      const ca = Math.cos(rotY), sa = Math.sin(rotY);
+      for (const su of [-1, 1]) {
+        for (const sv of [-1, 1]) {
+          const u = su * L2 / 2, v = sv * W2 / 2;
+          const px = x + u * ca + v * sa;
+          const pz = z - u * sa + v * ca;
+          for (const r of data.roads ?? []) {
+            if (!r.drivable) continue;
+            for (let i = 0; i < r.pts.length - 1; i++) {
+              const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+              if (Math.abs(x1 - px) > 60 && Math.abs(z1 - pz) > 60) continue;
+              const dx = x2 - x1, dz = z2 - z1;
+              const l2 = dx * dx + dz * dz;
+              if (l2 < 1e-6) continue;
+              let t = ((px - x1) * dx + (pz - z1) * dz) / l2;
+              t = Math.max(0, Math.min(1, t));
+              const ddx = px - (x1 + dx * t), ddz = pz - (z1 + dz * t);
+              if (ddx * ddx + ddz * ddz < (r.width / 2 + 0.35) ** 2) return true;
+            }
+          }
+        }
+      }
+      return false;
+    };
+    let k = 1;
+    while (k > 0.72 && mord(longueur * k, largeur * k)) k -= 0.04;
+    return { longueur: longueur * k, largeur: largeur * k };
+  };
 
   for (const b of data.landmarkSources ?? []) {
     if (b.type !== 'townhall') continue;
@@ -1924,8 +1967,8 @@ export function buildLandmarks(data, relief, roadY) {
     }
     // Léger enfoncement : ferme le joint avec le trottoir sur terrain irrégulier.
     sol -= 0.35;
-    const imm = construireAngleArrondi(
-      { longueur: a.longueur, largeur: a.largeur }, a.hauteur);
+    const dims = retracterHorsChaussee(a.x, a.z, a.longueur, a.largeur, a.cap);
+    const imm = construireAngleArrondi(dims, a.hauteur);
     imm.position.set(a.x, sol, a.z);
     imm.rotation.y = a.cap;
     group.add(imm);
@@ -2000,7 +2043,8 @@ export function buildLandmarks(data, relief, roadY) {
       }
     }
     sol -= 0.3;
-    const imm = construireImmeubleRue({ longueur: b.longueur, largeur: b.largeur });
+    const dims = retracterHorsChaussee(b.x, b.z, b.longueur, b.largeur, -b.cap);
+    const imm = construireImmeubleRue(dims);
     imm.position.set(b.x, sol, b.z);
     imm.rotation.y = rot;
     group.add(imm);

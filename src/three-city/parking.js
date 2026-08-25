@@ -104,6 +104,48 @@ function trouverBandes(data) {
       });
     }
   }
+
+  // Bandes relevées sur les panoramiques devant les commerces du centre :
+  // l'épi y est réel (parvis de la Poste, rangée d'Au Comptoir, la Presse et
+  // la pizzeria) mais aucun immeuble collectif ne permet de le déduire.
+  const ANCRAGES = [
+    { x: 38, z: 48, portee: 26 },    // devant la Poste
+    { x: 45, z: -18, portee: 32 },   // Au Comptoir, Maison de la Presse, pizzeria
+  ];
+  for (const a of ANCRAGES) {
+    let meilleur = null;
+    for (const r of data.roads) {
+      if (!r.drivable || r.rondPoint || r.bridge) continue;
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+        const dx = x2 - x1, dz = z2 - z1;
+        const l2 = dx * dx + dz * dz;
+        const len = Math.sqrt(l2);
+        if (len < 10) continue;
+        let t = ((a.x - x1) * dx + (a.z - z1) * dz) / l2;
+        t = Math.max(0, Math.min(1, t));
+        const px = x1 + dx * t, pz = z1 + dz * t;
+        const d = Math.hypot(a.x - px, a.z - pz);
+        if (d < (meilleur?.d ?? 20)) {
+          meilleur = { d, x1, z1, dx, dz, len, t, largeurVoie: r.width };
+        }
+      }
+    }
+    if (!meilleur) continue;
+    const { x1, z1, dx, dz, len, t, largeurVoie } = meilleur;
+    const ux = dx / len, uz = dz / len;
+    let nx = -uz, nz = ux;
+    // Du côté du commerce, comme sur les photos.
+    if (nx * (a.x - (x1 + dx * t)) + nz * (a.z - (z1 + dz * t)) < 0) { nx = -nx; nz = -nz; }
+    // Sous-segment centré sur la projection du point d'ancrage.
+    const demi = Math.min(a.portee, len) / 2;
+    const cx2 = x1 + dx * t, cz2 = z1 + dz * t;
+    bandes.push({
+      x1: cx2 - ux * demi, z1: cz2 - uz * demi,
+      x2: cx2 + ux * demi, z2: cz2 + uz * demi,
+      ux, uz, nx, nz, len: demi * 2, largeurVoie,
+    });
+  }
   return bandes;
 }
 

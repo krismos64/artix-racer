@@ -98,6 +98,8 @@ export const BATIMENTS_MODELISES = new Set([
   2150,   // barre de logements « Pyrénées », avenue Edmond Rostand
   1128,   // Leclerc Express du centre-bourg, dans les murs de l'ancien Intermarché
   1075,   // auvent de la station-service du Leclerc : remplacé par la marquise
+  1079,   // annexe masquant le parvis de la Poste : le vrai bureau donne sur rue
+  1083,   // annexe attenante, même îlot : le parvis reste dégagé
 ]);
 
 export function parseBDTopo(raw, toitures = null, facades = null, panoramax = null) {
