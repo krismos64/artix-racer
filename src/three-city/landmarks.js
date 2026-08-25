@@ -1310,7 +1310,7 @@ function construireDevanturesPOI(data, relief, roadY) {
   const g = new THREE.Group();
   const commerces = (data.poi?.equipements ?? []).filter((e) =>
     e.info?.icone === 'commerce' || ['pharmacy', 'bank'].includes(e.categorie));
-  const dejaModelises = new Set(['Au Comptoir', 'Maison de la Presse', 'Leclerc Express']);
+  const dejaModelises = new Set(['Au Comptoir', 'Maison de la Presse', 'Leclerc Express', 'Maison Chaudron']);
   const palettes = ['#9b4934', '#315d68', '#4f704f', '#7d5935', '#68435f', '#285b86'];
 
   for (const e of commerces) {
@@ -1884,6 +1884,95 @@ function construirePoste(boite) {
   return g;
 }
 
+// Devanture de la boulangerie Maison Chaudron, reconstruite d'après les
+// panoramiques de l'avenue : bandeau noir mat portant le nom en lettres
+// dorées et la mention ARTISAN BOULANGER PÂTISSIER, vitrines sombres à
+// encadrements noirs, porte vitrée centrale et enseigne drapeau dorée en épi.
+function construireBoulangerie() {
+  const g = new THREE.Group();
+  const noir = new THREE.MeshStandardMaterial({ color: 0x17181a, roughness: 0.55 });
+  const vitre = new THREE.MeshStandardMaterial({ color: 0x232c31, roughness: 0.22, metalness: 0.1 });
+  const LARGEUR = 7.2, H_BANDEAU = 1.0;
+
+  // Fond de devanture : panneau noir sur toute la largeur du commerce.
+  const fond = new THREE.Mesh(new THREE.BoxGeometry(LARGEUR, 2.9, 0.14), noir);
+  fond.position.set(0, 1.45, 0.07);
+  g.add(fond);
+  // Vitrines de part et d'autre de la porte, en léger retrait du cadre noir.
+  for (const cote of [-1, 1]) {
+    const vitrine = new THREE.Mesh(new THREE.PlaneGeometry(2.35, 1.85), vitre);
+    vitrine.position.set(cote * 2.15, 1.25, 0.15);
+    g.add(vitrine);
+  }
+  const porte = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 2.15), vitre);
+  porte.position.set(0, 1.1, 0.15);
+  g.add(porte);
+
+  // Bandeau d'enseigne : le nom en doré, la mention en capitales blanches.
+  const texture = (() => {
+    const L = 1024, H = 150;
+    const c = document.createElement('canvas');
+    c.width = L; c.height = H;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#141516';
+    ctx.fillRect(0, 0, L, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#cfa64b';
+    ctx.font = 'italic bold 62px Georgia, serif';
+    ctx.fillText('Maison Chaudron', L / 2, 46);
+    ctx.fillStyle = '#efece4';
+    ctx.font = '600 34px Helvetica, Arial, sans-serif';
+    ctx.fillText('A R T I S A N   B O U L A N G E R   P Â T I S S I E R', L / 2, 112);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const bandeau = new THREE.Mesh(new THREE.PlaneGeometry(LARGEUR * 0.96, H_BANDEAU),
+    new THREE.MeshStandardMaterial({ map: texture, roughness: 0.5 }));
+  bandeau.position.set(0, 2.62, 0.16);
+  g.add(bandeau);
+
+  // Enseigne drapeau dorée : l'épi de blé stylisé, perpendiculaire à la rue.
+  const epi = (() => {
+    const T = 128;
+    const c = document.createElement('canvas');
+    c.width = c.height = T;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, T, T);
+    ctx.strokeStyle = '#cfa64b';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(T / 2, T * 0.9);
+    ctx.lineTo(T / 2, T * 0.14);
+    ctx.stroke();
+    for (let k = 0; k < 5; k++) {
+      const y = T * (0.2 + k * 0.13);
+      for (const cote2 of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(T / 2, y);
+        ctx.quadraticCurveTo(T / 2 + cote2 * T * 0.2, y - T * 0.05, T / 2 + cote2 * T * 0.28, y - T * 0.14);
+        ctx.stroke();
+      }
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const drapeauMat = new THREE.MeshStandardMaterial({
+    map: epi, transparent: true, alphaTest: 0.3, roughness: 0.45, side: THREE.DoubleSide,
+  });
+  const potence = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.6), noir);
+  potence.position.set(LARGEUR / 2 - 0.4, 3.1, 0.3);
+  g.add(potence);
+  const drapeau = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.55), drapeauMat);
+  drapeau.position.set(LARGEUR / 2 - 0.4, 2.78, 0.58);
+  drapeau.rotation.y = Math.PI / 2;
+  g.add(drapeau);
+  return g;
+}
+
 export function buildLandmarks(data, relief, roadY) {
   const group = new THREE.Group();
   const traites = [];   // emprises à retirer des bâtiments ordinaires
@@ -2191,6 +2280,17 @@ export function buildLandmarks(data, relief, roadY) {
         group.add(poste);
         traites.push({ x: boite.cx, z: boite.cz, rayon: Math.max(boite.longueur, boite.largeur) / 2 + 3 });
       }
+    }
+
+    // Boulangerie Maison Chaudron : moitié sud de la façade ouest de l'îlot
+    // 1078, face à l'avenue (arête et normale mesurées sur l'emprise BD TOPO).
+    {
+      const boulangerie = construireBoulangerie();
+      const solB = (relief ? relief.hauteurRoute(33.3, 13.7) : 0) + roadY;
+      boulangerie.position.set(33.3, solB, 13.7);
+      // La devanture regarde la normale extérieure (-0.968, -0.25).
+      boulangerie.rotation.y = Math.atan2(-0.968, -0.25);
+      group.add(boulangerie);
     }
 
     // Préaux : écoles élémentaires Jean Moulin et Jean Sarrailh, posés côté
