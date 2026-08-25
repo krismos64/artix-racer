@@ -2,6 +2,21 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 5) : corrections fidélité du carrefour
+
+- Patte d'Oie : l'immeuble débordait sur la chaussée parce que la position en
+  dur était le centroïde d'une emprise en L, pas le centre de sa boîte
+  orientée : recentré (44.6, -8.0).
+- Station : l'auvent réel EST un bâtiment BD TOPO (1075) qui coiffait ma
+  marquise d'un toit (« petite maison ») : bâtiment remplacé, marquise aux
+  cotes mesurées (12,1 x 5,2 m).
+- La Poste modélisée à la main d'après les photos (balcon filant, grilles,
+  caisson jaune, boîte aux lettres). À vérifier en jeu : le côté de
+  l'enseigne (peut se retrouver côté cour selon le cap PCA, correction d'un
+  signe le cas échéant).
+- Leçon : pour poser un modèle sur une emprise BD TOPO, TOUJOURS utiliser le
+  centre de la boîte orientée, jamais le centroïde.
+
 ## 2026-08-26 (suite 4) : aménagements du corridor à la main
 
 - DÉCOUVERTE : landmarks.js modélisait déjà bien plus que la mairie : église
