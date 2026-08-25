@@ -444,13 +444,15 @@ async function start(): Promise<void> {
   carNuit = car;
   lampesMateriau = faithful.lampMaterial;
   foyersLampes = faithful.foyers;
-  for (let i = 0; i < 6; i++) {
+  // Les halos au sol portent l'essentiel de l'éclairage public perçu ; le
+  // pool de vraies lumières n'est qu'un appoint volumétrique discret autour
+  // du joueur. Le doser bas rend invisible le recyclage des lampes d'un
+  // foyer à l'autre, qui se lisait comme un allumage au passage.
+  for (let i = 0; i < 8; i++) {
     const lampe = new PointLight(`lampe-rue-${i}`, new Vector3(0, -100, 0), scene);
     lampe.diffuse = Color3.FromHexString('#ffc878');
-    // Atténuation physique en 1/d² : 130 candelas éclairent franchement la
-    // chaussée sous le mât et portent encore à une quinzaine de mètres.
-    lampe.intensity = 130;
-    lampe.range = 32;
+    lampe.intensity = 70;
+    lampe.range = 30;
     lampe.setEnabled(false);
     lampesPool.push(lampe);
   }
@@ -465,7 +467,7 @@ async function start(): Promise<void> {
     const positions: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
-    const SEGMENTS = 10, RAYON = 6.5;
+    const SEGMENTS = 10, RAYON = 7.5;
     for (const f of foyersLampes) {
       const solY = f.y - 6.9 + .07;
       const base = positions.length / 3;
@@ -489,8 +491,8 @@ async function start(): Promise<void> {
     const tex = new DynamicTexture('halo-lampe', { width: taille, height: taille }, scene, false);
     const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
     const grad = ctx.createRadialGradient(taille / 2, taille / 2, 4, taille / 2, taille / 2, taille / 2);
-    grad.addColorStop(0, 'rgba(255,204,130,0.55)');
-    grad.addColorStop(.45, 'rgba(255,190,110,0.22)');
+    grad.addColorStop(0, 'rgba(255,206,134,0.8)');
+    grad.addColorStop(.4, 'rgba(255,192,112,0.34)');
     grad.addColorStop(1, 'rgba(255,180,100,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, taille, taille);
@@ -588,7 +590,7 @@ async function start(): Promise<void> {
 
     if (nuitActive && foyersLampes.length) {
       lampesTimer += dt;
-      if (lampesTimer > .7) {
+      if (lampesTimer > .4) {
         lampesTimer = 0;
         const px = car.root.position.x, pz = car.root.position.z;
         const proches = foyersLampes
