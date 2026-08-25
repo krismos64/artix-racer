@@ -21,12 +21,12 @@ import sharp from 'sharp';
 const ORIGIN = { lat: 43.39743, lon: -0.57224 };
 const R = 6378137;
 const CACHE = '.panoramax-cache';
-const RAYON_CENTRE = 320;      // zone traitée autour du centre-bourg
-const MAX_FACADES = 128;
+const RAYON_CENTRE = 900;      // toute la zone urbanisée
+const MAX_FACADES = 512;
 const CAM_H = 2.4;             // hauteur de la GoPro au-dessus de la chaussée
 const CASE_W = 512, CASE_H = 256;
-const ATLAS_GRILLE = 4;        // 4×8 cases de 512×256 dans un atlas 2048×2048
-const ATLAS_LIGNES = 8;
+const ATLAS_GRILLE = 8;        // 8×16 cases de 512×256 dans un atlas 4096×4096
+const ATLAS_LIGNES = 16;
 const PAR_ATLAS = ATLAS_GRILLE * ATLAS_LIGNES;
 
 function project(lat, lon) {
@@ -234,14 +234,25 @@ function rectifier(pano, W, H, photo, A, B, hMur) {
       }
     }
   }
-  // Normalisation douce d'exposition : les prises de janvier alternent plein
-  // soleil et ombre ; sans recalage, les façades voisines juraient.
-  let lum = 0;
-  for (let i = 0; i < sortie.length; i += 33) lum += sortie[i] * 0.299 + sortie[i + 1] * 0.587 + sortie[i + 2] * 0.114;
-  lum /= Math.floor(sortie.length / 33);
-  const gain = Math.max(0.8, Math.min(1.45, 148 / Math.max(20, lum)));
-  if (Math.abs(gain - 1) > 0.03) {
-    for (let i = 0; i < sortie.length; i++) sortie[i] = Math.min(255, sortie[i] * gain);
+  // Homogénéisation d'exposition : les prises de janvier alternent plein
+  // soleil et ombre bleutée, et deux façades voisines juraient. Deux
+  // corrections combinées : la luminance est ramenée vers une cible commune,
+  // et la dominante colorée (le bleu des ombres, l'orangé des contre-jours)
+  // est neutralisée à moitié, assez pour accorder les cases sans délaver les
+  // enduits réellement colorés.
+  let sR = 0, sG = 0, sB = 0, n = 0;
+  for (let i = 0; i < sortie.length; i += 33) { sR += sortie[i]; sG += sortie[i + 1]; sB += sortie[i + 2]; n++; }
+  sR /= n; sG /= n; sB /= n;
+  const lum = sR * 0.299 + sG * 0.587 + sB * 0.114;
+  const gain = Math.max(0.72, Math.min(1.7, 150 / Math.max(20, lum)));
+  const equil = (canal) => 1 + 0.5 * (lum / Math.max(20, canal) - 1);
+  const gR = gain * Math.max(0.8, Math.min(1.25, equil(sR)));
+  const gG = gain * Math.max(0.8, Math.min(1.25, equil(sG)));
+  const gB = gain * Math.max(0.8, Math.min(1.25, equil(sB)));
+  for (let i = 0; i < sortie.length; i += 3) {
+    sortie[i] = Math.min(255, sortie[i] * gR);
+    sortie[i + 1] = Math.min(255, sortie[i + 1] * gG);
+    sortie[i + 2] = Math.min(255, sortie[i + 2] * gB);
   }
   return sortie;
 }
