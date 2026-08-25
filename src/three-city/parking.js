@@ -154,6 +154,27 @@ export class ParkingsEpi {
 
     const sol = (x, z) => (relief ? relief.hauteurRoute(x, z) : 0);
 
+    // Une place dont le milieu approche une chaussée est rognée : les bandes
+    // relevées sur l'orthophoto sont des axes idéalisés, et leurs extrémités
+    // mordaient les rues qui longent les parkings en diagonale.
+    const mordVoie = (x, z) => {
+      for (const r of data.roads ?? []) {
+        if (!r.drivable) continue;
+        for (let i = 0; i < r.pts.length - 1; i++) {
+          const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+          if (Math.abs(x1 - x) > 70 && Math.abs(z1 - z) > 70) continue;
+          const dx = x2 - x1, dz = z2 - z1;
+          const l2 = dx * dx + dz * dz;
+          if (l2 < 1e-6) continue;
+          let t = ((x - x1) * dx + (z - z1) * dz) / l2;
+          t = Math.max(0, Math.min(1, t));
+          const ddx = x - (x1 + dx * t), ddz = z - (z1 + dz * t);
+          if (ddx * ddx + ddz * ddz < (r.width / 2 + 1.4) ** 2) return true;
+        }
+      }
+      return false;
+    };
+
     // Bande goudronnée et marquage, en géométrie fusionnée.
     const enrobePos = [], marquagePos = [];
     // Le marquage est posé légèrement au-dessus de l'enrobé, lui-même au-dessus
@@ -167,23 +188,29 @@ export class ParkingsEpi {
     };
 
     for (const b of bandes) {
-      // Nombre entier de places sur la longueur du tronçon.
-      const n = Math.floor(b.len / PLACE_LARGEUR);
-      if (n < 4) continue;
-      const marge = (b.len - n * PLACE_LARGEUR) / 2;
-
       // Bord intérieur de la bande : au ras de la chaussée.
       const d0 = b.largeurVoie / 2;
       const d1 = d0 + PLACE_LONGUEUR;
+      const dMil = (d0 + d1) / 2;
 
-      // Rectangle d'enrobé couvrant toute la bande.
       const p = (long, lat) => [
         b.x1 + b.ux * long + b.nx * lat,
         b.z1 + b.uz * long + b.nz * lat,
       ];
+
+      // Rognage des extrémités qui mordent une chaussée.
+      let debut = 0, fin = b.len;
+      while (debut < fin && mordVoie(...p(debut + PLACE_LARGEUR / 2, dMil))) debut += PLACE_LARGEUR;
+      while (fin > debut && mordVoie(...p(fin - PLACE_LARGEUR / 2, dMil))) fin -= PLACE_LARGEUR;
+      const utile = fin - debut;
+      const n = Math.floor(utile / PLACE_LARGEUR);
+      if (n < 4) continue;
+      const marge = debut + (utile - n * PLACE_LARGEUR) / 2;
+
+      // Rectangle d'enrobé couvrant la partie conservée de la bande.
       const [ax, az] = p(marge, d0);
-      const [bx, bz] = p(b.len - marge, d0);
-      const [cx2, cz2] = p(b.len - marge, d1);
+      const [bx, bz] = p(marge + n * PLACE_LARGEUR, d0);
+      const [cx2, cz2] = p(marge + n * PLACE_LARGEUR, d1);
       const [dx2, dz2] = p(marge, d1);
       quad(enrobePos,
         ax, sol(ax, az) + Y_ENROBE, az,
