@@ -2,6 +2,19 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 8) : la rue commerçante en dur, commerce par commerce
+
+- Devantures dédiées posées sur arêtes mesurées : Maison Chaudron (bandeau
+  noir doré + épi drapeau), AU COMPTOIR/BRASSERIE + terrasse au droit du POI,
+  maison de la presse (jaune), CAFÉ, CPC Invest (anthracite cuivré), MMA
+  (blanc + 3 macarons). Bug de fond corrigé au passage : les devantures de
+  l'immeuble 1081 étaient bâties côté cour.
+- Méthode éprouvée : POI -> arête la plus proche pertinente (normale vers la
+  rue) -> projection sur le grand axe -> position/normale en dur.
+- La bande bataille de l'avenue couvre z 1..30 (ortho) ; pizzeria réelle
+  place du Général de Gaulle (POI 21.8, 65.5), devanture générique pour
+  l'instant.
+
 ## 2026-08-26 (suite 7) : le stationnement du centre, résolu par l'orthophoto
 
 - Leçon de méthode : pour IMPLANTER au sol (parkings, rangées, allées),
