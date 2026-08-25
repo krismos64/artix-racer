@@ -97,6 +97,7 @@ export const BATIMENTS_MODELISES = new Set([
   1349,   // gare d'Artix : façade vitrée, pierre, horloge et parvis paysager
   2150,   // barre de logements « Pyrénées », avenue Edmond Rostand
   1128,   // Leclerc Express du centre-bourg, dans les murs de l'ancien Intermarché
+  1075,   // auvent de la station-service du Leclerc : remplacé par la marquise
 ]);
 
 export function parseBDTopo(raw, toitures = null, facades = null, panoramax = null) {

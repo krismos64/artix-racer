@@ -1623,17 +1623,18 @@ function construireStation() {
   const bleu = new THREE.MeshStandardMaterial({ color: 0x1d3f8f, roughness: 0.5 });
   const metal = new THREE.MeshStandardMaterial({ color: 0x9aa0a4, roughness: 0.4, metalness: 0.5 });
 
-  const marquise = new THREE.Mesh(new THREE.BoxGeometry(12, 0.5, 6.5), blanc);
-  marquise.position.y = 4.7;
+  // Dimensions de l'auvent réel mesuré sur la BD TOPO : 12,1 x 5,2 m.
+  const marquise = new THREE.Mesh(new THREE.BoxGeometry(12.1, 0.45, 5.2), blanc);
+  marquise.position.y = 4.15;
   g.add(marquise);
   // Bandeau périphérique bleu Leclerc, sous la dalle.
-  const bandeau = new THREE.Mesh(new THREE.BoxGeometry(12.2, 0.62, 6.7), bleu);
-  bandeau.position.y = 4.38;
+  const bandeau = new THREE.Mesh(new THREE.BoxGeometry(12.3, 0.58, 5.4), bleu);
+  bandeau.position.y = 3.85;
   g.add(bandeau);
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
-      const fut = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 4.4, 8), metal);
-      fut.position.set(sx * 4.6, 2.2, sz * 2.1);
+      const fut = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 3.9, 8), metal);
+      fut.position.set(sx * 4.7, 1.95, sz * 1.6);
       g.add(fut);
     }
   }
@@ -1654,10 +1655,10 @@ function construireStation() {
     }
   }
   const totem = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.6, 0.24), bleu);
-  totem.position.set(7.4, 2.1, 2.4);
+  totem.position.set(7.6, 2.1, 1.6);
   g.add(totem);
   const totemPied = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.9, 0.24), metal);
-  totemPied.position.set(7.4, 0.45, 2.4);
+  totemPied.position.set(7.6, 0.45, 1.6);
   g.add(totemPied);
   return g;
 }
@@ -1709,6 +1710,123 @@ function construirePreau() {
       g.add(poteau);
     }
   }
+  return g;
+}
+
+// Texture du caisson d'enseigne de La Poste : lettres bleu nuit sur fond
+// jaune, l'identité visuelle réelle, dessinée en canvas comme toutes les
+// enseignes du projet.
+function texturePoste() {
+  const L = 512, H = 96;
+  const c = document.createElement('canvas');
+  c.width = L; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f5c500';
+  ctx.fillRect(0, 0, L, H);
+  ctx.fillStyle = '#003b7f';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${H * 0.52}px Helvetica, Arial, sans-serif`;
+  ctx.fillText('LA POSTE', L / 2 + H * 0.35, H / 2 + 2);
+  // L'oiseau postal, réduit à sa flèche pliée bleu nuit.
+  ctx.beginPath();
+  ctx.moveTo(H * 0.35, H * 0.7);
+  ctx.lineTo(H * 0.75, H * 0.3);
+  ctx.lineTo(H * 0.95, H * 0.52);
+  ctx.lineTo(H * 0.65, H * 0.62);
+  ctx.closePath();
+  ctx.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = anisotropie();
+  return t;
+}
+
+// Bureau de poste d'Artix, reconstruit d'après les panoramiques de l'avenue :
+// R+1 crème à corniche, balcon filant à garde-corps blanc sur toute la
+// façade, baies barreaudées au rez-de-chaussée, caisson jaune LA POSTE et
+// boîte aux lettres sur rue.
+function construirePoste(boite) {
+  const g = new THREE.Group();
+  const L = boite.longueur, W = boite.largeur;
+  const creme = new THREE.MeshStandardMaterial({ color: 0xefe9db, roughness: 0.85, side: THREE.DoubleSide });
+  const gris = new THREE.MeshStandardMaterial({ color: 0x9c9c98, roughness: 0.9 });
+  const blanc = new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.6 });
+  const sombre = new THREE.MeshStandardMaterial({ color: 0x232a33, roughness: 0.4 });
+
+  const H_MUR = 6.6;
+  const corps = new THREE.Mesh(new THREE.BoxGeometry(L, H_MUR, W), creme);
+  corps.position.y = H_MUR / 2;
+  g.add(corps);
+  // Soubassement gris.
+  const soub = new THREE.Mesh(new THREE.BoxGeometry(L + 0.06, 0.7, W + 0.06), gris);
+  soub.position.y = 0.35;
+  g.add(soub);
+  // Corniche et toit à quatre pans très plat.
+  const corniche = new THREE.Mesh(new THREE.BoxGeometry(L + 0.5, 0.3, W + 0.5), blanc);
+  corniche.position.y = H_MUR + 0.15;
+  g.add(corniche);
+  const toit = new THREE.Mesh(new THREE.ConeGeometry(Math.hypot(L, W) / 2 * 0.72, 1.5, 4),
+    new THREE.MeshStandardMaterial({ color: 0x6a4a38, roughness: 0.8 }));
+  toit.rotation.y = Math.PI / 4;
+  toit.scale.set(1, 1, W / L);
+  toit.position.y = H_MUR + 1.02;
+  g.add(toit);
+
+  // Les deux longues façades reçoivent le même traitement : celle sur rue
+  // porte en plus l'enseigne (posée par l'appelant selon l'orientation).
+  for (const face of [-1, 1]) {
+    const zF = face * (W / 2 + 0.02);
+    // Rez : trois baies vitrées barreaudées et la porte.
+    for (let k = 0; k < 3; k++) {
+      const xB = -L / 2 + (k + 0.75) * L / 4;
+      const baie = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 1.7), sombre);
+      baie.position.set(xB, 1.85, zF);
+      baie.rotation.y = face > 0 ? 0 : Math.PI;
+      g.add(baie);
+      for (let bar = 0; bar < 5; bar++) {
+        const barre = new THREE.Mesh(new THREE.BoxGeometry(0.03, 1.7, 0.03), blanc);
+        barre.position.set(xB - 0.8 + bar * 0.4, 1.85, zF + face * 0.04);
+        g.add(barre);
+      }
+    }
+    const porte = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 2.5), sombre);
+    porte.position.set(L / 2 - 2.2, 1.28, zF);
+    porte.rotation.y = face > 0 ? 0 : Math.PI;
+    g.add(porte);
+
+    // Balcon filant du R+1 : dalle en saillie et garde-corps barreaudé blanc.
+    const dalle = new THREE.Mesh(new THREE.BoxGeometry(L * 0.92, 0.14, 0.9), blanc);
+    dalle.position.set(0, 3.45, face * (W / 2 + 0.45));
+    g.add(dalle);
+    const lisse = new THREE.Mesh(new THREE.BoxGeometry(L * 0.92, 0.05, 0.05), blanc);
+    lisse.position.set(0, 4.45, face * (W / 2 + 0.88));
+    g.add(lisse);
+    const nBarreaux = Math.floor(L * 0.92 / 0.24);
+    for (let bar = 0; bar < nBarreaux; bar++) {
+      const barre = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.95, 0.025), blanc);
+      barre.position.set(-L * 0.46 + bar * 0.24, 3.98, face * (W / 2 + 0.88));
+      g.add(barre);
+    }
+    // Portes-fenêtres de l'étage.
+    for (let k = 0; k < 4; k++) {
+      const pf = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 2.15), sombre);
+      pf.position.set(-L / 2 + (k + 0.6) * L / 4.4, 4.65, zF);
+      pf.rotation.y = face > 0 ? 0 : Math.PI;
+      g.add(pf);
+    }
+  }
+
+  // Caisson d'enseigne LA POSTE, centré sur la façade sud (face 1).
+  const enseigne = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 0.82),
+    new THREE.MeshStandardMaterial({ map: texturePoste(), roughness: 0.5 }));
+  enseigne.position.set(0, 2.95, W / 2 + 0.08);
+  g.add(enseigne);
+  // Boîte aux lettres jaune sur rue : la signature d'un bureau de poste.
+  const bal = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.1, 0.4),
+    new THREE.MeshStandardMaterial({ color: 0xf5c500, roughness: 0.55 }));
+  bal.position.set(L / 2 - 0.8, 0.55, W / 2 + 1.1);
+  g.add(bal);
   return g;
 }
 
@@ -1825,8 +1943,11 @@ export function buildLandmarks(data, relief, roadY) {
 
   const IMMEUBLES_RUE = [
     // « Au Comptoir » et les commerces attenants, carrefour de la Patte d'Oie.
-    // Bâtiment 1081 de la BD TOPO : 354 m², 39,2 x 11,2 m, cap -74,7 degrés.
-    { x: 47.4, z: -12.5, longueur: 39.2, largeur: 11.2, cap: -1.303 },
+    // Bâtiment 1081 de la BD TOPO : 355 m², 39,2 x 11,2 m, cap -75 degrés.
+    // Centre = celui de la BOÎTE ORIENTÉE de l'emprise, pas son centroïde :
+    // l'ancienne valeur (centroïde, décalé de 5,4 m vers le sud-est sur cette
+    // emprise en L) faisait déborder l'immeuble sur la chaussée du carrefour.
+    { x: 44.6, z: -8.0, longueur: 39.2, largeur: 11.2, cap: -1.309 },
   ];
   for (const b of IMMEUBLES_RUE) {
     // Assise au point le plus bas de l'emprise, comme pour les autres repères :
@@ -1936,33 +2057,47 @@ export function buildLandmarks(data, relief, roadY) {
   // Station-service du Leclerc, terrasse d'Au Comptoir, préaux d'écoles :
   // positions des POI réels, orientations calées sur la voirie ou la façade.
   {
-    // Station : orientée le long de la voie carrossable la plus proche.
-    const sx = 99, sz = -36;
-    let cap = 0, dMin = Infinity;
-    for (const r of data.roads ?? []) {
-      if (!r.drivable) continue;
-      for (let i = 0; i < r.pts.length - 1; i++) {
-        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
-        if (Math.abs(x1 - sx) > 60) continue;
-        const dx = x2 - x1, dz = z2 - z1;
-        const l2 = dx * dx + dz * dz;
-        if (l2 < 1e-6) continue;
-        let t = ((sx - x1) * dx + (sz - z1) * dz) / l2;
-        t = Math.max(0, Math.min(1, t));
-        const d = Math.hypot(sx - (x1 + dx * t), sz - (z1 + dz * t));
-        if (d < dMin) { dMin = d; cap = Math.atan2(dx, dz); }
-      }
-    }
+    // Station : posée exactement sur l'emprise de son auvent BD TOPO
+    // (bâtiment 1075, 12,1 x 5,2 m, cap 1,248 rad), retiré du bâti ordinaire.
+    // Le poser au POI la plantait dans ce petit bâtiment, qui coiffait la
+    // marquise d'un toit et la faisait lire comme une maisonnette.
     const station = construireStation();
-    station.position.set(sx, (relief ? relief.hauteurRoute(sx, sz) : 0) + roadY, sz);
-    station.rotation.y = cap;
+    station.position.set(97.5, (relief ? relief.hauteurRoute(97.5, -35) : 0) + roadY, -35);
+    station.rotation.y = -1.248;
     group.add(station);
 
-    // Terrasse d'Au Comptoir : au pied de la façade sud de l'immeuble 1081,
-    // normale vers la rue (le POI du bar est sur le trottoir).
-    const terrasse = construireTerrasse(-0.272, -0.962);
-    terrasse.position.set(45.9, (relief ? relief.hauteurRoute(45.9, -17.9) : 0) + roadY, -17.9);
+    // Terrasse d'Au Comptoir : au pied de la façade sud de l'immeuble 1081
+    // recentré, normale vers la rue (le POI du bar est sur le trottoir).
+    const terrasse = construireTerrasse(0.03, -0.999);
+    terrasse.position.set(44.8, (relief ? relief.hauteurRoute(44.8, -13.6) : 0) + roadY, -13.6);
     group.add(terrasse);
+
+    // La Poste : bâtiment BD TOPO le plus proche du POI, remplacé par le
+    // modèle dédié et écarté du bâti ordinaire.
+    {
+      let choix = null;
+      for (const b of data.buildings ?? []) {
+        if (!b.pts || b.pts.length < 3) continue;
+        let cx = 0, cz = 0;
+        for (const [px, pz] of b.pts) { cx += px; cz += pz; }
+        cx /= b.pts.length; cz /= b.pts.length;
+        const d = Math.hypot(cx - 38, cz - 39.3);
+        if (d < (choix?.d ?? 16)) choix = { b, d };
+      }
+      if (choix) {
+        const boite = boiteOrientee(choix.b.pts);
+        let sol = Infinity;
+        for (const [px, pz] of choix.b.pts) {
+          const h = (relief ? relief.hauteurRoute(px, pz) : 0) + roadY;
+          if (h < sol) sol = h;
+        }
+        const poste = construirePoste(boite);
+        poste.position.set(boite.cx, sol, boite.cz);
+        poste.rotation.y = -boite.cap;
+        group.add(poste);
+        traites.push({ x: boite.cx, z: boite.cz, rayon: Math.max(boite.longueur, boite.largeur) / 2 + 3 });
+      }
+    }
 
     // Préaux : écoles élémentaires Jean Moulin et Jean Sarrailh, posés côté
     // cour, à l'écart de la rue.
