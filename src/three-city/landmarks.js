@@ -1614,6 +1614,104 @@ function construireSupermarche(dims) {
   return g;
 }
 
+// Station-service du Leclerc Express : marquise blanche à bandeau bleu sur
+// quatre fûts, deux îlots de distribution et le totem de prix. Silhouette
+// immédiatement reconnaissable depuis l'avenue, absente de toutes les bases.
+function construireStation() {
+  const g = new THREE.Group();
+  const blanc = new THREE.MeshStandardMaterial({ color: 0xe9eaea, roughness: 0.55 });
+  const bleu = new THREE.MeshStandardMaterial({ color: 0x1d3f8f, roughness: 0.5 });
+  const metal = new THREE.MeshStandardMaterial({ color: 0x9aa0a4, roughness: 0.4, metalness: 0.5 });
+
+  const marquise = new THREE.Mesh(new THREE.BoxGeometry(12, 0.5, 6.5), blanc);
+  marquise.position.y = 4.7;
+  g.add(marquise);
+  // Bandeau périphérique bleu Leclerc, sous la dalle.
+  const bandeau = new THREE.Mesh(new THREE.BoxGeometry(12.2, 0.62, 6.7), bleu);
+  bandeau.position.y = 4.38;
+  g.add(bandeau);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const fut = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 4.4, 8), metal);
+      fut.position.set(sx * 4.6, 2.2, sz * 2.1);
+      g.add(fut);
+    }
+  }
+  for (const sx of [-1, 1]) {
+    const ilot = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.14, 1.1), blanc);
+    ilot.position.set(sx * 2.2, 0.07, 0);
+    g.add(ilot);
+    const pompe = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.7, 0.55),
+      new THREE.MeshStandardMaterial({ color: 0xdfe2e4, roughness: 0.5 }));
+    pompe.position.set(sx * 2.2, 0.99, 0);
+    g.add(pompe);
+    for (const f of [-1, 1]) {
+      const ecran = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.5),
+        new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.3 }));
+      ecran.position.set(sx * 2.2, 1.25, f * 0.29);
+      ecran.rotation.y = f > 0 ? 0 : Math.PI;
+      g.add(ecran);
+    }
+  }
+  const totem = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.6, 0.24), bleu);
+  totem.position.set(7.4, 2.1, 2.4);
+  g.add(totem);
+  const totemPied = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.9, 0.24), metal);
+  totemPied.position.set(7.4, 0.45, 2.4);
+  g.add(totemPied);
+  return g;
+}
+
+// Terrasse de brasserie : store banne au-dessus de la devanture et tables
+// rondes sur le trottoir. `nx, nz` : normale de la façade, vers la rue.
+function construireTerrasse(nx, nz) {
+  const g = new THREE.Group();
+  const toile = new THREE.MeshStandardMaterial({ color: 0x6e2430, roughness: 0.85, side: THREE.DoubleSide });
+  const store = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 2.2), toile);
+  store.position.set(nx * 0.95, 2.9, nz * 0.95);
+  store.rotation.y = Math.atan2(nx, nz);
+  store.rotateX(-0.55);
+  g.add(store);
+  const alu = new THREE.MeshStandardMaterial({ color: 0x7a7d80, roughness: 0.4, metalness: 0.5 });
+  const tx = -nz, tz = nx;   // tangente de la façade
+  for (let t = 0; t < 3; t++) {
+    const table = new THREE.Group();
+    const plateau = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.04, 12), alu);
+    plateau.position.y = 0.72;
+    table.add(plateau);
+    const pied = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.16, 0.72, 8), alu);
+    pied.position.y = 0.36;
+    table.add(pied);
+    for (const a of [0.8, 2.4, 4.2]) {
+      const chaise = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.45, 0.36), alu);
+      chaise.position.set(Math.cos(a + t) * 0.72, 0.24, Math.sin(a + t) * 0.72);
+      table.add(chaise);
+    }
+    table.position.set(nx * 2.4 + (t - 1) * 2.1 * tx, 0, nz * 2.4 + (t - 1) * 2.1 * tz);
+    g.add(table);
+  }
+  return g;
+}
+
+// Préau d'école : toit monopente clair sur six poteaux verts, côté cour.
+function construirePreau() {
+  const g = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x4a6f52, roughness: 0.55, metalness: 0.35 });
+  const toitPreau = new THREE.Mesh(new THREE.BoxGeometry(9, 0.14, 4.6),
+    new THREE.MeshStandardMaterial({ color: 0xb9bec2, roughness: 0.6, side: THREE.DoubleSide }));
+  toitPreau.position.y = 2.75;
+  toitPreau.rotation.z = 0.07;
+  g.add(toitPreau);
+  for (const sx of [-1, 0, 1]) {
+    for (const sz of [-1, 1]) {
+      const poteau = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.8, 8), metal);
+      poteau.position.set(sx * 4.1, 1.4, sz * 2.0);
+      g.add(poteau);
+    }
+  }
+  return g;
+}
+
 export function buildLandmarks(data, relief, roadY) {
   const group = new THREE.Group();
   const traites = [];   // emprises à retirer des bâtiments ordinaires
@@ -1832,6 +1930,48 @@ export function buildLandmarks(data, relief, roadY) {
     barre.rotation.y = rot;
     group.add(barre);
     traites.push({ x: b.x, z: b.z, rayon: Math.max(b.longueur, b.largeur) / 2 + 3 });
+  }
+
+  // ---- Aménagements du corridor commerçant -------------------------------
+  // Station-service du Leclerc, terrasse d'Au Comptoir, préaux d'écoles :
+  // positions des POI réels, orientations calées sur la voirie ou la façade.
+  {
+    // Station : orientée le long de la voie carrossable la plus proche.
+    const sx = 99, sz = -36;
+    let cap = 0, dMin = Infinity;
+    for (const r of data.roads ?? []) {
+      if (!r.drivable) continue;
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+        if (Math.abs(x1 - sx) > 60) continue;
+        const dx = x2 - x1, dz = z2 - z1;
+        const l2 = dx * dx + dz * dz;
+        if (l2 < 1e-6) continue;
+        let t = ((sx - x1) * dx + (sz - z1) * dz) / l2;
+        t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(sx - (x1 + dx * t), sz - (z1 + dz * t));
+        if (d < dMin) { dMin = d; cap = Math.atan2(dx, dz); }
+      }
+    }
+    const station = construireStation();
+    station.position.set(sx, (relief ? relief.hauteurRoute(sx, sz) : 0) + roadY, sz);
+    station.rotation.y = cap;
+    group.add(station);
+
+    // Terrasse d'Au Comptoir : au pied de la façade sud de l'immeuble 1081,
+    // normale vers la rue (le POI du bar est sur le trottoir).
+    const terrasse = construireTerrasse(-0.272, -0.962);
+    terrasse.position.set(45.9, (relief ? relief.hauteurRoute(45.9, -17.9) : 0) + roadY, -17.9);
+    group.add(terrasse);
+
+    // Préaux : écoles élémentaires Jean Moulin et Jean Sarrailh, posés côté
+    // cour, à l'écart de la rue.
+    for (const [px, pz, capP] of [[-70, -31, 0.3], [352, -715, 1.2]]) {
+      const preau = construirePreau();
+      preau.position.set(px, (relief ? relief.hauteurRoute(px, pz) : 0) + roadY, pz);
+      preau.rotation.y = capP;
+      group.add(preau);
+    }
   }
 
   return { group, traites };

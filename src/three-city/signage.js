@@ -737,18 +737,10 @@ export function buildSignage(data, relief, roadY) {
       const graine = Math.abs(Math.round(e.x * 13 + e.z * 7));
       const teinte = PALETTE_ENSEIGNE[graine % PALETTE_ENSEIGNE.length];
       const largeur = Math.min(len - 1.2, Math.max(2.6, e.nom.length * 0.34));
-      const enseigne = new THREE.Mesh(
-        new THREE.PlaneGeometry(largeur, 0.62),
-        new THREE.MeshStandardMaterial({
-          map: textureEnseigne(e.nom, teinte), roughness: 0.55,
-          polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12,
-        }),
-      );
+      // Pas de bandeau plaqué ici : les devantures modélisées de landmarks.js
+      // portent déjà le nom du commerce sur la façade. Seule l'enseigne
+      // drapeau, qu'elles n'ont pas, est ajoutée.
       const sol = solEn(relief, px, pz, roadY);
-      enseigne.position.set(px + nx * 0.09, sol + 2.72, pz + nz * 0.09);
-      enseigne.rotation.y = Math.atan2(nx, nz);
-      enseigne.renderOrder = 3;
-      group.add(enseigne);
 
       // Enseigne drapeau, perpendiculaire à la façade : c'est elle qu'on lit
       // en arrivant dans l'axe de la rue, le bandeau n'étant visible que de
