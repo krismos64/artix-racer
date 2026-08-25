@@ -1346,7 +1346,8 @@ function construireDevanturesPOI(data, relief, roadY) {
   const g = new THREE.Group();
   const commerces = (data.poi?.equipements ?? []).filter((e) =>
     e.info?.icone === 'commerce' || ['pharmacy', 'bank'].includes(e.categorie));
-  const dejaModelises = new Set(['Au Comptoir', 'Maison de la Presse', 'Leclerc Express', 'Maison Chaudron', 'CPC Invest', 'MMA']);
+  const dejaModelises = new Set(['Au Comptoir', 'Maison de la Presse', 'Leclerc Express', 'Maison Chaudron',
+    'CPC Invest', 'MMA', "Caisse d'Épargne", 'Pharmacie Barrouilhet']);
   const palettes = ['#9b4934', '#315d68', '#4f704f', '#7d5935', '#68435f', '#285b86'];
 
   for (const e of commerces) {
@@ -2448,6 +2449,127 @@ export function buildLandmarks(data, relief, roadY) {
       const solA = (relief ? relief.hauteurRoute(38, -72.5) : 0) + roadY;
       abri.position.set(38, solA, -72.5);
       group.add(abri);
+    }
+
+    // Caisse d'Épargne : devanture RELEVÉE SUR PHOTO : lettres anthracite sur
+    // bandeau blanc, façade sur la rue (arête est mesurée du bâtiment 1126,
+    // la devanture générique s'était posée sur la mauvaise face), drapeau
+    // rouge à l'écureuil en potence.
+    {
+      const ce = construireDevantureCommerce({
+        nom: "CAISSE D'EPARGNE", sous: null,
+        fond: '#f4f3f0', encre: '#3a3f44', largeur: 9,
+      });
+      const solCE = (relief ? relief.hauteurRoute(91.4, -60.9) : 0) + roadY;
+      ce.position.set(91.4, solCE, -60.9);
+      ce.rotation.y = Math.atan2(0.98, -0.20);
+      group.add(ce);
+      // Drapeau carré rouge, sigle blanc simplifié de l'écureuil.
+      const sigle = (() => {
+        const T = 128;
+        const c = document.createElement('canvas');
+        c.width = c.height = T;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#d1202f';
+        ctx.fillRect(0, 0, T, T);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 9;
+        ctx.beginPath();
+        ctx.arc(T * 0.52, T * 0.5, T * 0.28, -2.6, 1.2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(T * 0.3, T * 0.72);
+        ctx.lineTo(T * 0.74, T * 0.62);
+        ctx.stroke();
+        const t = new THREE.CanvasTexture(c);
+        t.colorSpace = THREE.SRGBColorSpace;
+        return t;
+      })();
+      const drapeauCE = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7),
+        new THREE.MeshStandardMaterial({ map: sigle, roughness: 0.5, side: THREE.DoubleSide }));
+      drapeauCE.position.set(91.4 + 0.98 * 0.5 + (-0.20) * -4.2, solCE + 3.4, -60.9 + (-0.20) * 0.5 - 0.98 * -4.2);
+      drapeauCE.rotation.y = Math.atan2(-0.20, -0.98);
+      group.add(drapeauCE);
+    }
+
+    // Pharmacie Barrouilhet, relevée sur photo : devanture verte côté
+    // parking, et la signature du pignon sur rue : bandeau vertical noir à
+    // croix vertes, grande croix lumineuse en drapeau à l'angle et carré
+    // d'enseigne orange en tête.
+    {
+      const ph = construireDevantureCommerce({
+        nom: 'PHARMACIE BARROUILHET', sous: null,
+        fond: '#0d7a3e', encre: '#f2f6f0', largeur: 8,
+      });
+      const solPh = (relief ? relief.hauteurRoute(110.9, -69.2) : 0) + roadY;
+      ph.position.set(110.9, solPh, -69.2);
+      ph.rotation.y = Math.atan2(0.70, 0.71);
+      group.add(ph);
+      // Pignon sur rue (normale mesurée (-0.67, -0.74)) : bandeau vertical.
+      const bandeauTex = (() => {
+        const c = document.createElement('canvas');
+        c.width = 96; c.height = 640;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#141816';
+        ctx.fillRect(0, 0, 96, 640);
+        ctx.fillStyle = '#2fae5f';
+        for (let k = 0; k < 5; k++) {
+          const y = 60 + k * 120, T = 30;
+          ctx.fillRect(48 - T / 2 - 14, y - 5, T + 28, 10);
+          ctx.fillRect(48 - 5, y - T / 2 - 14, 10, T + 28);
+        }
+        const t = new THREE.CanvasTexture(c);
+        t.colorSpace = THREE.SRGBColorSpace;
+        return t;
+      })();
+      const solPi = (relief ? relief.hauteurRoute(105.5, -75.5) : 0) + roadY;
+      const bandeau = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 5.6),
+        new THREE.MeshStandardMaterial({ map: bandeauTex, roughness: 0.6 }));
+      bandeau.position.set(105.5 - 0.67 * 0.08, solPi + 3.4, -75.5 - 0.74 * 0.08);
+      bandeau.rotation.y = Math.atan2(-0.67, -0.74);
+      group.add(bandeau);
+      // Grande croix verte en drapeau, lumineuse comme la vraie.
+      const croixTex = (() => {
+        const T = 128;
+        const c = document.createElement('canvas');
+        c.width = c.height = T;
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, T, T);
+        ctx.fillStyle = '#12b45a';
+        const b = T * 0.3;
+        ctx.fillRect(T / 2 - b / 2, T * 0.06, b, T * 0.88);
+        ctx.fillRect(T * 0.06, T / 2 - b / 2, T * 0.88, b);
+        const t = new THREE.CanvasTexture(c);
+        t.colorSpace = THREE.SRGBColorSpace;
+        return t;
+      })();
+      const croixMat2 = new THREE.MeshStandardMaterial({
+        map: croixTex, transparent: true, alphaTest: 0.3, roughness: 0.4,
+        emissive: 0xffffff, emissiveMap: croixTex, emissiveIntensity: 0.7,
+        side: THREE.DoubleSide,
+      });
+      const croix = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.15), croixMat2);
+      croix.position.set(105.5 - 0.67 * 0.9 - 0.74 * -2.2, solPi + 5.4, -75.5 - 0.74 * 0.9 + 0.67 * -2.2);
+      croix.rotation.y = Math.atan2(-0.74, 0.67);
+      group.add(croix);
+      // Carré d'enseigne orange en tête de pignon.
+      const carre = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62),
+        new THREE.MeshStandardMaterial({ color: 0xd2691e, roughness: 0.55, side: THREE.DoubleSide }));
+      carre.position.set(105.5 - 0.67 * 0.9 - 0.74 * -1.2, solPi + 6.6, -75.5 - 0.74 * 0.9 + 0.67 * -1.2);
+      carre.rotation.y = Math.atan2(-0.74, 0.67);
+      group.add(carre);
+    }
+
+    // Commerce accolé à la pharmacie (bâtiment 1072) : devanture sobre sur
+    // sa façade rue, sans inventer d'enseigne.
+    {
+      const dc = construireDevantureCommerce({
+        nom: ' ', sous: null, fond: '#3c4247', encre: '#3c4247', largeur: 8.5,
+      });
+      const solDc = (relief ? relief.hauteurRoute(92.2, -86.5) : 0) + roadY;
+      dc.position.set(92.2, solDc, -86.5);
+      dc.rotation.y = Math.atan2(-0.99, -0.16);
+      group.add(dc);
     }
 
     // Préaux : écoles élémentaires Jean Moulin et Jean Sarrailh, posés côté
