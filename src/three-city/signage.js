@@ -386,7 +386,18 @@ export function buildSignage(data, relief, roadY) {
 
   // ---- Passages piétons -------------------------------------------------
   // Bandes blanches peintes en travers de la chaussée, orientées selon la voie.
-  const bandes = [];
+  // Leur usure vient du relevé Panoramax passage par passage : les bandes
+  // d'un marquage effacé tirent vers le gris de l'enrobé au lieu du blanc.
+  const usures = data.sols?.passages ?? [];
+  const usureEn = (x, z) => {
+    let u = 0.8, dMin = 3;
+    for (const q of usures) {
+      const d = Math.hypot(q.x - x, q.z - z);
+      if (d < dMin) { dMin = d; u = q.u; }
+    }
+    return u;
+  };
+  const bandes = [], bandesCol = [];
   for (const p of poi.passages) {
     // Orientation de la route sous le passage.
     let cap = 0, dMin = Infinity, largeur = 6;
@@ -407,6 +418,10 @@ export function buildSignage(data, relief, roadY) {
     if (dMin > 12) continue;   // pas de route à proximité
 
     // Cinq bandes dans le sens de la marche, en travers de la chaussée.
+    // Clarté de la peinture : de 0,55 (marquage presque effacé, mesuré sur
+    // photo) à 1 (repeint récemment).
+    const usure = usureEn(p.x, p.z);
+    const clarte = 0.42 + usure * 0.58;
     const ux = Math.cos(cap), uz = -Math.sin(cap);          // travers de la voie
     const vx = Math.sin(cap), vz = Math.cos(cap);           // axe de la voie
     const demiL = largeur / 2 - 0.25;
@@ -426,15 +441,17 @@ export function buildSignage(data, relief, roadY) {
         cx + ax + bx, y, cz + az + bz,
         cx - ax + bx, y, cz - az + bz,
       );
+      for (let v = 0; v < 6; v++) bandesCol.push(clarte, clarte, clarte * 0.985);
     }
   }
   if (bandes.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(bandes, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(bandesCol, 3));
     g.computeVertexNormals();
     g.computeBoundingSphere();
     const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
-      color: 0xf0ede4, side: THREE.DoubleSide,
+      color: 0xf0ede4, side: THREE.DoubleSide, vertexColors: true,
       polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -16,
     }));
     m.renderOrder = 4;

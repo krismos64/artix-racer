@@ -37,6 +37,7 @@ export interface FaithfulCitySources {
   facades: AnyRecord | null;
   panoramax: AnyRecord | null;
   facadesPhoto: AnyRecord | null;
+  sols: AnyRecord | null;
 }
 
 export interface FaithfulCityResult {
@@ -362,6 +363,9 @@ export async function buildFaithfulArtix(
   const data = parseOSM(sources.osm) as AnyRecord;
   // Façades rectifiées depuis Panoramax : consommées par buildWorld.
   data.facadesPhoto = sources.facadesPhoto ?? null;
+  // Sols mesurés (chaussées, parkings, usure des passages) : buildWorld et
+  // buildSignage s'en servent pour caler leurs teintes sur les photos.
+  data.sols = sources.sols ?? null;
   const bdtopo = (parseBDTopo as any)(sources.buildings, roofs, sources.facades, sources.panoramax) as AnyRecord;
   data.buildings = removeModeledBuildingDuplicates(data, bdtopo.batiments);
   data.altRef = bdtopo.altRef;

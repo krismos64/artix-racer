@@ -620,7 +620,42 @@ export function buildWorld(scene, data) {
     return Math.hypot(px - p.x, pz - p.z) < p.rayon;
   });
 
-  const roadPos = [], roadUv = [], roadNrm = [];
+  const roadPos = [], roadUv = [], roadNrm = [], roadCol = [];
+  // Teinte de chaussée par type de voie, mesurée sur les panoramiques
+  // (artix-sols.json). On n'utilise pas la couleur absolue de la photo (elle
+  // porte l'éclairage du jour de prise de vue) mais l'écart RELATIF de chaque
+  // type à la moyenne : une départementale rechargée reste plus sombre et
+  // bleutée qu'une rue de lotissement blanchie, quel que soit le calibrage.
+  const facteursRoute = (() => {
+    const mesures = data.sols?.routes ?? null;
+    if (!mesures) return null;
+    let somme = [0, 0, 0], n = 0;
+    for (const kind of Object.keys(mesures)) {
+      const c = mesures[kind].c, pds = mesures[kind].n;
+      somme[0] += ((c >> 16) & 255) * pds;
+      somme[1] += ((c >> 8) & 255) * pds;
+      somme[2] += (c & 255) * pds;
+      n += pds;
+    }
+    if (!n) return null;
+    const base = somme.map((v) => v / n);
+    const table = new Map();
+    for (const kind of Object.keys(mesures)) {
+      const c = mesures[kind].c;
+      table.set(kind, [
+        Math.max(0.86, Math.min(1.14, ((c >> 16) & 255) / base[0])),
+        Math.max(0.86, Math.min(1.14, ((c >> 8) & 255) / base[1])),
+        Math.max(0.86, Math.min(1.14, (c & 255) / base[2])),
+      ]);
+    }
+    return table;
+  })();
+  // Complète les couleurs de sommets de chaussée jusqu'au niveau actuel du
+  // buffer de positions, avec le facteur du type de voie courant.
+  const teinterRoute = (kind) => {
+    const f = facteursRoute?.get(kind) ?? [1, 1, 1];
+    while (roadCol.length < roadPos.length) roadCol.push(f[0], f[1], f[2]);
+  };
   const pathPos = [], pathUv = [], pathNrm = [];
   const pavePos = [], paveUv = [], paveNrm = [];
   for (const r of data.roads) {
@@ -666,7 +701,7 @@ export function buildWorld(scene, data) {
         const troncon = r.pts.slice(debut, i + 1);
         const rev = revSeg[debut];
         if (rev === 'pave') ribbon(troncon, r.width, ROAD_Y, pavePos, paveUv, paveNrm, relief);
-        else if (rev === 'route') ribbon(troncon, r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief);
+        else if (rev === 'route') { ribbon(troncon, r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief); teinterRoute(r.kind); }
         else ribbon(troncon, r.width, ROAD_Y - 0.03, pathPos, pathUv, pathNrm, relief);
         debut = i;
       }
@@ -683,6 +718,7 @@ export function buildWorld(scene, data) {
       // voiture le franchit sans que le terrain ait besoin d'être creusé.
       ribbon(r.pts, r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief,
         r.bridge ? 0.85 : 0);
+      teinterRoute(r.kind);
     } else {
       ribbon(r.pts, r.width, ROAD_Y - 0.03, pathPos, pathUv, pathNrm, relief);
     }
@@ -749,6 +785,7 @@ export function buildWorld(scene, data) {
         // une pièce rapportée.
         roadUv.push(nd.x / 4, nd.z / 4, x0 / 4, z0 / 4, x1 / 4, z1 / 4);
         for (let k = 0; k < 3; k++) roadNrm.push(0, 1, 0);
+        for (let k = 0; k < 3; k++) roadCol.push(1, 1, 1);
       }
     }
   }
@@ -781,15 +818,20 @@ export function buildWorld(scene, data) {
   // prenait le ciel de plein fouet et l'enrobé virait au mauve en fin de
   // journée. La clarté est inchangée, le calage à 0,281 relevé au chantier
   // précédent reste donc valable.
+  // Garde-fou : si un chemin d'écriture a oublié de teinter, compléter en
+  // neutre plutôt que de laisser un buffer d'attributs plus court que les
+  // positions, ce que Three refuse.
+  while (roadCol.length < roadPos.length) roadCol.push(1, 1, 1);
   const roadMesh = meshFromArrays(roadPos, roadUv, roadNrm,
     new THREE.MeshStandardMaterial({
-      map: asphalt, roughnessMap: asphaltRug, roughness: 1,
+      map: asphalt, roughnessMap: asphaltRug, roughness: 1, vertexColors: true,
       // Relief du gravillon : c'est lui qui fait accrocher la lumière rasante
       // sur la chaussee vue en fuyante, la surface la plus regardee du jeu.
       bumpMap: carteRelief(asphalt), bumpScale: 0.22,
       color: 0xaaa8a4, side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
     }));
+  roadMesh.geometry.setAttribute('color', new THREE.Float32BufferAttribute(roadCol, 3));
   roadMesh.renderOrder = 2;
 
   // Placettes pavées. Teinte relevée sur photographie : à l'ombre, le pavé
@@ -821,12 +863,34 @@ export function buildWorld(scene, data) {
   // grandes étendues plates que l'on longe en roulant. Elles n'étaient pas
   // demandées à Overpass jusqu'ici, donc totalement absentes du rendu.
   const parkPos = [], parkUv = [], parkNrm = [];
+  // Aires en stabilisé ou en herbe, d'après le relevé Panoramax : une partie
+  // des parkings d'Artix n'est pas goudronnée (20 aires mesurées en stabilisé
+  // clair). Les rendre en enrobé sombre uniforme était faux.
+  const stabPos = [], stabUv = [], stabNrm = [];
+  const solsParkings = data.sols?.parkings ?? [];
+  const classeAire = (p) => {
+    let cx = 0, cz = 0;
+    for (const [x, z] of p.pts) { cx += x; cz += z; }
+    cx /= p.pts.length; cz /= p.pts.length;
+    let releve = null, dMin = 6;
+    for (const r of solsParkings) {
+      const d = Math.hypot(r.x - cx, r.z - cz);
+      if (d < dMin) { dMin = d; releve = r; }
+    }
+    return releve?.t ?? 'enrobe';
+  };
   const margePos = [];
   // Places en épi déduites des aires OSM, transmises aux véhicules stationnés :
   // sans elles, les voitures de ces parkings viennent du stationnement de rue
   // et se rangent dans l'axe de la voie, en travers des places marquées.
   const placesEpi = [];
   for (const p of data.parkings ?? []) {
+    const classe = classeAire(p);
+    // Une aire enherbée n'a pas de dalle : le terrain suffit.
+    if (classe === 'herbe') continue;
+    const cPos = classe === 'stabilise' ? stabPos : parkPos;
+    const cUv = classe === 'stabilise' ? stabUv : parkUv;
+    const cNrm = classe === 'stabilise' ? stabNrm : parkNrm;
     let tris = triangulate(p.pts);
     // Repli en éventail depuis le centroïde. L'algorithme d'oreilles échoue sur
     // 52 des 127 aires d'Artix (17 700 m² perdus, soit un sixième du total) :
@@ -844,11 +908,11 @@ export function buildWorld(scene, data) {
     for (const [a, b, c] of tris) {
       for (const k of [a, b, c]) {
         const [x, z] = p.pts[k];
-        parkPos.push(x, altP(x, z), z);
+        cPos.push(x, altP(x, z), z);
         // UV en mètres : la texture d'enrobé garde la même granulométrie que
         // sur la chaussée, sinon le raccord se voit.
-        parkUv.push(x / 4, z / 4);
-        parkNrm.push(0, 1, 0);
+        cUv.push(x / 4, z / 4);
+        cNrm.push(0, 1, 0);
       }
     }
   }
@@ -868,6 +932,9 @@ export function buildWorld(scene, data) {
   // Les cotes se déduisent ensuite de l'angle propre à chaque aire.
   for (const p of data.parkings ?? []) {
     if (p.station) continue;   // une station-service n'a pas de places marquées
+    // Pas de peinture sur la grave compactée ni sur l'herbe : le marquage et
+    // les places rangées n'existent que sur l'enrobé.
+    if (classeAire(p) !== 'enrobe') continue;
     // Grand axe de l'aire, par analyse en composantes principales : les places
     // se rangent perpendiculairement à lui, comme sur un parking réel.
     let cx = 0, cz = 0;
@@ -1063,6 +1130,22 @@ export function buildWorld(scene, data) {
     parkMesh.renderOrder = 1;
     parkMesh.receiveShadow = true;
     group.add(parkMesh);
+  }
+
+  if (stabPos.length) {
+    // Grave compactée claire : teinte relevée sur les panoramiques, grain
+    // d'enduit resserré pour le granulat.
+    const grave = texturerEnduit(256);
+    grave.repeat.set(2.5, 2.5);
+    const stabMesh = meshFromArrays(stabPos, stabUv, stabNrm,
+      new THREE.MeshStandardMaterial({
+        map: grave, bumpMap: carteRelief(grave), bumpScale: 0.3,
+        color: 0xb3a790, roughness: 1, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
+      }));
+    stabMesh.renderOrder = 1;
+    stabMesh.receiveShadow = true;
+    group.add(stabMesh);
   }
 
   // ---- Ouvrages d'art : tabliers et garde-corps -------------------------
