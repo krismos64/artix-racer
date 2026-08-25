@@ -1862,6 +1862,25 @@ function construirePoste(boite) {
     new THREE.MeshStandardMaterial({ color: 0xf5c500, roughness: 0.55 }));
   bal.position.set(L / 2 - 0.8, 0.55, W / 2 + 1.1);
   g.add(bal);
+  // Distributeur de billets encastré et drapeaux bleus, relevés sur les
+  // panoramiques : le caisson bleu du DAB à côté de la porte, et deux
+  // enseignes drapeau superposées en tête de façade.
+  const bleuPoste = new THREE.MeshStandardMaterial({ color: 0x1a4fa0, roughness: 0.45 });
+  for (const face of [-1, 1]) {
+    const dab = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.7, 0.16), bleuPoste);
+    dab.position.set(L / 2 - 4.2, 1.25, face * (W / 2 + 0.06));
+    g.add(dab);
+    const ecranDab = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0x10141c, roughness: 0.3 }));
+    ecranDab.position.set(L / 2 - 4.2, 1.45, face * (W / 2 + 0.15));
+    ecranDab.rotation.y = face > 0 ? 0 : Math.PI;
+    g.add(ecranDab);
+    for (let k = 0; k < 2; k++) {
+      const drapeau = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.5, 0.7), bleuPoste);
+      drapeau.position.set(L / 2 - 2.6, 3.6 - k * 0.65, face * (W / 2 + 0.35));
+      g.add(drapeau);
+    }
+  }
   return g;
 }
 

@@ -105,45 +105,30 @@ function trouverBandes(data) {
     }
   }
 
-  // Bandes relevées sur les panoramiques devant les commerces du centre :
-  // l'épi y est réel (parvis de la Poste, rangée d'Au Comptoir, la Presse et
-  // la pizzeria) mais aucun immeuble collectif ne permet de le déduire.
-  const ANCRAGES = [
-    { x: 38, z: 48, portee: 26 },    // devant la Poste
-    { x: 45, z: -18, portee: 32 },   // Au Comptoir, Maison de la Presse, pizzeria
+  // Place du Général de Gaulle, relevée sur les panoramiques : entre
+  // l'avenue et la mairie, le parking de la place s'organise en rangées de
+  // bataille serrées sous les platanes taillés en tête de chat. Devant la
+  // rangée des commerces et la Poste, en revanche, le stationnement est
+  // LONGITUDINAL le long du trottoir : il vient du stationnement de rue
+  // ordinaire, pas d'une bande marquée. Deux allées nord-sud desservent
+  // chacune ses places de part et d'autre.
+  const PLACE_GAULLE = [
+    // allée est : places vers l'avenue et vers le centre de la place
+    { x1: 10.5, z1: 34, x2: 10.5, z2: 62, nx: 1, nz: 0, allee: 2.4 },
+    { x1: 10.5, z1: 34, x2: 10.5, z2: 62, nx: -1, nz: 0, allee: 2.4 },
+    // allée ouest : places vers la place et vers le parvis de la mairie
+    { x1: 0.5, z1: 36, x2: 0.5, z2: 60, nx: 1, nz: 0, allee: 2.4 },
+    { x1: 0.5, z1: 36, x2: 0.5, z2: 60, nx: -1, nz: 0, allee: 2.4 },
   ];
-  for (const a of ANCRAGES) {
-    let meilleur = null;
-    for (const r of data.roads) {
-      if (!r.drivable || r.rondPoint || r.bridge) continue;
-      for (let i = 0; i < r.pts.length - 1; i++) {
-        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
-        const dx = x2 - x1, dz = z2 - z1;
-        const l2 = dx * dx + dz * dz;
-        const len = Math.sqrt(l2);
-        if (len < 10) continue;
-        let t = ((a.x - x1) * dx + (a.z - z1) * dz) / l2;
-        t = Math.max(0, Math.min(1, t));
-        const px = x1 + dx * t, pz = z1 + dz * t;
-        const d = Math.hypot(a.x - px, a.z - pz);
-        if (d < (meilleur?.d ?? 20)) {
-          meilleur = { d, x1, z1, dx, dz, len, t, largeurVoie: r.width };
-        }
-      }
-    }
-    if (!meilleur) continue;
-    const { x1, z1, dx, dz, len, t, largeurVoie } = meilleur;
-    const ux = dx / len, uz = dz / len;
-    let nx = -uz, nz = ux;
-    // Du côté du commerce, comme sur les photos.
-    if (nx * (a.x - (x1 + dx * t)) + nz * (a.z - (z1 + dz * t)) < 0) { nx = -nx; nz = -nz; }
-    // Sous-segment centré sur la projection du point d'ancrage.
-    const demi = Math.min(a.portee, len) / 2;
-    const cx2 = x1 + dx * t, cz2 = z1 + dz * t;
+  for (const r of PLACE_GAULLE) {
+    const len = Math.hypot(r.x2 - r.x1, r.z2 - r.z1);
     bandes.push({
-      x1: cx2 - ux * demi, z1: cz2 - uz * demi,
-      x2: cx2 + ux * demi, z2: cz2 + uz * demi,
-      ux, uz, nx, nz, len: demi * 2, largeurVoie,
+      x1: r.x1, z1: r.z1, x2: r.x2, z2: r.z2,
+      ux: (r.x2 - r.x1) / len, uz: (r.z2 - r.z1) / len,
+      nx: r.nx, nz: r.nz, len,
+      // `largeurVoie` sert d'écart entre l'axe de la bande et le nez des
+      // places : ici la demi-largeur de l'allée centrale.
+      largeurVoie: r.allee * 2,
     });
   }
   return bandes;
