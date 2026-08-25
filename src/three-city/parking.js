@@ -105,30 +105,21 @@ function trouverBandes(data) {
     }
   }
 
-  // Place du Général de Gaulle, relevée sur les panoramiques : entre
-  // l'avenue et la mairie, le parking de la place s'organise en rangées de
-  // bataille serrées sous les platanes taillés en tête de chat. Devant la
-  // rangée des commerces et la Poste, en revanche, le stationnement est
-  // LONGITUDINAL le long du trottoir : il vient du stationnement de rue
-  // ordinaire, pas d'une bande marquée. Deux allées nord-sud desservent
-  // chacune ses places de part et d'autre.
-  const PLACE_GAULLE = [
-    // allée est : places vers l'avenue et vers le centre de la place
-    { x1: 10.5, z1: 34, x2: 10.5, z2: 62, nx: 1, nz: 0, allee: 2.4 },
-    { x1: 10.5, z1: 34, x2: 10.5, z2: 62, nx: -1, nz: 0, allee: 2.4 },
-    // allée ouest : places vers la place et vers le parvis de la mairie
-    { x1: 0.5, z1: 36, x2: 0.5, z2: 60, nx: 1, nz: 0, allee: 2.4 },
-    { x1: 0.5, z1: 36, x2: 0.5, z2: 60, nx: -1, nz: 0, allee: 2.4 },
-  ];
-  for (const r of PLACE_GAULLE) {
-    const len = Math.hypot(r.x2 - r.x1, r.z2 - r.z1);
+  // Stationnement du centre-bourg, relevé sur l'ORTHOPHOTO IGN : la place
+  // pavée du Général de Gaulle est une esplanade piétonne (aucun marquage,
+  // deux véhicules épars), et le stationnement organisé est une bande en
+  // BATAILLE le long du côté est de l'avenue du 18e Régiment d'Infanterie,
+  // traits perpendiculaires à la voie et arbres intercalés, du carrefour de
+  // la Patte d'Oie jusqu'à la hauteur de la Poste.
+  {
+    const A = [25.2, 1], B = [17.2, 30];
+    const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
+    const ux = (B[0] - A[0]) / len, uz = (B[1] - A[1]) / len;
+    // Normale vers l'est (côté commerces), perpendiculaire à l'avenue.
     bandes.push({
-      x1: r.x1, z1: r.z1, x2: r.x2, z2: r.z2,
-      ux: (r.x2 - r.x1) / len, uz: (r.z2 - r.z1) / len,
-      nx: r.nx, nz: r.nz, len,
-      // `largeurVoie` sert d'écart entre l'axe de la bande et le nez des
-      // places : ici la demi-largeur de l'allée centrale.
-      largeurVoie: r.allee * 2,
+      x1: A[0], z1: A[1], x2: B[0], z2: B[1],
+      ux, uz, nx: uz, nz: -ux, len,
+      largeurVoie: 7,
     });
   }
   return bandes;
