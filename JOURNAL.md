@@ -2,6 +2,18 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 : poteaux réels, câbles, enseignes drapeau
+
+- Campagne Panoramax « verticale » : 217 poteaux (électricité/télécom)
+  TRIANGULÉS depuis les panoramiques (bâtonnets sombres contre le ciel vus
+  sous plusieurs gisements, silhouette anti-arbre, amas d'intersections).
+  Le jeu les plante aux positions réelles ; caténaires paraboliques doubles
+  entre poteaux successifs d'une même voie.
+- Enseignes drapeau perpendiculaires (croix de pharmacie émissive, initiale
+  pour les autres commerces) en plus des bandeaux.
+- Stats relevé : médiane à 611 m du centre (lotissements aériens, centre
+  enfoui), 3 à 99 observations par poteau.
+
 ## 2026-08-25 (tard) : la ville vivante
 
 - Passants (110) et touffes d'herbe branchés : les modules Three dormants
