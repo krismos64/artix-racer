@@ -2,6 +2,15 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 2) : feuillage alpha
+
+- Couronnes d'arbres découpées par texture d'amas de feuilles (alphaTest) :
+  silhouettes dentelées, houppiers poreux, fini les arêtes polygonales de
+  près. Vérifié à l'écran, validé par Christophe.
+- Noté au passage : les touffes d'herbe du premier plan ressortent très
+  sombres (presque noires) sur pelouse claire : à rééquilibrer (teinte
+  d'instance × texture de brins).
+
 ## 2026-08-26 (suite) : lignes aériennes continues et placage étendu
 
 - Câbles enfin visibles : chaînage réparé (doublons enjambés) + supports
