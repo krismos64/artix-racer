@@ -2,6 +2,18 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-25 (tard) : la ville vivante
+
+- Passants (110) et touffes d'herbe branchés : les modules Three dormants
+  (pedestrians.js, touffes.js) gardent toute leur logique, leur rendu passe
+  par LiveInstancedBridge (thin instances Babylon sur le MÊME Float32Array de
+  matrices, zéro copie).
+- Nuit équilibrée après trois itérations avec Christophe : phares en cône
+  étroit quasi horizontal (l'énergie à 15-35 m), lampes du pool à intensité
+  continue en distance (plus d'allumage visible), halos permanents dominants.
+- Reste : câbles entre poteaux, enseignes perpendiculaires, placage photo
+  étendu + exposition homogène.
+
 ## 2026-08-25 (nuit) : musique, ambiances, éclairage nocturne, sols mesurés
 
 - Musique en boucle (music1.mp3, streaming, touche M).
