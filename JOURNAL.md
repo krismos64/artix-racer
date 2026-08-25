@@ -2,6 +2,14 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite) : lignes aériennes continues et placage étendu
+
+- Câbles enfin visibles : chaînage réparé (doublons enjambés) + supports
+  manquants interpolés tous les 48 m sur les longues portées : 210 portées,
+  médiane 36 m. Détection assouplie : 357 poteaux relevés + 77 interpolés.
+- Placage photo : 254 façades (rayon 900 m) dans 2 atlas 4096², exposition
+  homogénéisée (cible de luminance + balance des blancs à 50 %).
+
 ## 2026-08-26 : poteaux réels, câbles, enseignes drapeau
 
 - Campagne Panoramax « verticale » : 217 poteaux (électricité/télécom)
