@@ -1,0 +1,2976 @@
+// Construit la ville d'Artix en 3D à partir des données OSM et BD TOPO.
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { couleurMur, couleurToit } from './bdtopo.js';
+import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce,
+  texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage,
+  texturerNormalesEau, bruit,
+  relief as carteRelief, anisotropie } from './textures.js';
+import { TAILLE as TERRAIN_TAILLE, RESOLUTION as TERRAIN_RES } from './terrain.js';
+
+// Altitude de la chaussée. Sert de référence commune au rendu, au maillage
+// de collision et au calcul de la hauteur d'apparition du véhicule.
+export const ROAD_Y = 0.25;
+
+// Garde entre la chaussée et le terrain qui l'entoure. Le sol est interpolé sur
+// une grille de 22 m et la route sommet par sommet : sans un écart franc, le
+// terrain ressort au-dessus de l'asphalte entre deux nœuds de grille et l'herbe
+// déborde sur la voie. 35 cm restent invisibles depuis une caméra de conduite.
+export const GARDE_SOL = 0.35;
+
+// Palette proche des matériaux réels du Béarn : enduit clair, tuile canal, ardoise.
+const WALL_COLORS = [0xd8cfc0, 0xe2dacb, 0xcfc4b2, 0xd2c8ba, 0xe6dfd2, 0xc8bda9];
+// Teintes réservées, indexées après WALL_COLORS : pierre pour les églises,
+// bardage métallique pour les hangars et grandes surfaces.
+const SPECIAL_WALLS = [0xb8ae9a, 0xa8adb2];
+const ROOF_COLORS = [0x9c4a2f, 0xa85436, 0x8d4128, 0xb35c3a, 0x6b5a52, 0x8f4b33];
+
+// Génère un bruit déterministe à partir d'une graine, pour que la ville soit
+// identique à chaque lancement.
+function hash(n) {
+  const s = Math.sin(n * 127.1) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+// Triangule un polygone simple (oreilles). Suffisant pour des emprises OSM.
+function triangulate(pts) {
+  const n = pts.length;
+  if (n < 3) return [];
+  const idx = [...Array(n).keys()];
+  let signedArea = 0;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    signedArea += (pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]);
+  }
+  if (signedArea > 0) idx.reverse();
+
+  const tris = [];
+  let guard = 0;
+  while (idx.length > 3 && guard++ < n * n) {
+    let clipped = false;
+    for (let i = 0; i < idx.length; i++) {
+      const a = idx[(i + idx.length - 1) % idx.length];
+      const b = idx[i];
+      const c = idx[(i + 1) % idx.length];
+      const [ax, az] = pts[a], [bx, bz] = pts[b], [cx, cz] = pts[c];
+      const cross = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+      if (cross <= 0) continue; // pas convexe
+
+      let contains = false;
+      for (const p of idx) {
+        if (p === a || p === b || p === c) continue;
+        const [px, pz] = pts[p];
+        const d1 = (bx - ax) * (pz - az) - (bz - az) * (px - ax);
+        const d2 = (cx - bx) * (pz - bz) - (cz - bz) * (px - bx);
+        const d3 = (ax - cx) * (pz - cz) - (az - cz) * (px - cx);
+        if (d1 >= 0 && d2 >= 0 && d3 >= 0) { contains = true; break; }
+      }
+      if (contains) continue;
+      tris.push([a, b, c]);
+      idx.splice(i, 1);
+      clipped = true;
+      break;
+    }
+    if (!clipped) break;
+  }
+  if (idx.length === 3) tris.push([idx[0], idx[1], idx[2]]);
+  return tris;
+}
+
+// Aire signée d'un contour, vue du dessus. Positive en sens horaire dans le
+// repère x/z du jeu, où z va vers le sud.
+function aireSignee(pts) {
+  let a = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    a += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+  }
+  return a / 2;
+}
+
+// Décrit la forme d'une emprise bâtie, pour décider du type de couverture.
+//
+// Le toit à deux pans suppose un volume simple, allongé, sans renfoncement :
+// c'est le cas de la maison béarnaise courante. Dès que l'emprise se creuse
+// (bâtiment en L, en U, corps accolés, cour intérieure), relier chaque arête à
+// un faîtage unique fait sortir des triangles hors du volume et laisse des
+// trous. Ces emprises reçoivent une couverture plate, qui se ferme proprement.
+//
+// Trois mesures, toutes tirées du seul contour :
+// - `concavite` : part des sommets rentrants. Un rectangle en compte zéro.
+// - `remplissage` : part du rectangle englobant orienté réellement bâtie. Un L
+//   plafonne vers 0,6, un U descend plus bas.
+// - `elancement` : rapport longueur sur largeur. Un carré parfait ne désigne
+//   aucune direction de faîtage fiable.
+function analyserEmprise(pts, ax, az, px, pz) {
+  const n = pts.length;
+  let rentrants = 0;
+  // Le sens de parcours n'est pas garanti dans les données : on le lit sur
+  // l'aire signée plutôt que de le supposer.
+  const sens = aireSignee(pts) > 0 ? 1 : -1;
+  for (let i = 0; i < n; i++) {
+    const [x0, z0] = pts[(i + n - 1) % n];
+    const [x1, z1] = pts[i];
+    const [x2, z2] = pts[(i + 1) % n];
+    const cross = ((x1 - x0) * (z2 - z1) - (z1 - z0) * (x2 - x1)) * sens;
+    // Seuil en aire plutôt qu'en angle : deux arêtes presque colinéaires
+    // produisent un produit vectoriel minuscule dont le signe n'a pas de sens.
+    if (cross < -0.25) rentrants++;
+  }
+
+  let cx = 0, cz = 0;
+  for (const [x, z] of pts) { cx += x; cz += z; }
+  cx /= n; cz /= n;
+  let aMin = Infinity, aMax = -Infinity, pMin = Infinity, pMax = -Infinity;
+  for (const [x, z] of pts) {
+    const dx = x - cx, dz = z - cz;
+    const a = dx * ax + dz * az, p = dx * px + dz * pz;
+    aMin = Math.min(aMin, a); aMax = Math.max(aMax, a);
+    pMin = Math.min(pMin, p); pMax = Math.max(pMax, p);
+  }
+  const longueur = aMax - aMin, largeur = pMax - pMin;
+  const rectangle = longueur * largeur;
+  const aire = Math.abs(aireSignee(pts));
+
+  return {
+    concavite: n > 0 ? rentrants / n : 0,
+    remplissage: rectangle > 1e-6 ? Math.min(1, aire / rectangle) : 1,
+    elancement: largeur > 1e-6 ? longueur / largeur : 1,
+    longueur,
+    largeur,
+    aire,
+    sommets: n,
+  };
+}
+
+// Rétrécit un contour vers son centroïde. Sert à poser l'acrotère d'un toit
+// plat : la face intérieure du muret suit le contour réduit de son épaisseur.
+// Un vrai décalage de polygone gérerait les arêtes qui se croisent ; à
+// l'échelle de quelques centimètres sur une emprise bâtie, la contraction
+// homothétique suffit et ne peut pas se retourner.
+function contracter(pts, cx, cz, marge) {
+  return pts.map(([x, z]) => {
+    const dx = x - cx, dz = z - cz;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-6) return [x, z];
+    const k = Math.max(0.02, (d - marge) / d);
+    return [cx + dx * k, cz + dz * k];
+  });
+}
+
+// Transforme une polyligne (route) en ruban continu de triangles.
+// Les bords sont calculés par bissectrice à chaque sommet : le ruban reste
+// d'un seul tenant dans les virages, sans trou ni pastille de rattrapage.
+// `relief` (optionnel) plaque le ruban sur le terrain : y devient alors une
+// hauteur au-dessus du sol plutôt qu'une altitude absolue.
+// `pont` (en mètres) surélève le tablier au-dessus du terrain, avec des rampes
+// d'accès aux deux extrémités.
+// Pas de densification des rubans, en mètres. Choisi sous le pas du terrain
+// (12,5 m) pour que la chaussée soit toujours au moins aussi finement décrite
+// que le sol qu'elle doit dominer.
+const PAS_RUBAN = 6;
+
+// Insère des sommets intermédiaires sur les segments trop longs, en conservant
+// les sommets d'origine : la géométrie du tracé OSM reste exacte, seule sa
+// description en altitude gagne en finesse.
+function densifier(pts, pas) {
+  const out = [pts[0]];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x1, z1] = pts[i], [x2, z2] = pts[i + 1];
+    const long = Math.hypot(x2 - x1, z2 - z1);
+    // Borne de sécurité : un segment de 1 200 m ne doit pas engendrer des
+    // milliers de sommets à lui seul.
+    const n = Math.min(256, Math.ceil(long / pas));
+    for (let k = 1; k < n; k++) {
+      const u = k / n;
+      out.push([x1 + (x2 - x1) * u, z1 + (z2 - z1) * u]);
+    }
+    out.push(pts[i + 1]);
+  }
+  return out;
+}
+
+function ribbon(pts, width, y, positions, uvs, normals, relief = null, pont = 0) {
+  if (!pts || pts.length < 2 || !(width > 0)) return;
+
+  // Nettoyage : on retire les points invalides et les doublons.
+  const brut = [];
+  for (const q of pts) {
+    if (!Number.isFinite(q[0]) || !Number.isFinite(q[1])) continue;
+    const last = brut[brut.length - 1];
+    if (last && Math.hypot(q[0] - last[0], q[1] - last[1]) < 0.01) continue;
+    brut.push(q);
+  }
+  if (brut.length < 2) return;
+
+  // Densification : OSM ne pose un nœud qu'aux changements de direction, si
+  // bien que 61 % des segments d'Artix dépassent le pas du terrain (12,5 m) et
+  // que certains atteignent 1 200 m. Le ruban n'ayant de sommet qu'aux nœuds,
+  // son altitude est interpolée en ligne droite entre deux extrémités pendant
+  // que le sol, lui, continue d'onduler : sur une longue portée en travers
+  // d'une croupe, le terrain traverse l'asphalte et l'herbe recouvre la voie.
+  // On insère donc des sommets intermédiaires pour que la chaussée épouse le
+  // relief à la même finesse que lui.
+  const p = relief ? densifier(brut, PAS_RUBAN) : brut;
+
+  const h = width / 2;
+  const left = [], right = [], dists = [];
+  let dist = 0;
+
+  for (let i = 0; i < p.length; i++) {
+    // Direction entrante et sortante du sommet.
+    let dirInX = 0, dirInZ = 0, dirOutX = 0, dirOutZ = 0;
+    if (i > 0) {
+      const l = Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+      dirInX = (p[i][0] - p[i - 1][0]) / l;
+      dirInZ = (p[i][1] - p[i - 1][1]) / l;
+      dist += l;
+    }
+    if (i < p.length - 1) {
+      const l = Math.hypot(p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]);
+      dirOutX = (p[i + 1][0] - p[i][0]) / l;
+      dirOutZ = (p[i + 1][1] - p[i][1]) / l;
+    }
+    if (i === 0) { dirInX = dirOutX; dirInZ = dirOutZ; }
+    if (i === p.length - 1) { dirOutX = dirInX; dirOutZ = dirInZ; }
+
+    // Bissectrice des deux directions, puis sa normale.
+    let bx = dirInX + dirOutX, bz = dirInZ + dirOutZ;
+    const bl = Math.hypot(bx, bz);
+    if (bl < 1e-6) { bx = dirInX; bz = dirInZ; }
+    else { bx /= bl; bz /= bl; }
+
+    // Facteur d'élargissement dans les virages serrés (miter), borné pour
+    // éviter les pointes démesurées sur un angle aigu.
+    const cosHalf = Math.max(0.35, dirInX * bx + dirInZ * bz);
+    const ext = Math.min(h / cosHalf, h * 2.5);
+
+    left.push([p[i][0] - bz * ext, p[i][1] + bx * ext]);
+    right.push([p[i][0] + bz * ext, p[i][1] - bx * ext]);
+    dists.push(dist);
+  }
+
+  // Altitude de chaque bord : sur terrain accidenté, la chaussée suit le sol.
+  // La moyenne des deux bords garde la voie plane en travers, comme une vraie
+  // route terrassée. L'altitude est prise sur le terrain NATUREL, avant le
+  // creusement pratiqué sous les routes : sinon la chaussée suivrait ce
+  // creusement et l'herbe reviendrait affleurer la voie.
+  const solRoute = relief
+    ? (bx, bz) => relief.hauteurRoute(bx, bz)
+    : () => 0;
+  const yl = [], yr = [];
+  for (let i = 0; i < p.length; i++) {
+    const a = relief
+      ? (solRoute(left[i][0], left[i][1])
+        + solRoute(right[i][0], right[i][1])
+        + solRoute(p[i][0], p[i][1]) * 2) / 4 + y
+      : y;
+    yl.push(a); yr.push(a);
+  }
+
+  // Ouvrage d'art : le tablier s'élève au-dessus du terrain naturel. La montée
+  // est progressive depuis les deux culées, sinon la voiture heurterait une
+  // marche à l'entrée du pont.
+  if (pont > 0) {
+    // Longueur cumulée, pour répartir les rampes d'accès.
+    const total = dists[dists.length - 1] || 1;
+    const rampe = Math.min(total * 0.32, 14);
+    for (let i = 0; i < p.length; i++) {
+      const d = dists[i];
+      // Facteur 0 aux extrémités, 1 au centre de l'ouvrage.
+      const t = Math.min(d / rampe, (total - d) / rampe, 1);
+      const lissage = t <= 0 ? 0 : (1 - Math.cos(Math.max(0, t) * Math.PI)) / 2;
+      yl[i] += pont * lissage;
+      yr[i] += pont * lissage;
+    }
+  }
+
+  // Deux triangles par intervalle, sur toute la longueur de la polyligne.
+  for (let i = 0; i < p.length - 1; i++) {
+    const l0 = left[i], r0 = right[i], l1 = left[i + 1], r1 = right[i + 1];
+    const a0 = yl[i], a1 = yl[i + 1];
+    // UV en mètres divisés par une taille de motif fixe (4 m) : sur une route
+    // de 200 m, un ratio basé sur la largeur ferait défiler la texture des
+    // centaines de fois et la moyennerait en aplat sombre.
+    const v0 = dists[i] / 4, v1 = dists[i + 1] / 4;
+    positions.push(
+      l0[0], a0, l0[1], r0[0], a0, r0[1], l1[0], a1, l1[1],
+      r0[0], a0, r0[1], r1[0], a1, r1[1], l1[0], a1, l1[1],
+    );
+    uvs.push(0, v0, 1, v0, 0, v1, 1, v0, 1, v1, 0, v1);
+    for (let k = 0; k < 6; k++) normals.push(0, 1, 0);
+  }
+}
+
+function meshFromArrays(positions, uvs, normals, material) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  g.computeBoundingSphere();
+  const m = new THREE.Mesh(g, material);
+  m.receiveShadow = true;
+  return m;
+}
+
+// Herbe du sol général.
+//
+// La version précédente semait 9 000 carrés de 2 px au hasard sur un aplat :
+// à la répétition de 60, un carré mesurait une dizaine de centimètres au sol,
+// donc invisible en conduite, et le motif se lisait comme un bruit uniforme.
+// Le sol paraissait plat et d'un vert unique sur toute la commune.
+//
+// Ici, quatre échelles superposées. Les deux plus lentes portent l'essentiel
+// de la lecture : ce sont elles qui font des zones plus rases, plus sèches ou
+// plus fournies, ce qu'on voit réellement sur un pré. Le brin d'herbe fin ne
+// sert qu'à empêcher les aplats.
+//
+// La saturation est volontairement contenue : un vert franc donne un rendu de
+// gazon synthétique, alors que la prairie béarnaise en été tire vers le
+// vert-jaune grisé.
+function grassTexture() {
+  const taille = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = taille;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(taille, taille);
+  const d = img.data;
+  const brins = bruit(taille, taille, 96, 11);
+  const touffes = bruit(taille, taille, 26, 37);
+  const plaques = bruit(taille, taille, 7, 59);
+  const lent = bruit(taille, taille, 3, 89);
+  for (let y = 0; y < taille; y++) {
+    for (let x = 0; x < taille; x++) {
+      const i = (y * taille + x) * 4;
+      // Clarté : les plaques et l'ondulation lente dominent, le brin ne fait
+      // que casser l'aplat.
+      const v = 148
+        + (plaques(x, y) - 0.5) * 46
+        + (lent(x, y) - 0.5) * 34
+        + (touffes(x, y) - 0.5) * 24
+        + (brins(x, y) - 0.5) * 16;
+      // Les zones claires sont aussi les plus sèches, donc les plus jaunes :
+      // faire varier la teinte avec la clarté évite le vert uniforme éclairci
+      // par endroits, qui trahit une simple carte de gris.
+      const sec = Math.max(0, Math.min(1, (v - 150) / 55));
+      const base = Math.max(0, Math.min(255, v));
+      d[i] = Math.max(0, Math.min(255, base * (0.52 + sec * 0.13)));
+      d[i + 1] = Math.max(0, Math.min(255, base * (0.94 + sec * 0.04)));
+      d[i + 2] = Math.max(0, Math.min(255, base * (0.36 - sec * 0.04)));
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  // Répétition abaissée de 60 à 34 : les motifs de plaque, qui portent la
+  // lecture, mesurent alors une dizaine de mètres au sol plutôt que trois, ce
+  // qui correspond à ce qu'on voit sur un pré. Plus haut, ils redeviennent du
+  // bruit ; plus bas, la répétition du carré se remarque.
+  t.repeat.set(34, 34);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = anisotropie();
+  return t;
+}
+
+export function buildWorld(scene, data) {
+  const group = new THREE.Group();
+  const collisionTris = []; // triangles envoyés au moteur physique
+  const asphalt = texturerEnrobe(512);
+  // Rugosité variable de la chaussée, partagée par tous les maillages
+  // d'enrobé : une seule texture en mémoire.
+  const asphaltRug = texturerRugositeEnrobe(256);
+  // Usure de la peinture routière, partagée par le marquage et les places.
+  const usureMarquage = texturerUsureMarquage(128);
+  usureMarquage.repeat.set(1, 1);
+  // Normales de surface d'eau, créées à la demande plus bas : inutile de la
+  // générer quand la commune ne porte aucun cours d'eau.
+  let eauNormales = null;
+  // Grain de crépi, partagé par tous les bâtiments : une seule texture en
+  // mémoire, répétée sur les UV déjà calculées à l'échelle du mètre.
+  // 512 plutôt que 256 : une façade de 8 m de haut ne disposait que de 32
+  // pixels de texture par mètre, ce qui lissait le crépi en aplat dès qu'on
+  // s'approchait. Ces deux textures sont uniques et partagées par les 3 500
+  // bâtiments, le quadruplement ne pèse donc que sur elles.
+  const enduit = texturerEnduit(512);
+  enduit.repeat.set(1, 1);
+  const tuile = texturerTuile(512);
+
+  // ---- Sol général -------------------------------------------------------
+  // Le plan est subdivisé : avec 4 sommets seulement, l'interpolation de
+  // profondeur sur 6 km est si grossière que le sol passe devant la chaussée.
+  // La subdivision reprend exactement la grille du terrain : un plan plus
+  // grossier que le heightfield rebomberait entre deux nœuds terrassés et
+  // ramènerait l'herbe par-dessus la chaussée que le terrassement venait de
+  // dégager.
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(TERRAIN_TAILLE, TERRAIN_TAILLE, TERRAIN_RES, TERRAIN_RES),
+    new THREE.MeshStandardMaterial({
+      map: grassTexture(), color: 0xb8cf94, roughness: 1,
+      side: THREE.DoubleSide,
+    }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  // Écart franc sous la chaussée. Le sol est échantillonné sur une grille de
+  // 22 m alors que la route l'est à chaque sommet de polyligne : entre deux
+  // nœuds, un terrain trop proche remonte au-dessus de l'asphalte et l'herbe
+  // déborde sur la voie.
+  ground.position.y = ROAD_Y - GARDE_SOL;
+  ground.receiveShadow = true;
+  // Le sol reçoit les ombres mais n'en projette pas. Avec ses 165 888 triangles
+  // il pesait à lui seul les trois quarts de la passe d'ombre, pour un résultat
+  // invisible : un terrain ne projette sur lui-même que dans les fortes pentes,
+  // et le volume d'ombre est resserré à 124 m autour du véhicule. Le drapeau est
+  // posé ici car l'activation en masse de main.js retient tout maillage de plus
+  // de 5 000 sommets, critère qui vise les bâtiments et attrapait le relief.
+  ground.castShadow = false;
+  ground.userData.noShadowCast = true;
+
+  // Quand le relief est disponible, les sommets du plan sont déplacés en
+  // hauteur : le sol épouse alors les altitudes réelles mesurées par l'IGN.
+  const relief = data.terrain ?? null;
+  if (relief) {
+    const pos = ground.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      // Le plan est encore dans son repère local (X, Y), avant rotation :
+      // son Y correspond donc à -Z dans le monde.
+      const x = pos.getX(i), y = pos.getY(i);
+      pos.setZ(i, relief.hauteurEn(x, -y));
+    }
+    pos.needsUpdate = true;
+    ground.geometry.computeVertexNormals();
+  }
+  group.add(ground);
+
+  // ---- Zones (forêts, champs, parcs) ------------------------------------
+  const zoneColors = {
+    forest: 0x35572d, grass: 0x5f8e43, meadow: 0x6f984b, farmland: 0x8f9250,
+    // Les parcelles résidentielles d'Artix sont majoritairement des jardins,
+    // pas des dalles minérales. Le gris précédent produisait les grands aplats
+    // blancs visibles entre toutes les maisons.
+    residential: 0x5c8248, industrial: 0x6d6c66, cemetery: 0x507848,
+    vineyard: 0x7d8a45, orchard: 0x6b8a45,
+    park: 0x548a40, pitch: 0x417c38, garden: 0x5d9145, sports_centre: 0x4f863e,
+  };
+  // Les zones se posent juste au-dessus du sol, bien sous la chaussée : ce sont
+  // des couvertures de terrain, elles ne doivent jamais mordre sur la voie.
+  const ZONE_Y = ROAD_Y - GARDE_SOL + 0.03;
+  const zonePos = {}; // par type
+  for (const z of data.areas) {
+    const tris = triangulate(z.pts);
+    const arr = (zonePos[z.kind] ??= []);
+    const altZ = (px, pz) => (relief ? relief.hauteurEn(px, pz) : 0) + ZONE_Y;
+    for (const [a, b, c] of tris) {
+      arr.push(z.pts[a][0], altZ(z.pts[a][0], z.pts[a][1]), z.pts[a][1]);
+      arr.push(z.pts[b][0], altZ(z.pts[b][0], z.pts[b][1]), z.pts[b][1]);
+      arr.push(z.pts[c][0], altZ(z.pts[c][0], z.pts[c][1]), z.pts[c][1]);
+    }
+  }
+  for (const [kind, pos] of Object.entries(zonePos)) {
+    if (!pos.length) continue;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: zoneColors[kind] ?? 0x6f8f4a, roughness: 1, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 8,
+    }));
+    m.receiveShadow = true;
+    m.renderOrder = -5;
+    group.add(m);
+  }
+
+  // ---- Eau ---------------------------------------------------------------
+  // L'eau était posée à une altitude fixe de 0,05 alors que tout le reste de
+  // la ville suit le relief interpolé. Sur une commune qui présente 38 m de
+  // dénivelé, le résultat était un ruban gris suspendu en l'air au-dessus des
+  // prés, sans rapport avec le terrain qu'il traverse.
+  //
+  // La surface descend maintenant avec le sol. Elle affleure quelques
+  // centimètres AU-DESSUS du terrain et non en dessous : le relief n'est
+  // terrassé que sous les routes, jamais sous les cours d'eau. Une nappe
+  // posée sous le sol naturel disparaît purement et simplement, ce qu'un
+  // premier essai à -0,35 m a produit : 94 % de la surface enfouie.
+  const AFFLEUREMENT_EAU = 0.06;
+  const altEau = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + AFFLEUREMENT_EAU;
+  // UV de l'eau, en mètres divisés par 12 : la carte de normales couvre alors
+  // une douzaine de mètres, échelle d'une ondulation de ruisseau. Sans UV, la
+  // carte de normales n'a rien où s'appliquer.
+  const waterPos = [], waterUv = [];
+  // Matériau de la nappe, exposé pour que la boucle de jeu fasse dériver ses
+  // normales : c'est ce lent glissement qui fait lire l'eau comme un courant.
+  let materiauEau = null;
+  for (const w of data.water) {
+    if (w.river) {
+      const h = w.width / 2;
+      for (let i = 0; i < w.pts.length - 1; i++) {
+        const [x1, z1] = w.pts[i], [x2, z2] = w.pts[i + 1];
+        const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+        if (len < 0.01) continue;
+        const nx = (-dz / len) * h, nz = (dx / len) * h;
+        // Une altitude par berge : le lit suit la pente en travers comme en
+        // long, sinon un cours d'eau en dévers ressort d'un côté.
+        const yA = altEau(x1 + nx, z1 + nz), yB = altEau(x1 - nx, z1 - nz);
+        const yC = altEau(x2 + nx, z2 + nz), yD = altEau(x2 - nx, z2 - nz);
+        // Sommets énumérés dans le sens antihoraire vu du dessus, pour que la
+        // normale calculée pointe vers le ciel. L'ordre inverse, en place
+        // jusqu'ici, donnait 100 % de normales tournées vers le bas : le
+        // DoubleSide le masquait, au prix d'une face inutile et d'un éclairage
+        // pris à contresens.
+        waterPos.push(
+          x1 + nx, yA, z1 + nz, x2 + nx, yC, z2 + nz, x1 - nx, yB, z1 - nz,
+          x1 - nx, yB, z1 - nz, x2 + nx, yC, z2 + nz, x2 - nx, yD, z2 - nz,
+        );
+      }
+    } else {
+      // Plan d'eau : une nappe est horizontale. On retient la MÉDIANE des
+      // altitudes du contour plutôt que le minimum : un seul point de rive
+      // anormalement bas, fréquent sur un contour interpolé, enfoncerait toute
+      // la nappe sous le terrain et la rendrait invisible.
+      const alts = w.pts.map(([px, pz]) => altEau(px, pz)).sort((a, b) => a - b);
+      let yPlan = alts.length ? alts[Math.floor(alts.length / 2)] : AFFLEUREMENT_EAU;
+      if (!Number.isFinite(yPlan)) yPlan = AFFLEUREMENT_EAU;
+      for (const [a, b, c] of triangulate(w.pts)) {
+        const ax = w.pts[a][0], az = w.pts[a][1];
+        const bx = w.pts[b][0], bz = w.pts[b][1];
+        const cx = w.pts[c][0], cz = w.pts[c][1];
+        // Le sens de parcours d'un contour OSM est arbitraire : on mesure
+        // l'aire signée et on inverse les deux derniers sommets quand elle
+        // annonce une face tournée vers le sol. Sans quoi la nappe est
+        // invisible du dessus, seule vue qui compte ici.
+        const aireSignee = (bx - ax) * (cz - az) - (cx - ax) * (bz - az);
+        waterPos.push(ax, yPlan, az);
+        if (aireSignee > 0) {
+          waterPos.push(cx, yPlan, cz, bx, yPlan, bz);
+        } else {
+          waterPos.push(bx, yPlan, bz, cx, yPlan, cz);
+        }
+      }
+    }
+  }
+  if (waterPos.length) {
+    // UV par projection planaire, une passe après coup : la nappe étant
+    // quasi horizontale, projeter sur X et Z suffit et évite d'avoir à
+    // synchroniser deux tableaux dans les quatre sites qui écrivent des
+    // sommets. Le pas de 12 m donne une ondulation à l'échelle d'un ruisseau.
+    for (let i = 0; i < waterPos.length; i += 3) {
+      waterUv.push(waterPos[i] / 12, waterPos[i + 2] / 12);
+    }
+    eauNormales = texturerNormalesEau(256);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(waterPos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(waterUv, 2));
+    g.computeVertexNormals();
+    // L'eau n'est pas un métal : sa réflectivité vient de son indice de
+    // réfraction, pas d'une conductivité. Un `metalness` de 0,6 la faisait
+    // rendre comme du plomb liquide, prenant la teinte de l'environnement au
+    // lieu de la sienne. En PBR, une surface diélectrique se décrit avec
+    // metalness à 0 et une rugosité basse.
+    //
+    // FrontSide : la nappe est vue du dessus, sa face inférieure n'est jamais
+    // visible en conduite.
+    //
+    // Opaque. La transparence à 0,82 faisait passer l'eau par le tri des
+    // faces transparentes, avec les défauts habituels : selon l'angle, la
+    // nappe se dessinait avant ou après le terrain qu'elle borde, et le pont
+    // qui la franchit apparaissait par transparence à travers elle. Un
+    // ruisseau du Béarn n'est de toute façon pas limpide : on n'en voit pas le
+    // fond, donc la transparence ne montrait rien qui vaille ces défauts.
+    //
+    // Le relief de surface passe par une carte de normales animée très
+    // lentement, ce qui suffit à faire vivre la nappe sans réflexion temps
+    // réel : le reflet vient de la carte d'environnement de la scène.
+    const matEau = new THREE.MeshStandardMaterial({
+      // Bleu-vert peu saturé, comme le Luy de Béarn : une eau de plaine
+      // charrie des limons et tire vers le vert-gris, jamais vers le bleu
+      // franc d'un lac de montagne.
+      color: 0x4a6f6b, roughness: 0.18, metalness: 0.0, side: THREE.FrontSide,
+      transparent: false, depthWrite: true,
+      normalMap: eauNormales,
+      normalScale: new THREE.Vector2(0.22, 0.22),
+    });
+    const meshEau = new THREE.Mesh(g, matEau);
+    meshEau.receiveShadow = true;
+    group.add(meshEau);
+    materiauEau = matEau;
+  }
+
+  // ---- Routes ------------------------------------------------------------
+  // Placettes pavées, relevées sur photographie de rue. OSM ne porte le tag
+  // `surface=paving_stones` que sur deux cheminements piétons d'Artix, à plus
+  // de 380 m du bourg : le pavage du carrefour de la mairie, pourtant la plus
+  // grande surface pavée de la commune et traversée par toute la circulation,
+  // n'y figure pas. Il est donc déclaré ici, par son emprise mesurée.
+  const PLACETTES_PAVEES = [
+    // Carrefour de la mairie, entre la pharmacie de la République et l'arrêt
+    // de bus : large placette en pavés autour du mini-rond-point.
+    { x: -1.3, z: 92.1, rayon: 26 },
+  ];
+  const estPavee = (x, z) => PLACETTES_PAVEES.some(
+    (p) => Math.hypot(x - p.x, z - p.z) < p.rayon);
+  const traversePavage = (a, b) => PLACETTES_PAVEES.some((p) => {
+    const dx = b[0] - a[0], dz = b[1] - a[1];
+    const longueur2 = dx * dx + dz * dz;
+    if (longueur2 < 1e-6) return estPavee(a[0], a[1]);
+    const t = Math.max(0, Math.min(1,
+      ((p.x - a[0]) * dx + (p.z - a[1]) * dz) / longueur2));
+    const px = a[0] + dx * t, pz = a[1] + dz * t;
+    return Math.hypot(px - p.x, pz - p.z) < p.rayon;
+  });
+
+  const roadPos = [], roadUv = [], roadNrm = [];
+  const pathPos = [], pathUv = [], pathNrm = [];
+  const pavePos = [], paveUv = [], paveNrm = [];
+  for (const r of data.roads) {
+    // Le revêtement décide du maillage : le champ `surface` d'OSM était
+    // transmis depuis le début mais n'avait jamais été lu au rendu, si bien
+    // que pavés, béton et gravier ressortaient tous en enrobé.
+    const paveeParTag = r.surface === 'paving_stones' || r.surface === 'sett'
+      || r.surface === 'cobblestone';
+
+    // Une avenue traverse le carrefour sans y avoir son milieu : tester le
+    // point central de la polyligne ne retenait qu'une voie sur dix. Le
+    // revêtement se décide donc segment par segment.
+    //
+    // Mais chaque segment ne peut pas devenir un ruban à lui seul. `ribbon`
+    // calcule ses bords par bissectrice à chaque sommet : sur une polyligne
+    // entière, le bord extérieur d'un virage est prolongé et le ruban reste
+    // d'un seul tenant. Sur un ruban de deux points, il n'y a pas de sommet
+    // intérieur, donc pas de bissectrice : les bords sortent perpendiculaires
+    // et deux segments consécutifs laissent un coin ouvert dans chaque virage.
+    // C'est ce qui ouvrait un triangle d'herbe à chaque changement de direction.
+    //
+    // On regroupe donc les segments CONSÉCUTIFS de même revêtement en tronçons,
+    // et chaque tronçon part d'un seul tenant vers son maillage. Le sommet de
+    // transition appartient aux deux tronçons, sans quoi un trou s'ouvrirait à
+    // la limite du pavage.
+    if (!paveeParTag && !r.bridge) {
+      // Revêtement de chaque segment. Un segment compte comme pavé dès que
+      // l'une de ses extrémités tombe dans l'emprise : mieux vaut un léger
+      // débordement qu'une placette trouée là où les sommets OSM sont espacés.
+      const revSeg = [];
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const a = r.pts[i], b = r.pts[i + 1];
+        // Un segment long peut traverser toute la place avec ses deux
+        // extrémités hors du cercle : tester seulement les sommets le laissait
+        // en asphalte. La distance segment-centre couvre enfin ce cas.
+        revSeg.push(traversePavage(a, b) ? 'pave'
+          : r.drivable ? 'route' : 'chemin');
+      }
+      let debut = 0;
+      for (let i = 0; i <= revSeg.length; i++) {
+        // Fin de tronçon : changement de revêtement, ou fin de la voie.
+        if (i < revSeg.length && revSeg[i] === revSeg[debut]) continue;
+        const troncon = r.pts.slice(debut, i + 1);
+        const rev = revSeg[debut];
+        if (rev === 'pave') ribbon(troncon, r.width, ROAD_Y, pavePos, paveUv, paveNrm, relief);
+        else if (rev === 'route') ribbon(troncon, r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief);
+        else ribbon(troncon, r.width, ROAD_Y - 0.03, pathPos, pathUv, pathNrm, relief);
+        debut = i;
+      }
+      continue;
+    }
+
+    if (paveeParTag) {
+      // Les pavés se posent au niveau de la chaussée : la placette EST la
+      // chaussée sur ce carrefour, la voiture y roule.
+      ribbon(r.pts, r.width, ROAD_Y, pavePos, paveUv, paveNrm, relief);
+    } else if (r.drivable) {
+      // Les ponts d'Artix franchissent des ruisseaux et des voies étroites :
+      // un léger bombement du tablier suffit à les rendre lisibles, et la
+      // voiture le franchit sans que le terrain ait besoin d'être creusé.
+      ribbon(r.pts, r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief,
+        r.bridge ? 0.85 : 0);
+    } else {
+      ribbon(r.pts, r.width, ROAD_Y - 0.03, pathPos, pathUv, pathNrm, relief);
+    }
+  }
+
+  // ---- Raccords de carrefour --------------------------------------------
+  //
+  // Deux rubans qui se croisent laissent un trou en leur milieu. Chaque voie
+  // est bordée par bissectrice le long de SON tracé, mais aucune ne connaît
+  // les autres : à un carrefour en T, la voie qui s'arrête présente un bord
+  // droit, et le triangle compris entre ce bord et le flanc de la voie
+  // traversante n'appartient à personne. C'est par là que l'herbe ressort au
+  // milieu de la chaussée, et c'est le défaut le plus visible en conduite.
+  //
+  // La correction pose une pastille de raccord à chaque nœud partagé par au
+  // moins deux voies. Son rayon vient de la plus large des voies qui s'y
+  // rejoignent : elle recouvre les extrémités de ruban plutôt que de tenter de
+  // s'y ajuster au millimètre, ce qui serait fragile sur des angles quelconques.
+  //
+  // Un disque plutôt qu'un polygone ajusté : un carrefour réel est arrondi par
+  // les rayons de giration, la lecture au sol est meilleure, et la géométrie ne
+  // peut pas se retourner quel que soit l'angle des branches.
+  {
+    // Nœuds de voirie, regroupés par position. Les tracés OSM partagent leurs
+    // sommets aux intersections : deux voies qui se croisent y portent des
+    // coordonnées identiques, à l'arrondi près.
+    const noeuds = new Map();
+    for (const r of data.roads) {
+      if (!r.drivable || r.bridge) continue;
+      // Seules les extrémités et les sommets internes comptent : un sommet de
+      // courbe au milieu d'une voie n'est pas un carrefour.
+      for (const [x, z] of r.pts) {
+        // Clé au décimètre : les coordonnées reprojetées ne retombent pas
+        // exactement sur le même flottant d'une voie à l'autre.
+        const k = `${Math.round(x * 10)},${Math.round(z * 10)}`;
+        let e = noeuds.get(k);
+        if (!e) { e = { x, z, voies: new Set(), largeur: 0 }; noeuds.set(k, e); }
+        e.voies.add(r);
+        e.largeur = Math.max(e.largeur, r.width);
+      }
+    }
+
+    const SEGMENTS = 12;   // finesse de la pastille
+    for (const nd of noeuds.values()) {
+      // Un nœud qui n'appartient qu'à une seule voie n'est pas un carrefour.
+      if (nd.voies.size < 2) continue;
+      // Rayon : un peu plus que la demi-largeur de la voie la plus large, pour
+      // mordre sur les rubans et couvrir le trou sans déborder sur le trottoir.
+      const rayon = nd.largeur * 0.62;
+      const yC = (relief ? relief.hauteurRoute(nd.x, nd.z) : 0) + ROAD_Y;
+      // Éventail depuis le centre : triangulation triviale et toujours valide.
+      for (let s = 0; s < SEGMENTS; s++) {
+        const a0 = (s / SEGMENTS) * Math.PI * 2;
+        const a1 = ((s + 1) / SEGMENTS) * Math.PI * 2;
+        const x0 = nd.x + Math.cos(a0) * rayon, z0 = nd.z + Math.sin(a0) * rayon;
+        const x1 = nd.x + Math.cos(a1) * rayon, z1 = nd.z + Math.sin(a1) * rayon;
+        // Le bord de la pastille suit le terrain comme le fait la chaussée,
+        // sinon un carrefour en pente formerait une marche à sa périphérie.
+        const y0 = (relief ? relief.hauteurRoute(x0, z0) : 0) + ROAD_Y;
+        const y1 = (relief ? relief.hauteurRoute(x1, z1) : 0) + ROAD_Y;
+        roadPos.push(nd.x, yC, nd.z, x0, y0, z0, x1, y1, z1);
+        // UV en mètres, même échelle que les rubans : le raccord doit garder
+        // la granulométrie de l'enrobé voisin, sinon la pastille se lit comme
+        // une pièce rapportée.
+        roadUv.push(nd.x / 4, nd.z / 4, x0 / 4, z0 / 4, x1 / 4, z1 / 4);
+        for (let k = 0; k < 3; k++) roadNrm.push(0, 1, 0);
+      }
+    }
+  }
+  // polygonOffset tire la chaussée vers la caméra dans le depth buffer : c'est
+  // le remède standard au z-fighting entre surfaces quasi coplanaires, bien
+  // plus fiable qu'un simple écart en Y sur une scène de plusieurs kilomètres.
+  // DoubleSide : l'orientation des triangles dépend du sens de parcours de la
+  // polyligne OSM, qui n'est pas garanti. Sans cela, une route sur deux
+  // disparaît par backface culling.
+  // Teinte calée sur photographie de rue. Sur un panoramique du centre-bourg,
+  // la chaussée mesure 0,47 fois la clarté d'un volet blanc voisin ; le rendu
+  // était à 0,95, soit un enrobé presque aussi clair qu'un mur peint. Les
+  // rapports entre surfaces d'une même photo sont fiables même quand la mesure
+  // absolue ne l'est pas, la prise de vue étant souvent à contre-jour.
+  //
+  // Ce calage n'avait jamais été vérifié à l'écran : mesuré sur capture, le
+  // rendu tombait à 0,06 au lieu de 0,47, soit huit fois trop sombre. Deux
+  // causes cumulées, l'albédo et l'éclairage. En linéaire, la texture (0,552)
+  // multipliée par la couleur d'alors (0,270) donnait 0,149 quand la façade
+  // atteint 0,744, soit un rapport d'albédo de 0,20 ; et une surface
+  // horizontale ne reçoit que la composante basse de la lumière
+  // hémisphérique, plus sombre que le ciel qui éclaire les murs.
+  //
+  // La rugosité passe par une carte plutôt qu'un scalaire : les bandes de
+  // roulement sont polies par le trafic et les bords de voie restent grenus,
+  // ce qu'une valeur unique ne peut pas rendre. `roughness` reste à 1 pour que
+  // la carte s'applique telle quelle, les deux se multipliant.
+  //
+  // Teinte à peine réchauffée (0xd0d0d6 -> 0xd2d1cf) : le gris bleuté d'avant
+  // prenait le ciel de plein fouet et l'enrobé virait au mauve en fin de
+  // journée. La clarté est inchangée, le calage à 0,281 relevé au chantier
+  // précédent reste donc valable.
+  const roadMesh = meshFromArrays(roadPos, roadUv, roadNrm,
+    new THREE.MeshStandardMaterial({
+      map: asphalt, roughnessMap: asphaltRug, roughness: 1,
+      color: 0xaaa8a4, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
+    }));
+  roadMesh.renderOrder = 2;
+
+  // Placettes pavées. Teinte relevée sur photographie : à l'ombre, le pavé
+  // mesure 0,36 fois la clarté de l'enrobé voisin, avec une dominante un peu
+  // plus chaude. Rugosité plus forte que l'enrobé : un pavage ne luit pas.
+  let paveMesh = null;
+  if (pavePos.length) {
+    const pave = texturerPave(256);
+    const paveRelief = texturerPave(256);
+    paveRelief.colorSpace = THREE.NoColorSpace;
+    // Un pavé fait environ 20 cm : la texture porte 6 pavés en largeur, donc
+    // un motif de 1,2 m. Les UV sont en mètres divisés par 4 dans `ribbon`,
+    // d'où cette répétition.
+    pave.repeat.set(3.4, 3.4);
+    const paveMat = new THREE.MeshStandardMaterial({
+        map: pave, bumpMap: paveRelief, bumpScale: 0.16,
+        roughness: 0.97, color: 0xa69a8f, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
+      });
+    paveMat.name = 'paves-centre-artix';
+    paveMesh = meshFromArrays(pavePos, paveUv, paveNrm, paveMat);
+    paveMesh.renderOrder = 2;
+    group.add(paveMesh);
+  }
+
+  // ---- Aires de stationnement -------------------------------------------
+  // Plus de 100 surfaces à Artix, 10 hectares d'enrobé au total : les parkings
+  // du Leclerc, de la Place des Tilleuls et des commerces du bourg sont de
+  // grandes étendues plates que l'on longe en roulant. Elles n'étaient pas
+  // demandées à Overpass jusqu'ici, donc totalement absentes du rendu.
+  const parkPos = [], parkUv = [], parkNrm = [];
+  const margePos = [];
+  // Places en épi déduites des aires OSM, transmises aux véhicules stationnés :
+  // sans elles, les voitures de ces parkings viennent du stationnement de rue
+  // et se rangent dans l'axe de la voie, en travers des places marquées.
+  const placesEpi = [];
+  for (const p of data.parkings ?? []) {
+    let tris = triangulate(p.pts);
+    // Repli en éventail depuis le centroïde. L'algorithme d'oreilles échoue sur
+    // 52 des 127 aires d'Artix (17 700 m² perdus, soit un sixième du total) :
+    // les emprises de parking OSM comportent des sommets colinéaires et des
+    // angles rentrants qu'il ne sait pas découper. Un éventail donne une
+    // triangulation moins propre mais couvre toute l'emprise, ce qui suffit
+    // pour une surface plane vue du sol.
+    if (!tris.length && p.pts.length >= 3) {
+      tris = [];
+      for (let i = 1; i < p.pts.length - 1; i++) tris.push([0, i, i + 1]);
+    }
+    // Juste sous la chaussée : un parking affleure la voie qui le dessert,
+    // sans jamais passer au-dessus.
+    const altP = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + ROAD_Y - 0.02;
+    for (const [a, b, c] of tris) {
+      for (const k of [a, b, c]) {
+        const [x, z] = p.pts[k];
+        parkPos.push(x, altP(x, z), z);
+        // UV en mètres : la texture d'enrobé garde la même granulométrie que
+        // sur la chaussée, sinon le raccord se voit.
+        parkUv.push(x / 4, z / 4);
+        parkNrm.push(0, 1, 0);
+      }
+    }
+  }
+  // Marquage des places. Sans lui, un parking se lit comme une simple dalle
+  // d'enrobé. On remplit chaque aire de bandes parallèles à son grand axe,
+  // espacées de la largeur réglementaire d'une place.
+  const LARG_PLACE = 2.5, LONG_PLACE = 5.0;
+  // Le stationnement n'a pas une orientation unique dans Artix. Les bandes du
+  // centre sont souvent en épi, mais les grandes nappes commerciales et la
+  // Place des Tilleuls sont organisées en bataille, perpendiculairement à la
+  // voie centrale. L'ancienne règle à 45° appliquée aux 127 surfaces faisait
+  // notamment tourner toutes les voitures du Leclerc dans le mauvais sens.
+  //
+  // Jusqu'au 19/08/2026 le module portait le nom « épi » mais posait de la
+  // bataille : traits et véhicules suivaient la normale au bord, donc 90°.
+  //
+  // Les cotes se déduisent ensuite de l'angle propre à chaque aire.
+  for (const p of data.parkings ?? []) {
+    if (p.station) continue;   // une station-service n'a pas de places marquées
+    // Grand axe de l'aire, par analyse en composantes principales : les places
+    // se rangent perpendiculairement à lui, comme sur un parking réel.
+    let cx = 0, cz = 0;
+    for (const [x, z] of p.pts) { cx += x; cz += z; }
+    cx /= p.pts.length; cz /= p.pts.length;
+    let sxx = 0, szz = 0, sxz = 0;
+    for (const [x, z] of p.pts) {
+      const dx = x - cx, dz = z - cz;
+      sxx += dx * dx; szz += dz * dz; sxz += dx * dz;
+    }
+    const th = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+    const ux = Math.cos(th), uz = Math.sin(th);
+    const vx = -uz, vz = ux;
+    let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+    for (const [x, z] of p.pts) {
+      const dx = x - cx, dz = z - cz;
+      const u = dx * ux + dz * uz, v = dx * vx + dz * vz;
+      uMin = Math.min(uMin, u); uMax = Math.max(uMax, u);
+      vMin = Math.min(vMin, v); vMax = Math.max(vMax, v);
+    }
+    const largeurAire = vMax - vMin;
+    const surfaceAire = Math.abs(aireSignee(p.pts));
+    // 90° pour les grandes aires structurées en rangées et la Place des
+    // Tilleuls ; 45° pour les bandes compactes du centre-bourg. Cette règle
+    // reproduit les familles visibles sur les photographies tout en restant
+    // stable pour les parkings sans attribut OSM d'orientation.
+    const enBataille = p.nom === 'Place des Tilleuls'
+      || surfaceAire > 900 || largeurAire > 20;
+    const anglePlace = enBataille ? Math.PI / 2 : Math.PI / 4;
+    const sinPlace = Math.sin(anglePlace), cosPlace = Math.cos(anglePlace);
+    const pasPlace = LARG_PLACE / sinPlace;
+    const profondeurPlace = LONG_PLACE * sinPlace + LARG_PLACE * cosPlace;
+    // Une aire trop étroite ne porte pas de rangée lisible.
+    if (uMax - uMin < profondeurPlace || largeurAire < LARG_PLACE * 2) continue;
+    const altM = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + ROAD_Y + 0.005;
+
+    // Les places bordent les deux GRANDS côtés de l'aire, nez vers le bord, et
+    // la voie de circulation passe entre les deux rangées. Une version
+    // antérieure les cherchait aux deux bouts du grand axe : sur une emprise
+    // oblique, `uMin` et `uMax` ne sont atteints qu'en un seul coin, si bien
+    // que le test d'appartenance rejetait la totalité des traits. Le parking
+    // de l'avenue Edmond Rostand (52 x 16 m) n'avait ainsi aucun marquage,
+    // douze traits calculés et douze rejetés.
+    //
+    // Pour trouver le bord réel à une abscisse donnée, on balaie v depuis
+    // chaque côté jusqu'à entrer dans l'emprise : une boîte englobante ne
+    // suffit pas dès que l'aire n'est pas un rectangle aligné.
+    const PAS_SONDE = 0.25;
+
+    // Combien de rangées l'aire peut-elle porter ? Une rangée occupe la
+    // profondeur d'une place, et il faut encore une voie de circulation pour
+    // la desservir. En dessous de deux rangées plus une voie, l'aire n'en
+    // porte qu'une seule, adossée à son bord le plus dégagé.
+    //
+    // Sans ce test, l'emprise de l'avenue Edmond Rostand (15,6 m de large, qui
+    // englobe le parking ET sa voie de desserte) recevait des places sur ses
+    // deux bords, dont l'un longe la barre de logements à 5,2 m : des places
+    // apparaissaient sur la bande enherbée au pied de l'immeuble, où il n'y en
+    // a aucune.
+    const LARG_VOIE = 6.0;
+    const deuxRangees = largeurAire >= 2 * profondeurPlace + LARG_VOIE;
+
+    // Bord retenu quand une seule rangée tient : le plus éloigné du bâti, la
+    // desserte se faisant par l'autre. À défaut de bâti connu à ce stade de la
+    // construction (les repères modélisés à la main ne sont ajoutés qu'après),
+    // on retient le bord le plus long, qui porte la rangée principale.
+    let sensRetenu = 1;
+    if (!deuxRangees) {
+      const longueurBord = (sens) => {
+        const vDep = sens > 0 ? vMin : vMax;
+        let n = 0;
+        for (let u = uMin; u <= uMax; u += pasPlace) {
+          for (let d = 0; d < largeurAire; d += PAS_SONDE) {
+            const v = vDep + sens * d;
+            if (pointInPoly(cx + ux * u + vx * v, cz + uz * u + vz * v, p.pts)) {
+              // Le bord ne compte que s'il peut recevoir une place entière.
+              const vi = v + sens * profondeurPlace;
+              if (pointInPoly(cx + ux * u + vx * vi, cz + uz * u + vz * vi, p.pts)) n++;
+              break;
+            }
+          }
+        }
+        return n;
+      };
+      sensRetenu = longueurBord(1) >= longueurBord(-1) ? 1 : -1;
+    }
+    const sensActifs = deuxRangees ? [1, -1] : [sensRetenu];
+
+    // Le pas suit l'inclinaison : une place à 45° occupe 3,54 m le long du
+    // bord, non 2,50. Garder l'ancien pas ferait chevaucher les véhicules.
+    for (let u = uMin + pasPlace; u < uMax - 0.5; u += pasPlace) {
+      for (const sens of sensActifs) {
+        const vDepart = sens > 0 ? vMin : vMax;
+        let vBord = null;
+        for (let d = 0; d < vMax - vMin; d += PAS_SONDE) {
+          const v = vDepart + sens * d;
+          if (pointInPoly(cx + ux * u + vx * v, cz + uz * u + vz * v, p.pts)) {
+            vBord = v;
+            break;
+          }
+        }
+        if (vBord === null) continue;
+        // Le trait de séparation part du bord et s'enfonce en diagonale : il
+        // matérialise le flanc d'une place inclinée, donc il avance le long du
+        // bord en même temps qu'il s'y enfonce. Un trait perpendiculaire
+        // dessinerait de la bataille sous des véhicules posés en épi.
+        //
+        // `sensEpi` fait pencher toutes les places d'une même rangée du même
+        // côté, comme sur un parking réel : deux rangées face à face penchent
+        // en sens inverse, la manœuvre d'entrée se faisant vers l'avant dans
+        // chaque sens de circulation.
+        const sensEpi = sens > 0 ? 1 : -1;
+        // Vecteur directeur de la place, unitaire : c'est lui qui porte le
+        // trait comme l'axe du véhicule, dosé par le sinus et le cosinus de
+        // l'inclinaison. Le déduire de la boîte englobante donnait un trait de
+        // 6,37 m orienté à 33,7°, au lieu de 5,00 m à 45° : il dépassait au
+        // fond de la place et ne suivait pas les véhicules.
+        const dux = sensEpi * cosPlace, dvz = sens * sinPlace;
+        const v0 = vBord, u0 = u;
+        const u1 = u0 + dux * LONG_PLACE, v1 = v0 + dvz * LONG_PLACE;
+        const ax = cx + ux * u0 + vx * v0, az = cz + uz * u0 + vz * v0;
+        const bx = cx + ux * u1 + vx * v1, bz = cz + uz * u1 + vz * v1;
+        if (!pointInPoly(bx, bz, p.pts)) continue;
+        // Épaisseur perpendiculaire AU TRAIT, non à l'axe du parking : prise
+        // le long de `u`, elle cisaillait le ruban et le rétrécissait à 10 cm.
+        const tux = -dvz, tvz = dux;    // normale au vecteur directeur
+        const nx = (ux * tux + vx * tvz) * 0.06;
+        const nz = (uz * tux + vz * tvz) * 0.06;
+        margePos.push(
+          ax - nx, altM(ax, az), az - nz, ax + nx, altM(ax, az), az + nz,
+          bx - nx, altM(bx, bz), bz - nz,
+          ax + nx, altM(ax, az), az + nz, bx + nx, altM(bx, bz), bz + nz,
+          bx - nx, altM(bx, bz), bz - nz,
+        );
+
+        // Une place occupe l'intervalle entre ce trait et le suivant. Son
+        // centre part du même vecteur directeur : à mi-longueur de la place le
+        // long de la diagonale, décalé d'un demi-pas le long du bord pour se
+        // placer entre les deux traits qui l'encadrent.
+        const uc = u0 + dux * (LONG_PLACE / 2) + sensEpi * (pasPlace / 2);
+        if (uc > uMax - 0.5) continue;
+        const vc = v0 + dvz * (LONG_PLACE / 2);
+        const px2 = cx + ux * uc + vx * vc, pz2 = cz + uz * uc + vz * vc;
+        if (!pointInPoly(px2, pz2, p.pts)) continue;
+        const graine = Math.abs(px2 * 13.7 + pz2 * 29.3);
+        // Une place sur deux environ reste libre : un parking plein comme un
+        // parking vide se remarquent tous les deux comme artificiels.
+        if (hash(graine) > 0.55) continue;
+        placesEpi.push({
+          x: px2, z: pz2,
+          y: (relief ? relief.hauteurRoute(px2, pz2) : 0) + ROAD_Y,
+          // L'axe du véhicule suit la diagonale de la place, pas la normale au
+          // bord : c'est ce qui distingue l'épi de la bataille. On compose la
+          // normale (qui pointe vers le fond) et la direction du bord, dosées
+          // par le sinus et le cosinus de l'angle.
+          //
+          // Pas de demi-tour aléatoire ici, contrairement à la bataille : une
+          // place inclinée ne s'occupe que dans un sens, celui de la manœuvre.
+          // Même vecteur directeur que le trait, retourné : le véhicule pointe
+          // vers le fond de la place, le trait s'en éloigne. Les faire dériver
+          // de la même source est ce qui garantit qu'ils restent alignés.
+          cap: Math.atan2(ux * dux + vx * dvz, uz * dux + vz * dvz),
+          graine,
+        });
+      }
+    }
+  }
+  if (margePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(margePos, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Même teinte usée que le marquage de chaussée : un trait de place et une
+    // ligne de rive sont peints avec la même peinture et vieillissent pareil.
+    // Pas de carte d'usure ici, ce maillage n'ayant pas d'UV.
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0xcfccc0, roughness: 0.82, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12,
+    }));
+    m.renderOrder = 3;
+    group.add(m);
+  }
+
+  if (parkPos.length) {
+    const parkMesh = meshFromArrays(parkPos, parkUv, parkNrm,
+      new THREE.MeshStandardMaterial({
+        // Un peu plus clair que la chaussée : l'enrobé d'un parking est moins
+        // circulé, donc moins noirci par la gomme et les hydrocarbures.
+        map: asphalt, roughnessMap: asphaltRug, roughness: 1,
+        color: 0x696a6c, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
+      }));
+    parkMesh.renderOrder = 1;
+    parkMesh.receiveShadow = true;
+    group.add(parkMesh);
+  }
+
+  // ---- Ouvrages d'art : tabliers et garde-corps -------------------------
+  // Le tablier surélevé doit porter la voiture : il entre dans le maillage de
+  // collision, contrairement aux routes ordinaires que le terrain porte déjà.
+  const pontPos = [], pontUv = [], pontNrm = [];
+  const gcPos = [];
+  for (const r of data.roads) {
+    if (!r.drivable || !r.bridge) continue;
+    const h = 0.85;
+    const avant = pontPos.length;
+    ribbon(r.pts, r.width, ROAD_Y, pontPos, pontUv, pontNrm, relief, h);
+    // Les triangles du tablier deviennent des obstacles solides.
+    for (let i = avant; i < pontPos.length; i++) collisionTris.push(pontPos[i]);
+
+    // Garde-corps : deux bandeaux continus le long des rives du tablier.
+    // Sans eux, un pont ressemble à une bande d'asphalte flottante.
+    const demi = r.width / 2;
+    const hg = 0.95;
+    let cumul = 0;
+    const total = r.pts.reduce((s, q, i) => i
+      ? s + Math.hypot(q[0] - r.pts[i - 1][0], q[1] - r.pts[i - 1][1]) : 0, 0);
+    const rampe = Math.min(total * 0.32, 14);
+    // Élévation du tablier en un point donné de la polyligne.
+    const elev = (d) => {
+      const t = Math.min(d / rampe, (total - d) / rampe, 1);
+      return h * (t <= 0 ? 0 : (1 - Math.cos(Math.max(0, t) * Math.PI)) / 2);
+    };
+
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+      const dx = x2 - x1, dz = z2 - z1;
+      const len = Math.hypot(dx, dz);
+      if (len < 0.3) continue;
+      const nx = (-dz / len) * demi, nz = (dx / len) * demi;
+      const y1 = (relief ? relief.hauteurRoute(x1, z1) : 0) + ROAD_Y + elev(cumul);
+      const y2 = (relief ? relief.hauteurRoute(x2, z2) : 0) + ROAD_Y + elev(cumul + len);
+      cumul += len;
+
+      for (const s of [1, -1]) {
+        const ax = x1 + nx * s, az = z1 + nz * s;
+        const bx = x2 + nx * s, bz = z2 + nz * s;
+        gcPos.push(
+          ax, y1, az, bx, y2, bz, bx, y2 + hg, bz,
+          ax, y1, az, bx, y2 + hg, bz, ax, y1 + hg, az,
+        );
+      }
+    }
+  }
+  if (pontPos.length) {
+    const m = meshFromArrays(pontPos, pontUv, pontNrm,
+      new THREE.MeshStandardMaterial({
+        map: asphalt, roughnessMap: asphaltRug, roughness: 1,
+        color: 0xd2d1cf, side: THREE.DoubleSide,
+      }));
+    m.renderOrder = 3;
+    group.add(m);
+  }
+  if (gcPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(gcPos, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0xb8bcc0, roughness: 0.7, metalness: 0.35, side: THREE.DoubleSide,
+    })));
+  }
+  group.add(roadMesh);
+  // Les routes portent la voiture : elles vont au moteur physique.
+  // La chaussée n'entre plus dans le maillage de collision : le sol plat la
+  // porte à la même altitude, et un ruban surélevé de quelques centimètres
+  // formerait une marche au bord de la route.
+
+  if (pathPos.length) {
+    const pathMesh = meshFromArrays(pathPos, pathUv, pathNrm,
+      new THREE.MeshStandardMaterial({
+        color: 0x9c8f78, roughness: 1, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+      }));
+    pathMesh.renderOrder = 1;
+    group.add(pathMesh);
+  }
+
+  // ---- Marquage au sol ---------------------------------------------------
+  // Le marquage suit les règles réelles : ligne axiale discontinue sur les
+  // bidirectionnelles, rives sur les axes larges, rien sur les sens uniques
+  // étroits ni dans les ronds-points.
+  const markPos = [], markUv = [], markNrm = [];
+  const traceLigne = (a, b, largeur, hauteurPont) => {
+    ribbon([a, b], largeur, ROAD_Y + 0.015, markPos, markUv, markNrm, relief, hauteurPont);
+  };
+
+  for (const r of data.roads) {
+    if (!r.drivable) continue;
+    // Un rond-point n'a pas d'axe : le marquage y serait absurde.
+    if (r.rondPoint) continue;
+    const hPont = r.bridge ? 3.2 + Math.max(0, r.layer ?? 0) * 1.4 : 0;
+    // Un pont est trop court pour porter des rampes de marquage cohérentes :
+    // on le laisse nu, comme souvent en réalité.
+    if (hPont > 0) continue;
+
+    // Ligne axiale : uniquement sur les voies bidirectionnelles assez larges.
+    if (!r.oneway && r.width >= 6.2) {
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+        const len = Math.hypot(x2 - x1, z2 - z1);
+        const steps = Math.max(1, Math.floor(len / 6));
+        for (let s = 0; s < steps; s += 2) {
+          const t0 = s / steps, t1 = Math.min(1, (s + 1) / steps);
+          traceLigne(
+            [x1 + (x2 - x1) * t0, z1 + (z2 - z1) * t0],
+            [x1 + (x2 - x1) * t1, z1 + (z2 - z1) * t1],
+            0.16, 0,
+          );
+        }
+      }
+    }
+
+    // Lignes de rive continues sur les axes principaux : elles cadrent la
+    // chaussée et donnent beaucoup de lisibilité en conduite.
+    if (r.width >= 7.6) {
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+        const dx = x2 - x1, dz = z2 - z1;
+        const len = Math.hypot(dx, dz);
+        if (len < 0.5) continue;
+        const nx = (-dz / len) * (r.width / 2 - 0.42);
+        const nz = (dx / len) * (r.width / 2 - 0.42);
+        for (const s of [1, -1]) {
+          traceLigne(
+            [x1 + nx * s, z1 + nz * s],
+            [x2 + nx * s, z2 + nz * s],
+            0.13, 0,
+          );
+        }
+      }
+    }
+  }
+  if (markPos.length) {
+    // Marquage éclairé comme le reste plutôt qu'en `MeshBasicMaterial` : un
+    // matériau non éclairé garde la même clarté de jour comme de nuit, et les
+    // bandes blanches restaient lumineuses sous un ciel nocturne alors que la
+    // chaussée autour s'éteignait. Elles ressortaient alors comme des néons.
+    //
+    // La teinte s'écarte du blanc pur : une peinture routière est usée par le
+    // trafic et grise avec le temps. La légère variation d'un trait à l'autre
+    // vient du bruit d'usure, qui empêche la ligne de se lire comme un trait
+    // vectoriel parfaitement homogène.
+    //
+    // Opaque et sans transparence, tirée vers la caméra par `polygonOffset` :
+    // c'est ce qui évite le z-fighting avec l'enrobé sans superposer de
+    // couches semi-transparentes.
+    const markMesh = meshFromArrays(markPos, markUv, markNrm,
+      new THREE.MeshStandardMaterial({
+        color: 0xcfccc0, roughness: 0.82, map: usureMarquage,
+        side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12,
+      }));
+    markMesh.renderOrder = 3;
+    group.add(markMesh);
+  }
+
+  // ---- Bâtiments ---------------------------------------------------------
+  // Deux maillages fusionnés (murs, toitures) avec couleur par sommet : la
+  // teinte vient du matériau réel de chaque bâtiment (BD TOPO), il n'est donc
+  // plus possible de regrouper par palette fixe.
+  const wallPos2 = [], wallCol = [], wallUv = [];
+  const roofPos = [], roofCol = [], roofUv = [];
+  // Superstructures de toiture : souches de cheminée, lucarnes, blocs de
+  // ventilation. Collectées ici pendant la boucle des bâtiments, instanciées
+  // ensuite en trois appels de dessin pour toute la ville. Les poser une par
+  // une coûterait plusieurs milliers de maillages indépendants.
+  const cheminees = [];   // {x, y, z, cap, h}
+  const lucarnes = [];    // {x, y, z, cap}
+  const ventils = [];     // {x, y, z, cap}
+  // Fenêtres : petits quads sombres plaqués sur les façades. C'est ce qui
+  // distingue le plus nettement un bâtiment d'un simple bloc coloré.
+  //
+  // La couleur par sommet porte deux choses à la fois : la teinte de la vitre,
+  // qui varie d'une baie à l'autre, et l'indication d'une pièce éclairée. Les
+  // fenêtres allumées reçoivent une teinte chaude que le canal d'émission
+  // reprend, ce qui évite un second maillage pour quelques centaines de baies.
+  const winPos = [], winCol = [], winEmi = [];
+  // Encadrement des baies, en maillage séparé : un dormant clair autour d'une
+  // vitre sombre est ce qui rend une fenêtre lisible de loin, bien plus que la
+  // teinte du vitrage lui-même.
+  const cadrePos = [];
+  // Appuis de fenêtre : la tablette de pierre ou de béton sous chaque baie.
+  // C'est un détail très présent sur le bâti du bourg, et il porte une ombre
+  // horizontale qui donne du relief à une façade autrement plate.
+  const appuiPos = [];
+
+  // Niveau d'assise des bâtiments, relatif au terrain.
+  const BASE_OFFSET = ROAD_Y - 0.04;
+  const teinte = new THREE.Color();
+
+  // Index des emprises bâties, pour savoir si un bâtiment a un voisin proche.
+  //
+  // Le débord de toiture pousse chaque arête de 40 cm vers l'extérieur. Sur le
+  // bâti continu du centre-bourg, cela envoie le pan de A DANS l'emprise de B :
+  // les deux couvertures se croisent, et le tri de profondeur départage
+  // différemment selon l'angle de vue. C'est ce qui fait clignoter les toits
+  // vus de loin, en laissant apparaître par endroits la couverture du voisin.
+  //
+  // Une grille au pas de 40 m suffit : on ne cherche que les emprises à portée
+  // du débord, jamais un voisinage lointain.
+  const CELL_BAT = 40;
+  const grilleBat = new Map();
+  for (const b of data.buildings) {
+    if (!b.pts || b.pts.length < 3) continue;
+    for (const [x, z] of b.pts) {
+      const k = `${Math.floor(x / CELL_BAT)},${Math.floor(z / CELL_BAT)}`;
+      if (!grilleBat.has(k)) grilleBat.set(k, []);
+      grilleBat.get(k).push([x, z, b]);
+    }
+  }
+  // Distance au sommet bâti le plus proche n'appartenant pas au bâtiment lui-même.
+  const distVoisin = (b, x, z) => {
+    const cx = Math.floor(x / CELL_BAT), cz = Math.floor(z / CELL_BAT);
+    let best = Infinity;
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oz = -1; oz <= 1; oz++) {
+        const c = grilleBat.get(`${cx + ox},${cz + oz}`);
+        if (!c) continue;
+        for (const [vx, vz, vb] of c) {
+          if (vb === b) continue;
+          const d = (vx - x) ** 2 + (vz - z) ** 2;
+          if (d < best) best = d;
+        }
+      }
+    }
+    return Math.sqrt(best);
+  };
+
+  data.buildings.forEach((b, bi) => {
+    const n = b.pts.length;
+    if (n < 3) return;
+
+    // Assise réelle : altitude mesurée du sol quand elle existe, sinon le
+    // terrain interpolé sous le centre de l'emprise. Sans cela, les maisons
+    // d'un coteau flotteraient ou seraient enterrées.
+    // Centroïde de l'emprise, calculé une fois : il sert à l'assise, à
+    // l'orientation des normales de façade et à la toiture.
+    let ctrX = 0, ctrZ = 0;
+    for (const [px, pz] of b.pts) { ctrX += px; ctrZ += pz; }
+    ctrX /= n; ctrZ /= n;
+
+    let assise = BASE_OFFSET;
+    if (relief) {
+      if (b.zSol != null && data.altRef != null) {
+        assise = b.zSol - data.altRef + BASE_OFFSET;
+      } else {
+        assise = relief.hauteurRoute(ctrX, ctrZ) + BASE_OFFSET;
+      }
+    }
+    const BASE_Y = assise;
+    // La BD TOPO donne une hauteur mesurée jusqu'au faîtage. On en retranche
+    // la couverture pour obtenir l'égout, à partir duquel les pans sont
+    // reconstruits : sinon la toiture s'ajouterait par-dessus la hauteur réelle.
+    const hTotal = b.hauteur ?? b.height;
+    const surface = b.surface ?? b.footprint ?? 0;
+    // Hauteur de couverture. Le LiDAR la mesure directement : gouttière et
+    // faîtage sont relevés sur le même toit, donc leur écart ne mélange pas la
+    // déclivité du sol, contrairement aux altitudes extrêmes de la BD TOPO.
+    const toitLidar = b.toiture ?? null;
+    // Bornée à 6 m : au-delà, le relevé a capté une superstructure (silo,
+    // cheminée, machinerie) et non la couverture. Aucune toiture d'Artix ne
+    // dépasse cette hauteur, clochers mis à part, qui sont modélisés séparément.
+    const couvLidar = toitLidar && toitLidar.t !== 0 && toitLidar.f != null
+      ? Math.min(6, toitLidar.f - toitLidar.g) : null;
+    let couverture = couvLidar != null
+      ? Math.min(couvLidar, hTotal * 0.55)
+      : b.penteToit != null && b.penteToit > 0.3
+        ? Math.min(b.penteToit, hTotal * 0.42) : hTotal * 0.24;
+    // Le mur doit garder une hauteur habitable. Sans cette borne, la couverture
+    // mangeait tout : 1 177 bâtiments sur 2 119 se retrouvaient au plancher de
+    // 2,2 m, dont un hangar de 9,8 m à qui le relevé attribuait 11,5 m de
+    // toiture. Un mur trop bas ne peut plus recevoir de fenêtre, et c'est ce
+    // qui laissait 69 % du bâti en façades entièrement aveugles.
+    //
+    // 2,5 m sous plafond est le minimum d'une pièce d'habitation : on rend à la
+    // façade ce que la couverture lui prenait au-delà.
+    const H_MUR_MIN = 2.5;
+    if (hTotal - couverture < H_MUR_MIN) {
+      couverture = Math.max(0.4, hTotal - H_MUR_MIN);
+    }
+    // Une couverture ne dépasse pas 40 % de la hauteur d'une maison. Le relevé
+    // LiDAR attribuait 2,2 m de toiture à un pavillon de 4,7 m, d'où des
+    // pyramides écrasantes sur tout le lotissement : la gouttière mesurée est
+    // souvent celle d'un débord ou d'un auvent, pas celle du corps principal.
+    // Les grands volumes agricoles gardent leur relevé, une halle pouvant
+    // effectivement être plus toiture que mur.
+    if (surface < 400) couverture = Math.min(couverture, hTotal * 0.4);
+    const h = Math.max(2.2, hTotal - couverture);
+    const top = BASE_Y + h;   // altitude de l'égout de toiture
+
+    // Teinte de façade : matériau réel quand il est connu (pierre, brique,
+    // aggloméré enduit, béton, bois), enduit clair par défaut.
+    teinte.setHex(couleurMur(b));
+
+    // Variation par bâtiment. Deux maisons voisines n'ont jamais exactement le
+    // même enduit : l'une a été refaite, l'autre a vieilli. Sans cet écart, un
+    // lotissement entier ressort d'un blanc cassé rigoureusement identique, ce
+    // qui est le défaut le plus visible en roulant.
+    //
+    // L'écart est tiré du centroïde de l'emprise, donc stable d'un lancement à
+    // l'autre, et volontairement faible : la palette a été calée sur
+    // photographie et il s'agit de la nuancer, pas de la remplacer. La clarté
+    // varie plus que la teinte, comme un même enduit sous des expositions et
+    // des âges différents.
+    const gb = hash(Math.abs(ctrX * 12.9898 + ctrZ * 78.233));
+    const clarte = 0.82 + gb * 0.16;
+    // Bascule chaud/froid discrète : un enduit vieilli tire vers l'ocre, un
+    // enduit récent vers le gris froid.
+    const chaud = (hash(gb * 41.7 + 3.1) - 0.5) * 0.045;
+    let wr = Math.min(1, teinte.r * clarte * (1 + chaud));
+    let wg = Math.min(1, teinte.g * clarte);
+    let wb = Math.min(1, teinte.b * clarte * (1 - chaud));
+    // Quelques enduits pastel réellement présents dans le bourg : terre
+    // cuite, sable, vert sauge et bleu gris. La majorité reste neutre afin de
+    // préserver l'identité d'Artix, mais les rues ne forment plus un ruban de
+    // maisons blanches identiques.
+    const accent = hash(gb * 93.1 + 11.7);
+    if (accent < 0.08) { wr *= 1.10; wg *= 0.82; wb *= 0.72; }
+    else if (accent < 0.16) { wr *= 1.08; wg *= 0.94; wb *= 0.72; }
+    else if (accent < 0.23) { wr *= 0.82; wg *= 1.02; wb *= 0.82; }
+    else if (accent < 0.30) { wr *= 0.80; wg *= 0.92; wb *= 1.08; }
+    wr = Math.min(1, wr); wg = Math.min(1, wg); wb = Math.min(1, wb);
+    // Les relevés automatiques de façade contiennent quelques échantillons
+    // pris dans une ombre ou une vitrine. Les employer littéralement donnait
+    // des maisons presque noires, absentes des vues de la rue principale où
+    // dominent enduits crème, sable, saumon et gris doux. On conserve la
+    // couleur mesurée mais on relève seulement les valeurs aberrantes.
+    const luminance = wr * 0.2126 + wg * 0.7152 + wb * 0.0722;
+    if (luminance < 0.14) {
+      const k = 0.14 / Math.max(0.025, luminance);
+      wr = Math.min(0.62, wr * k);
+      wg = Math.min(0.62, wg * k);
+      wb = Math.min(0.62, wb * k);
+    }
+
+    // Salissure de pied de façade : la pluie rejaillit du sol et noircit le
+    // bas des murs sur les 80 premiers centimètres, très visible sur les
+    // enduits clairs du bourg. Rendue par assombrissement des sommets bas
+    // plutôt que par une texture, la couleur par sommet étant déjà en place.
+    const PIED = 0.86;
+    const solr = wr * 0.80, solg = wg * 0.79, solb = wb * 0.76;
+    // Facteur d'assombrissement à une altitude donnée, 1 au niveau du sol.
+    const pied = (y) => Math.max(0, 1 - (y - BASE_Y) / PIED);
+    // Écrit la couleur d'un sommet de façade, salissure comprise.
+    const poserMur = (y) => {
+      const t = pied(y);
+      wallCol.push(
+        wr + (solr - wr) * t,
+        wg + (solg - wg) * t,
+        wb + (solb - wb) * t,
+      );
+    };
+
+    // Murs
+    for (let i = 0; i < n; i++) {
+      const [x1, z1] = b.pts[i];
+      const [x2, z2] = b.pts[(i + 1) % n];
+      const dx = x2 - x1, dz = z2 - z1;
+      const len = Math.hypot(dx, dz);
+      if (len < 0.01) continue;
+      // Normale de la façade, orientée vers l'EXTÉRIEUR. Le sens dépend de
+      // l'ordre des sommets du contour, qui n'est pas garanti d'un bâtiment à
+      // l'autre dans les données : sur ceux tracés en sens horaire, la normale
+      // pointait vers le centre et le décalage de 4 cm enfonçait fenêtres et
+      // dormants DANS le mur, où ils étaient masqués. C'est ce qui laissait des
+      // façades entièrement aveugles alors que les baies étaient bien
+      // générées, bien placées et bien dimensionnées.
+      let nx = dz / len, nz = -dx / len;
+      // Test au milieu du segment : si la normale se rapproche du centroïde,
+      // elle regarde vers l'intérieur.
+      if (nx * (ctrX - (x1 + x2) / 2) + nz * (ctrZ - (z1 + z2) / 2) > 0) {
+        nx = -nx; nz = -nz;
+      }
+
+      // Les murs partent du niveau du sol, pas de y = 0 : le terrain affleure
+      // désormais la chaussée et les bâtiments seraient enfoncés d'autant.
+      //
+      // La façade est coupée en deux bandes à la hauteur de la salissure de
+      // pied. Sans cette coupure, le dégradé serait interpolé sur toute la
+      // hauteur du mur, donc étalé et invisible sur un bâtiment haut : c'est
+      // le sommet intermédiaire qui le concentre là où il se voit. Le coût est
+      // d'un quad de plus par façade, la géométrie de mur restant très en
+      // dessous des postes lourds de la scène.
+      const yMid = Math.min(top, BASE_Y + PIED);
+      const paliers = yMid < top - 0.05 ? [BASE_Y, yMid, top] : [BASE_Y, top];
+      for (let p = 0; p < paliers.length - 1; p++) {
+        const ya = paliers[p], yb = paliers[p + 1];
+        wallPos2.push(x1, ya, z1, x2, ya, z2, x2, yb, z2);
+        wallPos2.push(x1, ya, z1, x2, yb, z2, x1, yb, z1);
+        poserMur(ya); poserMur(ya); poserMur(yb);
+        poserMur(ya); poserMur(yb); poserMur(yb);
+        const va = (ya - BASE_Y) / 3, vb = (yb - BASE_Y) / 3;
+        wallUv.push(0, va, len / 3, va, len / 3, vb, 0, va, len / 3, vb, 0, vb);
+      }
+
+      // Mur = obstacle solide.
+      collisionTris.push(x1, BASE_Y, z1, x2, BASE_Y, z2, x2, top, z2);
+      collisionTris.push(x1, BASE_Y, z1, x2, top, z2, x1, top, z1);
+
+      // --- Fenêtres sur cette façade ---
+      // Le nombre de niveaux vient de la BD TOPO quand il est renseigné,
+      // sinon il se déduit de la hauteur (2,9 m par étage).
+      // Seuil abaissé à 2,4 m de mur : une maison de plain-pied béarnaise a
+      // 2,5 m sous plafond, et l'exiger à 2,8 privait d'ouverture les deux
+      // tiers du bâti. L'allège et la hauteur de baie s'adaptent aux façades
+      // basses, sinon la fenêtre dépasse l'égout et se voit rejetée.
+      if (!b.leger && len > 3.2 && h > 2.4) {
+        // Le nombre de niveaux est borné par ce que le mur peut contenir : la
+        // BD TOPO compte parfois les combles comme un étage, et empiler 3
+        // niveaux sur 2,5 m de mur donnait des fenêtres tous les 83 cm, toutes
+        // rejetées ensuite pour dépassement de l'égout.
+        const niveauxPossibles = Math.max(1, Math.floor(h / 2.4));
+        const niveaux = Math.max(1, Math.min(6, niveauxPossibles,
+          b.etages ?? Math.round(h / 2.9)));
+        const parNiveau = Math.max(1, Math.min(6, Math.floor(len / 3.1)));
+        const hNiveau = h / niveaux;
+        // Sur un niveau bas, la baie est plus courte et son allège descend :
+        // c'est la proportion réelle d'une fenêtre de dépendance.
+        const hauteurF = Math.min(1.12, hNiveau * 0.42);
+        const allege = Math.min(1.0, hNiveau * 0.32);
+        const largeur = 0.86;
+        // La vitre reste très légèrement en saillie du mur, faute de quoi
+        // celui-ci la masquerait : la façade est un simple quad sans épaisseur,
+        // il n'y a pas de tableau creusé où loger la baie.
+        //
+        // La profondeur vient donc du DORMANT, ressorti à 6 cm devant elle : le
+        // cadre porte son ombre sur le vitrage en lumière rasante, ce qui donne
+        // le décrochement qu'un retrait de la vitre aurait produit, sans avoir
+        // à creuser la façade.
+        const ox = nx * 0.015, oz = nz * 0.015;
+
+        for (let e = 0; e < niveaux; e++) {
+          // Allège proportionnelle à la hauteur du niveau, plafonnée à 1 m.
+          const yb = BASE_Y + allege + e * hNiveau;
+          const yh = yb + hauteurF;
+          // Marge sous l'égout. Elle doit couvrir la SAILLIE des éléments
+          // rapportés, pas seulement la hauteur de la baie : le dormant sort
+          // de 7,5 cm du nu de façade et l'appui de 13 cm, si bien qu'une
+          // fenêtre calée à 20 cm de l'égout ressortait à travers le pan de
+          // toiture, qui déborde justement au-dessus d'elle. Vue de loin, la
+          // vitre gagnait le tri de profondeur et perçait la couverture.
+          //
+          // 45 cm laissent passer le débord de 40 cm plus l'épaisseur de la
+          // tablette. C'est la moitié d'un niveau de moins sur les murs les
+          // plus bas, ce qui vaut mieux qu'un toit troué.
+          if (yh > top - 0.45) continue;
+          for (let k = 0; k < parNiveau; k++) {
+            const t = (k + 0.5) / parNiveau;
+            const cxw = x1 + dx * t, czw = z1 + dz * t;
+            const ux = (dx / len) * (largeur / 2), uz = (dz / len) * (largeur / 2);
+            winPos.push(
+              cxw - ux + ox, yb, czw - uz + oz,
+              cxw + ux + ox, yb, czw + uz + oz,
+              cxw + ux + ox, yh, czw + uz + oz,
+              cxw - ux + ox, yb, czw - uz + oz,
+              cxw + ux + ox, yh, czw + uz + oz,
+              cxw - ux + ox, yh, czw - uz + oz,
+            );
+
+            // Teinte du vitrage. Une baie ne renvoie pas la même chose selon
+            // ce qu'il y a derrière et selon son orientation : les unes tirent
+            // vers le bleu du ciel, les autres vers le brun d'une pièce
+            // sombre ou le gris d'un volet fermé. Quatre teintes très sombres
+            // suffisent à casser l'aplat, la lecture d'une fenêtre tenant à
+            // son cadre clair bien plus qu'à sa couleur.
+            const gv = hash(Math.abs(cxw * 27.3 + czw * 61.7 + e * 3.9));
+            // Une pièce sur douze est éclairée. La proportion est basse
+            // volontairement : une ville dont toutes les fenêtres brillent
+            // ressemble à une carte postale, pas à un bourg de 3 000 âmes.
+            // Les rez-de-chaussée le sont un peu plus souvent, commerces et
+            // pièces de vie s'y trouvant.
+            const allume = gv > (e === 0 ? 0.90 : 0.945);
+            // La teinte portée par la couleur de sommet est TOUJOURS celle
+            // d'une vitre éteinte, y compris pour une baie déclarée allumée.
+            // Une fenêtre reste sombre de jour, que la pièce derrière soit
+            // éclairée ou non : porter le beige chaud ici la faisait ressortir
+            // en aplat plus clair que l'enduit en plein midi, sur près d'une
+            // baie sur dix. L'allumage passe désormais par le seul canal
+            // d'émission, nul le jour, ce qui laisse le rendu nocturne
+            // inchangé.
+            let vr, vg, vbl;
+            if (gv < 0.28) {
+              vr = 0.196; vg = 0.227; vbl = 0.278;   // gris bleuté
+            } else if (gv < 0.55) {
+              vr = 0.157; vg = 0.180; vbl = 0.212;   // gris neutre sombre
+            } else if (gv < 0.80) {
+              vr = 0.169; vg = 0.176; vbl = 0.169;   // pièce sombre, verdi
+            } else {
+              vr = 0.212; vg = 0.196; vbl = 0.176;   // volet bois, brun
+            }
+            for (let s = 0; s < 6; s++) winCol.push(vr, vg, vbl);
+            // Couleur d'allumage, portée par un attribut séparé : noire pour
+            // une baie éteinte, chaude pour une pièce éclairée. Le shader la
+            // reprend dans le canal d'émission, dont l'intensité suit le
+            // cycle jour/nuit. Noir n'émet rien, les baies éteintes restent
+            // donc sombres même à pleine intensité.
+            const er = allume ? 1.0 : 0, eg = allume ? 0.82 : 0,
+                  eb = allume ? 0.52 : 0;
+            for (let s = 0; s < 6; s++) winEmi.push(er, eg, eb);
+
+            // Dormant : un quadrilatère un peu plus large et plus haut, en
+            // saillie devant la vitre. C'est ce décrochement qui donne la
+            // profondeur de la baie, la façade n'ayant pas d'épaisseur où
+            // creuser un tableau.
+            const MARGE = 0.11;
+            const vx2 = (dx / len) * (largeur / 2 + MARGE);
+            const vz2 = (dz / len) * (largeur / 2 + MARGE);
+            const yb2 = yb - MARGE, yh2 = yh + MARGE;
+            const ox2 = nx * 0.075, oz2 = nz * 0.075;
+            cadrePos.push(
+              cxw - vx2 + ox2, yb2, czw - vz2 + oz2,
+              cxw + vx2 + ox2, yb2, czw + vz2 + oz2,
+              cxw + vx2 + ox2, yh2, czw + vz2 + oz2,
+              cxw - vx2 + ox2, yb2, czw - vz2 + oz2,
+              cxw + vx2 + ox2, yh2, czw + vz2 + oz2,
+              cxw - vx2 + ox2, yh2, czw - vz2 + oz2,
+            );
+
+            // Appui de fenêtre : une tablette horizontale débordant de part et
+            // d'autre du dormant. Deux quads, le dessus et le chant vu d'en
+            // bas, le dessous n'étant jamais visible depuis la rue.
+            const APPUI_DEB = 0.06;    // débord latéral au-delà du dormant
+            const APPUI_SAIL = 0.13;   // saillie devant le nu de façade
+            const APPUI_EP = 0.05;     // épaisseur de la tablette
+            const ax3 = (dx / len) * (largeur / 2 + MARGE + APPUI_DEB);
+            const az3 = (dz / len) * (largeur / 2 + MARGE + APPUI_DEB);
+            const sx3 = nx * APPUI_SAIL, sz3 = nz * APPUI_SAIL;
+            // Le nu du mur, point de départ de la tablette.
+            const yA = yb2, yB = yb2 - APPUI_EP;
+            // Dessus, incliné vers l'extérieur comme un vrai rejingot.
+            appuiPos.push(
+              cxw - ax3, yA, czw - az3,
+              cxw + ax3, yA, czw + az3,
+              cxw + ax3 + sx3, yB, czw + az3 + sz3,
+              cxw - ax3, yA, czw - az3,
+              cxw + ax3 + sx3, yB, czw + az3 + sz3,
+              cxw - ax3 + sx3, yB, czw - az3 + sz3,
+            );
+            // Chant, vu depuis la rue en contrebas.
+            appuiPos.push(
+              cxw - ax3 + sx3, yB, czw - az3 + sz3,
+              cxw + ax3 + sx3, yB, czw + az3 + sz3,
+              cxw + ax3 + sx3, yB - APPUI_EP, czw + az3 + sz3,
+              cxw - ax3 + sx3, yB, czw - az3 + sz3,
+              cxw + ax3 + sx3, yB - APPUI_EP, czw + az3 + sz3,
+              cxw - ax3 + sx3, yB - APPUI_EP, czw - az3 + sz3,
+            );
+          }
+        }
+      }
+    }
+
+    // Toiture à deux pans en tuile canal, faîtage dans le sens de la longueur :
+    // c'est la couverture des maisons béarnaises. Une pyramide vers le centroïde
+    // donnerait à chaque bâtiment le même toit à quatre pans.
+    // Couverture : matériau réel issu des fichiers fonciers (tuile, ardoise,
+    // zinc, béton), à défaut bac acier sur les grands volumes et tuile ailleurs.
+    const rc = new THREE.Color(couleurToit(b));
+    let cx = 0, cz = 0;
+    for (const [px, pz] of b.pts) { cx += px; cz += pz; }
+    cx /= n; cz /= n;
+
+    // Orientation du faîtage. Le relevé LiDAR HD, quand il couvre le bâtiment,
+    // donne la direction mesurée sur la couverture réelle. À défaut, on la
+    // déduit de l'emprise par analyse en composantes principales : le faîtage
+    // suit le grand axe, ce qui est le cas sur 94 % des bâtiments d'Artix
+    // d'après la comparaison avec le LiDAR.
+    const lidar = b.toiture ?? null;
+    let theta;
+    if (lidar && lidar.t === 2) {
+      theta = lidar.c;
+    } else {
+      let sxx = 0, szz = 0, sxz = 0;
+      for (const [px, pz] of b.pts) {
+        const dx = px - cx, dz = pz - cz;
+        sxx += dx * dx; szz += dz * dz; sxz += dx * dz;
+      }
+      theta = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+    }
+    const ax = Math.cos(theta), az = Math.sin(theta);   // grand axe (faîtage)
+    const px2 = -az, pz2 = ax;                          // axe transversal (pente)
+
+    // Étendue du bâtiment sur chaque axe.
+    let longMin = Infinity, longMax = -Infinity, larMax = 0;
+    for (const [qx, qz] of b.pts) {
+      const dx = qx - cx, dz = qz - cz;
+      const along = dx * ax + dz * az;
+      longMin = Math.min(longMin, along);
+      longMax = Math.max(longMax, along);
+      larMax = Math.max(larMax, Math.abs(dx * px2 + dz * pz2));
+    }
+
+    // Pente de toiture. La BD TOPO donne l'écart entre l'altitude minimale et
+    // maximale du toit, c'est-à-dire la hauteur réelle de la couverture.
+    // À défaut, on estime : couverture quasi plate sur les grands volumes,
+    // pente marquée sur l'habitat.
+    // Le LiDAR mesure directement l'écart entre gouttière et faîtage, ce qui
+    // est exactement la hauteur de couverture recherchée. Contrairement à la
+    // BD TOPO, cet écart ne mélange pas la déclivité du sol : les deux points
+    // sont relevés sur le même toit.
+    const platte = lidar
+      ? lidar.t === 0
+      : surface > 700 || b.nature === 'Industriel, agricole ou commercial'
+        || b.usage === 'supermarket' || b.kind === 'industrial' || b.kind === 'warehouse';
+    // La pente BD TOPO est bornée : sur un terrain en pente, l'écart entre
+    // altitude minimale et maximale du toit intègre la déclivité du sol et
+    // produirait des toits en pointe.
+    const penteMax = platte ? 0.9 : Math.min(2.2, larMax * 0.62);
+    let pente;
+    if (couvLidar != null) {
+      // Mesure LiDAR, plafonnée par la largeur du bâtiment. Une couverture ne
+      // dépasse pas en hauteur ce que sa portée permet : au-delà, c'est que le
+      // relevé a capté autre chose que le toit (silo, cheminée, machinerie sur
+      // un hangar industriel), et l'appliquer produirait une arête géante
+      // traversant la scène.
+      const plafond = Math.min(platte ? 1.4 : 4.5, larMax * 0.55);
+      pente = Math.min(plafond, Math.max(0.5, couverture));
+    } else if (platte) {
+      pente = Math.min(0.6, Math.max(0.25, couverture));
+    } else {
+      pente = Math.min(penteMax, Math.max(0.5, couverture));
+    }
+    const faitageY = top + pente;
+    // Débord de toiture, très marqué sur les maisons du Sud-Ouest.
+    //
+    // Borné par la distance au bâtiment voisin : sur le bâti continu du
+    // centre-bourg, un débord de 40 cm envoie le pan DANS l'emprise mitoyenne,
+    // les deux couvertures se croisent et le tri de profondeur les départage
+    // différemment selon l'angle. Vu de loin, les toits clignotent et laissent
+    // apparaître par endroits la couverture du voisin.
+    //
+    // On garde la moitié de l'écart disponible, l'autre revenant au voisin qui
+    // déborde en sens inverse. Un mitoyen strict (écart nul) perd donc tout
+    // débord de ce côté, ce qui est le cas réel : deux maisons accolées
+    // partagent un mur, elles n'ont pas d'égout entre elles.
+    const DEBORD_MAX = 0.4;
+
+    // Contour débordé, calculé une fois : il sert aux deux types de couverture
+    // et à la dalle de sécurité. Chaque sommet est poussé vers l'extérieur de
+    // son propre débord, un bâtiment pouvant être mitoyen d'un côté et dégagé
+    // de l'autre, ce qui est le cas de tous les immeubles de bout de rangée.
+    const contour = b.pts.map(([x, z]) => {
+      const d = Math.min(DEBORD_MAX, distVoisin(b, x, z) * 0.5);
+      const l = Math.hypot(x - cx, z - cz) || 1;
+      return [x + (x - cx) / l * d, z + (z - cz) / l * d];
+    });
+
+    // Écrit un sommet de couverture : position, teinte, et UV projetées sur les
+    // axes du toit pour que les rangs de tuiles courent parallèlement au
+    // faîtage. Une projection sur les axes du monde les ferait tourner d'un
+    // bâtiment à l'autre, ce qui se remarque immédiatement vu d'en haut.
+    const poserToit = (x, y, z, col) => {
+      roofPos.push(x, y, z);
+      roofCol.push(col.r, col.g, col.b);
+      const dx = x - cx, dz = z - cz;
+      roofUv.push((dx * ax + dz * az) / 1.4, (dx * px2 + dz * pz2) / 1.4);
+    };
+
+    // Forme de l'emprise : c'est elle qui décide du type de couverture.
+    const forme = analyserEmprise(b.pts, ax, az, px2, pz2);
+
+    // Le toit à deux pans suppose un volume simple. Trois conditions, toutes
+    // nécessaires : peu de sommets rentrants, une emprise qui remplit son
+    // rectangle englobant, et un minimum d'élancement pour que la direction du
+    // faîtage ait un sens. Un bâtiment en L qui passe ce test produirait des
+    // triangles hors du volume, et c'est exactement ce qui trouait les toits.
+    //
+    // Le LiDAR peut trancher dans les deux sens : quand il a mesuré une
+    // couverture à deux pans (t === 2), on lui fait confiance même sur une
+    // emprise moyennement régulière, la mesure valant mieux que la déduction.
+    // Le nombre de sommets rentrants compte en ABSOLU, pas en proportion.
+    // L'emprise médiane d'Artix n'a que 6 sommets : un seul décrochement y pèse
+    // 0,167, si bien qu'un seuil en ratio de 0,12 rejetait au toit plat des
+    // maisons parfaitement simples portant un unique retour de façade. Mesuré
+    // sur les 2 540 emprises de la commune, le passage au critère absolu rend
+    // les deux pans à 178 bâtiments (45,3 % contre 52,3 %), sans laisser passer
+    // les formes en L, qui portent deux décrochements ou davantage.
+    const rentrants = Math.round(forme.concavite * forme.sommets);
+    const formeSimple = rentrants <= 1
+      && forme.remplissage >= 0.72
+      && forme.elancement >= 1.15
+      && forme.sommets <= 12;
+    // Quand le LiDAR a mesuré une couverture à deux pans, la mesure prime sur
+    // la déduction : on accepte alors une emprise sensiblement moins régulière.
+    const deuxPans = lidar && lidar.t === 2
+      ? rentrants <= 3 && forme.remplissage >= 0.55
+      : formeSimple && !platte;
+
+    // Dalle de sécurité, posée juste sous la couverture et sur toute l'emprise
+    // débordée. Elle ne se voit jamais sur un toit correct : sa raison d'être
+    // est qu'un défaut résiduel de la couverture (triangle manquant, arête qui
+    // ne se referme pas) laisse voir une surface opaque de la teinte du toit,
+    // et non le ciel ni l'intérieur du bâtiment.
+    //
+    // 6 cm sous l'égout : assez pour ne pas rivaliser avec la couverture dans
+    // le tampon de profondeur, assez peu pour rester cachée derrière le débord
+    // vue depuis la rue comme depuis une caméra légèrement surélevée.
+    const DALLE = 0.06;
+    {
+      let tris = triangulate(contour);
+      // Repli en éventail : l'algorithme d'oreilles échoue sur les contours qui
+      // portent des sommets colinéaires, fréquents dans les emprises du
+      // cadastre. Une dalle mal triangulée reste préférable à pas de dalle,
+      // puisqu'elle n'est qu'un fond opaque.
+      if (!tris.length && contour.length >= 3) {
+        tris = [];
+        for (let i = 1; i < contour.length - 1; i++) tris.push([0, i, i + 1]);
+      }
+      // Teinte assombrie : la dalle joue le rôle du sous-face de toiture, vue
+      // par en dessous à travers un éventuel défaut. Une teinte identique à la
+      // couverture trahirait le rattrapage sur les toits à faible pente.
+      const dc = rc.clone().multiplyScalar(0.62);
+      const yD = top - DALLE;
+      for (const [i, j, k] of tris) {
+        poserToit(contour[i][0], yD, contour[i][1], dc);
+        poserToit(contour[j][0], yD, contour[j][1], dc);
+        poserToit(contour[k][0], yD, contour[k][1], dc);
+      }
+    }
+
+    if (!deuxPans) {
+      // ---- Couverture plate ou à faible pente ------------------------------
+      //
+      // Toute emprise que le toit à deux pans ne peut pas couvrir proprement
+      // passe ici : bâtiments en L, en U, corps accolés, contours irréguliers,
+      // et les grands volumes agricoles ou commerciaux réellement plats.
+      //
+      // La surface est triangulée par oreilles sur le contour débordé, donc
+      // fermée par construction : chaque triangle appartient à l'intérieur du
+      // polygone, aucun ne peut traverser un renfoncement comme le faisait
+      // l'éventail vers un faîtage unique.
+      //
+      // Une inclinaison très faible remplace le plan strictement horizontal :
+      // elle suffit à ce que la lumière ne rende pas toutes les toitures d'un
+      // gris identique, et elle imite la pente d'écoulement d'un toit-terrasse.
+      let tris = triangulate(contour);
+      if (!tris.length && contour.length >= 3) {
+        tris = [];
+        for (let i = 1; i < contour.length - 1; i++) tris.push([0, i, i + 1]);
+      }
+      // Hauteur d'un point de la couverture : le versant s'incline le long de
+      // l'axe transversal, comme un rejet d'eau vers un seul bord.
+      const inclin = Math.min(pente, platte ? 0.35 : 0.8);
+      const denom = larMax > 0.5 ? larMax : 1;
+      const altPlat = (x, z) => {
+        const t = ((x - cx) * px2 + (z - cz) * pz2) / denom;   // -1 à 1
+        return top + inclin * (0.5 + t * 0.5);
+      };
+      for (const [i, j, k] of tris) {
+        const [xi, zi] = contour[i], [xj, zj] = contour[j], [xk, zk] = contour[k];
+        poserToit(xi, altPlat(xi, zi), zi, rc);
+        poserToit(xj, altPlat(xj, zj), zj, rc);
+        poserToit(xk, altPlat(xk, zk), zk, rc);
+      }
+
+      // Acrotère : le muret qui borde un toit-terrasse et masque la couverture
+      // depuis la rue. Sans lui, un toit plat se termine sur une arête vive où
+      // le mur et la couverture se rencontrent à angle droit, ce qui se lit
+      // comme un bloc coupé net.
+      //
+      // Il ferme aussi la tranche entre l'égout et la couverture inclinée :
+      // c'est cette bande verticale qui, laissée ouverte, laissait voir
+      // l'intérieur du volume sur les emprises un peu pentues.
+      const ACROTERE = platte ? 0.42 : 0.26;
+      const EPAIS = 0.16;
+      const interieur = contracter(contour, cx, cz, EPAIS);
+      // Teinte du muret : plus proche du mur que de la couverture, un acrotère
+      // étant maçonné et enduit comme la façade qu'il prolonge.
+      const ac = new THREE.Color(wr, wg, wb).multiplyScalar(0.94);
+      for (let i = 0; i < contour.length; i++) {
+        const j = (i + 1) % contour.length;
+        const [x1, z1] = contour[i], [x2, z2] = contour[j];
+        const [u1, v1] = interieur[i], [u2, v2] = interieur[j];
+        // Le sommet du muret domine la couverture de sa hauteur propre, prise
+        // au point le plus haut du versant pour qu'il ne soit jamais noyé.
+        const h1 = altPlat(x1, z1) + ACROTERE;
+        const h2 = altPlat(x2, z2) + ACROTERE;
+        const b1 = top - DALLE, b2 = top - DALLE;
+
+        // Face extérieure, dans le prolongement de la façade.
+        poserToit(x1, b1, z1, ac); poserToit(x2, b2, z2, ac); poserToit(x2, h2, z2, ac);
+        poserToit(x1, b1, z1, ac); poserToit(x2, h2, z2, ac); poserToit(x1, h1, z1, ac);
+        // Couronnement : la tranche horizontale visible d'en haut.
+        poserToit(x1, h1, z1, ac); poserToit(x2, h2, z2, ac); poserToit(u2, h2, v2, ac);
+        poserToit(x1, h1, z1, ac); poserToit(u2, h2, v2, ac); poserToit(u1, h1, v1, ac);
+        // Face intérieure, qui plonge vers la couverture.
+        const ci1 = altPlat(u1, v1), ci2 = altPlat(u2, v2);
+        poserToit(u1, h1, v1, ac); poserToit(u2, h2, v2, ac); poserToit(u2, ci2, v2, ac);
+        poserToit(u1, h1, v1, ac); poserToit(u2, ci2, v2, ac); poserToit(u1, ci1, v1, ac);
+      }
+    } else {
+      // ---- Couverture à deux pans -----------------------------------------
+      //
+      // Réservée aux emprises simples et allongées, où relier chaque arête au
+      // faîtage produit un volume cohérent. C'est la maison béarnaise courante.
+      //
+      // Deux points de faîtage, aux extrémités du grand axe. Leur retrait
+      // décide de la forme : faible, le faîtage court jusqu'aux pignons (toit à
+      // deux pans) ; marqué, les extrémités s'inclinent (croupe). Le LiDAR
+      // tranche par bâtiment ; sans lui, un retrait moyen convient aux deux cas.
+      const retraitBase = lidar
+        ? (lidar.t === 2 ? larMax * 0.1 : larMax * 0.5)
+        : larMax * 0.35;
+      const demiLong = (longMax - longMin) / 2;
+      // Le retrait ne dépend plus du remplissage : l'emprise est régulière par
+      // construction ici, puisque les formes découpées sont parties au toit
+      // plat. C'est ce couplage qui faisait éclater les toitures en éventail.
+      const retrait = Math.min(demiLong * 0.85, retraitBase);
+      const f1x = cx + ax * (longMin + retrait), f1z = cz + az * (longMin + retrait);
+      const f2x = cx + ax * (longMax - retrait), f2z = cz + az * (longMax - retrait);
+
+      for (let i = 0; i < n; i++) {
+        const [e1x, e1z] = contour[i];
+        const [e2x, e2z] = contour[(i + 1) % n];
+
+        // Le sommet du faîtage retenu est celui dont la projection est la plus
+        // proche du milieu de l'arête : c'est ce qui crée les deux pans.
+        const mx = (e1x + e2x) / 2 - cx, mz = (e1z + e2z) / 2 - cz;
+        const along = mx * ax + mz * az;
+        const fx = along < 0 ? f1x : f2x, fz = along < 0 ? f1z : f2z;
+
+        poserToit(e1x, top, e1z, rc);
+        poserToit(e2x, top, e2z, rc);
+        poserToit(fx, faitageY, fz, rc);
+
+        // Fermeture de la rive : la bande verticale entre l'égout débordé et le
+        // sommet du mur. Sans elle, le débord de toiture flotte au-dessus du
+        // vide et on voit sous la couverture depuis une caméra basse, ce qui
+        // est très lisible en conduite le long d'une rangée de maisons.
+        const [w1x, w1z] = b.pts[i];
+        const [w2x, w2z] = b.pts[(i + 1) % n];
+        const rcSous = rc.clone().multiplyScalar(0.55);
+        poserToit(w1x, top - DALLE, w1z, rcSous);
+        poserToit(w2x, top - DALLE, w2z, rcSous);
+        poserToit(e2x, top, e2z, rcSous);
+        poserToit(w1x, top - DALLE, w1z, rcSous);
+        poserToit(e2x, top, e2z, rcSous);
+        poserToit(e1x, top, e1z, rcSous);
+      }
+
+      // Panneau de faîtage reliant les deux sommets : ferme la toiture entre
+      // les croupes des deux extrémités.
+      poserToit(f1x, faitageY, f1z, rc);
+      poserToit(f2x, faitageY, f2z, rc);
+      poserToit(cx, faitageY, cz, rc);
+    }
+
+    // ---- Superstructures de toiture ---------------------------------------
+    //
+    // Une ligne de toits parfaitement nue se lit comme une maquette. Quelques
+    // souches de cheminée et lucarnes suffisent à casser cette régularité, et
+    // ce sont elles qu'on remarque en roulant le long d'une rangée de maisons.
+    //
+    // Elles restent volontairement rares : les poser sur tous les bâtiments
+    // donnerait un centre-bourg hérissé, ce qui est aussi faux que le contraire.
+    // Le tirage est déterministe (dérivé du centroïde), donc identique à chaque
+    // lancement, et il ne retient qu'une part des bâtiments.
+    //
+    // Seuls les bâtiments assez grands en portent : une dépendance de jardin de
+    // 12 m² n'a ni cheminée ni lucarne, et une souche y serait à l'échelle du
+    // bâtiment entier.
+    if (surface > 45 && hTotal > 3.4) {
+      const gs = hash(Math.abs(ctrX * 3.71 + ctrZ * 9.13) + 17.3);
+
+      // Cheminée : sur un toit à deux pans, elle se pose près du faîtage, là
+      // où elle se trouve réellement. Sur un toit plat, elle est reportée vers
+      // le centre de l'emprise, à l'écart de l'acrotère.
+      if (gs < 0.42) {
+        // Décalage le long du faîtage, pour que deux maisons voisines n'aient
+        // pas leur souche au même endroit.
+        const t = (hash(gs * 23.1) - 0.5) * 0.55;
+        const sx = cx + ax * (longMax - longMin) * t;
+        const sz = cz + az * (longMax - longMin) * t;
+        // Hauteur de souche : elle dépasse le faîtage de 40 à 90 cm.
+        const hSouche = 0.4 + hash(gs * 51.7) * 0.5;
+        const yBase = deuxPans ? top + pente * 0.55 : top + 0.1;
+        cheminees.push({ x: sx, y: yBase, z: sz, cap: theta, h: hSouche + (deuxPans ? pente * 0.45 : 0.35) });
+      }
+
+      // Lucarne : réservée aux toits à deux pans assez pentus, seuls à pouvoir
+      // en porter une. Sur un toit plat elle n'aurait aucun sens.
+      if (deuxPans && pente > 0.9 && larMax > 3.2 && hash(gs * 7.7) < 0.30) {
+        // Posée à mi-pente, sur le versant tiré au sort.
+        const versant = hash(gs * 13.3) < 0.5 ? 1 : -1;
+        const le = (hash(gs * 31.9) - 0.5) * (longMax - longMin) * 0.5;
+        const lx = cx + ax * le + px2 * larMax * 0.45 * versant;
+        const lz = cz + az * le + pz2 * larMax * 0.45 * versant;
+        lucarnes.push({ x: lx, y: top + pente * 0.42, z: lz, cap: theta + (versant > 0 ? 0 : Math.PI) });
+      }
+
+      // Blocs de ventilation : machinerie de toiture-terrasse, présente sur les
+      // volumes commerciaux et agricoles, jamais sur l'habitat.
+      if (!deuxPans && surface > 320 && hash(gs * 3.3) < 0.55) {
+        const nb = 1 + Math.floor(hash(gs * 61.1) * 3);
+        for (let v = 0; v < nb; v++) {
+          const u = (hash(gs * 71.3 + v * 5.1) - 0.5) * (longMax - longMin) * 0.55;
+          const w = (hash(gs * 83.7 + v * 11.9) - 0.5) * larMax * 1.1;
+          ventils.push({
+            x: cx + ax * u + px2 * w,
+            y: top + 0.12,
+            z: cz + az * u + pz2 * w,
+            cap: theta,
+          });
+        }
+      }
+    }
+  });
+
+  if (wallPos2.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(wallPos2, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(wallCol, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(wallUv, 2));
+    // Normales recalculées depuis la géométrie : celles déduites de l'ordre des
+    // sommets ne sont pas fiables, le sens de parcours des emprises variant.
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // DoubleSide : sans cela, la moitié des murs seraient éclairés de
+    // l'intérieur et disparaîtraient par backface culling.
+    // Grain de crépi par-dessus la teinte de chaque bâtiment. La texture est
+    // en niveaux de gris et se multiplie avec la couleur par sommet : les
+    // teintes relevées sur les photographies sont conservées, le grain ne fait
+    // que les moduler. Sans lui, une façade est un aplat parfaitement lisse,
+    // ce qui est le défaut le plus visible en conduite.
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.86, side: THREE.DoubleSide,
+      map: enduit, bumpMap: carteRelief(enduit), bumpScale: 0.35,
+    }));
+    // Pas de castShadow : la passe d'ombre redessinerait les 3 500 bâtiments
+    // à chaque frame, pour un gain visuel marginal en vue de conduite.
+    m.name = 'murs';
+    m.receiveShadow = true;
+    group.add(m);
+  }
+
+  let vitrages = null;
+  if (winPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(winPos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(winCol, 3));
+    // Couleur d'allumage, lue par le shader modifié plus bas.
+    g.setAttribute('emiCouleur', new THREE.Float32BufferAttribute(winEmi, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Vitrage sombre légèrement réfléchissant : de loin, ce sont ces trouées
+    // régulières qui donnent l'échelle et le caractère habité des façades.
+    //
+    // `metalness` ramené de 0,35 à 0,08. En PBR, un matériau métallique n'a pas
+    // de couleur diffuse et ne restitue que ce qu'il réfléchit : la carte
+    // d'environnement de la scène étant un simple dégradé, le vitrage sortait
+    // presque noir mat et se confondait avec l'ombre propre du mur. Les
+    // fenêtres étaient bien générées et bien placées, mais indiscernables sur
+    // un enduit clair en plein jour. Même piège que la carrosserie de la
+    // voiture, déclarée `metallicFactor = 1` dans son glTF.
+    //
+    // Opaque, sans transparence ni transmission : le vitrage de plusieurs
+    // milliers de baies passerait sinon par le tri des faces transparentes, à
+    // un coût sans rapport avec ce qu'on y gagnerait. Le reflet vient de la
+    // carte d'environnement de la scène, qui suffit à cette distance.
+    //
+    // La teinte est portée par sommet, ce qui donne quatre nuances de vitrage,
+    // toutes sombres. L'allumage des pièces passe par un attribut distinct,
+    // `emiCouleur`, que le canal d'émission reprend la nuit.
+    const mat = new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.24, metalness: 0.08,
+      side: THREE.DoubleSide,
+      emissive: 0xffffff, emissiveIntensity: 0,
+    });
+    // L'émission suit un attribut propre (`emiCouleur`) plutôt que la couleur
+    // de sommet. Three.js multiplie sinon l'émission par la couleur de vitre,
+    // ce qui obligeait à porter le beige chaud dans la couleur elle-même : les
+    // baies allumées ressortaient alors en clair de jour, l'intensité fût-elle
+    // nulle. L'attribut vaut noir sur une baie éteinte, qui n'émet donc rien.
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>',
+          '#include <common>\nattribute vec3 emiCouleur;\nvarying vec3 vEmiCouleur;')
+        .replace('#include <begin_vertex>',
+          '#include <begin_vertex>\nvEmiCouleur = emiCouleur;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>',
+          '#include <common>\nvarying vec3 vEmiCouleur;')
+        // `totalEmissiveRadiance` vaut déjà `emissive * emissiveIntensity` à
+        // ce point du shader ; `emissiveIntensity` n'y est pas un uniform.
+        // `emissive` étant blanc, il porte donc l'intensité seule, qu'il
+        // suffit de teinter par la couleur d'allumage de la baie.
+        .replace('#include <emissivemap_fragment>',
+          '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= vEmiCouleur;');
+    };
+
+    const m = new THREE.Mesh(g, mat);
+    m.name = 'vitrages';
+    // Pas de `renderOrder` : tous ces maillages sont opaques et écrivent la
+    // profondeur, donc le tampon suffit à les départager. Forcer les vitrages
+    // en 1 les faisait dessiner APRÈS les toitures, restées en 0 : une baie
+    // qui dépassait un peu l'égout gagnait alors le tri et perçait la
+    // couverture, ce qui donnait des toits troués vus de loin.
+    group.add(m);
+    vitrages = mat;
+  }
+
+  if (cadrePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(cadrePos, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Dormant, rendu sous la vitre, d'où un `renderOrder` inférieur.
+    //
+    // Assombri de 0xece9e2 à 0xb4b6b8. Le blanc cassé d'origine ressortait à
+    // 1,37 fois la clarté de l'enduit moyen, mesuré sur les couleurs de sommet
+    // des murs : le cadre débordant de 11 cm autour d'une vitre étroite, c'est
+    // lui qui dominait la baie, et une fenêtre se lisait de la rue comme un
+    // rectangle blanc plein posé sur la façade. Le rapport est ramené à 1,07,
+    // assez pour que la menuiserie se détache du mur sans le percer.
+    //
+    // La teinte reste très légèrement plus froide que l'enduit, comme une
+    // menuiserie peinte à côté d'un crépi.
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0xb4b6b8, roughness: 0.7, side: THREE.DoubleSide,
+    }));
+    m.renderOrder = 0;
+    group.add(m);
+  }
+
+  if (appuiPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(appuiPos, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Pierre ou béton de tablette : plus gris et plus mat que la menuiserie,
+    // plus clair que l'enduit sali du pied de façade.
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0xc8c4ba, roughness: 0.88, side: THREE.DoubleSide,
+    }));
+    m.receiveShadow = true;
+    group.add(m);
+  }
+
+  if (roofPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(roofPos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(roofCol, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(roofUv, 2));
+    // Les pans sont inclinés : les normales doivent être déduites de la
+    // géométrie, sinon tous les toits reçoivent la lumière comme s'ils étaient plats.
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Le rythme des rangs de tuiles est ce qui identifie une couverture du
+    // Sud-Ouest, et il porte loin : c'est visible sur toute la ligne de toits.
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.95, side: THREE.DoubleSide,
+      map: tuile, bumpMap: carteRelief(tuile), bumpScale: 0.5,
+    }));
+    m.name = 'toitures';
+    m.receiveShadow = true;
+    group.add(m);
+  }
+
+  // ---- Superstructures instanciées ---------------------------------------
+  //
+  // Trois appels de dessin pour toute la ville, quelle que soit la quantité :
+  // une souche de cheminée est une boîte, une lucarne un prisme, un bloc de
+  // ventilation une boîte plate. Les poser en maillages indépendants coûterait
+  // plusieurs milliers d'objets pour un gain visuel identique.
+  {
+    const dummy = new THREE.Object3D();
+
+    if (cheminees.length) {
+      // Souche de brique ou d'enduit, section carrée. La géométrie est unitaire
+      // et l'échelle porte la hauteur réelle, propre à chaque bâtiment.
+      const g = new THREE.BoxGeometry(0.6, 1, 0.6);
+      // L'origine passe en pied de souche : l'échelle en hauteur la fait alors
+      // pousser vers le haut, sans avoir à corriger la position.
+      g.translate(0, 0.5, 0);
+      const m = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({
+        color: 0xa8907c, roughness: 0.92,
+      }), cheminees.length);
+      cheminees.forEach((c, i) => {
+        dummy.position.set(c.x, c.y, c.z);
+        dummy.rotation.set(0, -c.cap, 0);
+        dummy.scale.set(1, c.h, 1);
+        dummy.updateMatrix();
+        m.setMatrixAt(i, dummy.matrix);
+      });
+      m.instanceMatrix.needsUpdate = true;
+      m.receiveShadow = true;
+      m.name = 'cheminees';
+      group.add(m);
+    }
+
+    if (lucarnes.length) {
+      // Lucarne simplifiée : un petit volume posé sur le versant, avec sa joue
+      // avant plus claire qui lit comme une fenêtre de toit. La forme reste
+      // sommaire, elle n'est vue que de loin et de biais.
+      const g = new THREE.BoxGeometry(1.15, 0.85, 1.0);
+      g.translate(0, 0.30, 0);
+      const m = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({
+        color: 0xb9b3a6, roughness: 0.86,
+      }), lucarnes.length);
+      lucarnes.forEach((l, i) => {
+        dummy.position.set(l.x, l.y, l.z);
+        dummy.rotation.set(0, -l.cap, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        m.setMatrixAt(i, dummy.matrix);
+      });
+      m.instanceMatrix.needsUpdate = true;
+      m.receiveShadow = true;
+      m.name = 'lucarnes';
+      group.add(m);
+    }
+
+    if (ventils.length) {
+      // Bloc de ventilation de toiture-terrasse : caisson métallique clair,
+      // très reconnaissable sur les grandes surfaces commerciales.
+      const g = new THREE.BoxGeometry(1.5, 0.7, 1.1);
+      g.translate(0, 0.35, 0);
+      const m = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({
+        color: 0x9ba0a4, roughness: 0.62, metalness: 0.22,
+      }), ventils.length);
+      ventils.forEach((v, i) => {
+        dummy.position.set(v.x, v.y, v.z);
+        dummy.rotation.set(0, -v.cap, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        m.setMatrixAt(i, dummy.matrix);
+      });
+      m.instanceMatrix.needsUpdate = true;
+      m.receiveShadow = true;
+      m.name = 'ventilations';
+      group.add(m);
+    }
+  }
+
+  // ---- Voies ferrées -----------------------------------------------------
+  const railPos = [], railUv = [], railNrm = [];
+  for (const r of data.rails) ribbon(r.pts, 3.2, ROAD_Y + 0.02, railPos, railUv, railNrm, relief);
+  if (railPos.length) {
+    group.add(meshFromArrays(railPos, railUv, railNrm,
+      new THREE.MeshStandardMaterial({ color: 0x554b40, roughness: 1, side: THREE.DoubleSide })));
+  }
+
+  // ---- Terrains de sport -------------------------------------------------
+  // Artix en compte 27 : football, tennis, basket, handball, athlétisme,
+  // pétanque, skatepark. Leur revêtement est bien plus caractéristique qu'une
+  // pelouse générique, et ce sont des repères visuels dans le bourg.
+  const REVETEMENTS = {
+    soccer:     0x4a7d3a,   // gazon de football, vert soutenu
+    tennis:     0x9c5a3c,   // terre battue ocre
+    basketball: 0x7a5a48,   // enrobé teinté
+    handball:   0x5a6f8c,   // résine bleutée
+    multi:      0x5a6f8c,   // plateau multisports
+    athletics:  0xa8503c,   // piste en résine rouge
+    boules:     0xb5a88c,   // stabilisé clair
+    skateboard: 0x8a8a8e,   // béton lissé
+    volleyball: 0xa8703c,
+    defaut:     0x6f8f4a,
+  };
+  const terrainPos = [], terrainCol = [];
+  const terrainMarkPos = [], filetPos = [];
+  const teinteT = new THREE.Color();
+  // Bordures de boulodrome : les jeux de pétanque sont toujours ceinturés de
+  // planches ou de madriers qui retiennent le stabilisé et arrêtent les boules.
+  // Sans elles, l'aire se lit comme un simple carré de gravier.
+  const bordPos = [];
+  const traitSol = (a, b, largeur, y) => {
+    const dx = b[0] - a[0], dz = b[1] - a[1];
+    const len = Math.hypot(dx, dz);
+    if (len < 0.05) return;
+    const nx = -dz / len * largeur / 2, nz = dx / len * largeur / 2;
+    terrainMarkPos.push(
+      a[0] - nx, y(a[0], a[1]), a[1] - nz,
+      a[0] + nx, y(a[0], a[1]), a[1] + nz,
+      b[0] + nx, y(b[0], b[1]), b[1] + nz,
+      a[0] - nx, y(a[0], a[1]), a[1] - nz,
+      b[0] + nx, y(b[0], b[1]), b[1] + nz,
+      b[0] - nx, y(b[0], b[1]), b[1] - nz,
+    );
+  };
+  for (const t of data.terrains ?? []) {
+    const couleur = REVETEMENTS[t.sport] ?? REVETEMENTS.defaut;
+    teinteT.setHex(couleur);
+    // Légèrement au-dessus du terrain naturel, sous la chaussée.
+    const altT = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + ROAD_Y - 0.12;
+    const altTrait = (px, pz) => altT(px, pz) + 0.025;
+    for (const [a, b, c] of triangulate(t.pts)) {
+      for (const idx of [a, b, c]) {
+        terrainPos.push(t.pts[idx][0], altT(t.pts[idx][0], t.pts[idx][1]), t.pts[idx][1]);
+        terrainCol.push(teinteT.r, teinteT.g, teinteT.b);
+      }
+    }
+
+    // Lignes sportives à partir de l'emprise réelle. Elles transforment les
+    // grandes nappes colorées en terrains reconnaissables : rectangle de jeu,
+    // ligne médiane et rond central pour le football ; couloirs et filet pour
+    // le tennis. Le repère orienté vient du contour OSM, donc les marquages ne
+    // sont jamais alignés arbitrairement sur les axes du monde.
+    if (['soccer', 'tennis', 'basketball', 'handball', 'multi'].includes(t.sport)) {
+      let cx = 0, cz = 0;
+      for (const [x, z] of t.pts) { cx += x; cz += z; }
+      cx /= t.pts.length; cz /= t.pts.length;
+      let sxx = 0, szz = 0, sxz = 0;
+      for (const [x, z] of t.pts) {
+        const dx = x - cx, dz = z - cz;
+        sxx += dx * dx; szz += dz * dz; sxz += dx * dz;
+      }
+      const th = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+      const ux = Math.cos(th), uz = Math.sin(th), vx = -uz, vz = ux;
+      let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+      for (const [x, z] of t.pts) {
+        const dx = x - cx, dz = z - cz;
+        const u = dx * ux + dz * uz, v = dx * vx + dz * vz;
+        u0 = Math.min(u0, u); u1 = Math.max(u1, u);
+        v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+      }
+      // Retrait d'un mètre pour que le trait reste à l'intérieur du contour.
+      u0 += 1; u1 -= 1; v0 += 1; v1 -= 1;
+      const p = (u, v) => [cx + ux * u + vx * v, cz + uz * u + vz * v];
+      const largeurTrait = t.sport === 'tennis' ? 0.08 : 0.12;
+      if (u1 > u0 && v1 > v0) {
+        traitSol(p(u0, v0), p(u1, v0), largeurTrait, altTrait);
+        traitSol(p(u1, v0), p(u1, v1), largeurTrait, altTrait);
+        traitSol(p(u1, v1), p(u0, v1), largeurTrait, altTrait);
+        traitSol(p(u0, v1), p(u0, v0), largeurTrait, altTrait);
+        traitSol(p(0, v0), p(0, v1), largeurTrait, altTrait);
+
+        if (t.sport === 'soccer') {
+          const rayonC = Math.min((u1 - u0) * .10, (v1 - v0) * .23, 9.15);
+          for (let i = 0; i < 28; i++) {
+            const a = i / 28 * Math.PI * 2, b = (i + 1) / 28 * Math.PI * 2;
+            traitSol(p(Math.cos(a) * rayonC, Math.sin(a) * rayonC),
+              p(Math.cos(b) * rayonC, Math.sin(b) * rayonC), largeurTrait, altTrait);
+          }
+        } else if (t.sport === 'tennis') {
+          const quart = (u1 - u0) * .25;
+          traitSol(p(-quart, v0), p(-quart, v1), largeurTrait, altTrait);
+          traitSol(p(quart, v0), p(quart, v1), largeurTrait, altTrait);
+          traitSol(p(-quart, 0), p(quart, 0), largeurTrait, altTrait);
+          // Filet vertical au milieu du court.
+          const a = p(0, v0), b = p(0, v1);
+          const ya = altT(a[0], a[1]), yb = altT(b[0], b[1]);
+          filetPos.push(
+            a[0], ya, a[1], b[0], yb, b[1], b[0], yb + .92, b[1],
+            a[0], ya, a[1], b[0], yb + .92, b[1], a[0], ya + .92, a[1],
+          );
+        }
+      }
+    }
+
+    if (t.sport === 'boules') {
+      const H = 0.22;   // hauteur du madrier au-dessus du stabilisé
+      const n = t.pts.length;
+      for (let i = 0; i < n; i++) {
+        const [x1, z1] = t.pts[i];
+        const [x2, z2] = t.pts[(i + 1) % n];
+        const y1 = altT(x1, z1), y2 = altT(x2, z2);
+        // Face verticale de la planche, visible depuis l'extérieur.
+        bordPos.push(x1, y1, z1, x2, y2, z2, x2, y2 + H, z2);
+        bordPos.push(x1, y1, z1, x2, y2 + H, z2, x1, y1 + H, z1);
+      }
+    }
+  }
+  if (terrainPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(terrainPos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(terrainCol, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.95, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+    }));
+    m.renderOrder = 1;
+    m.receiveShadow = true;
+    group.add(m);
+  }
+  if (terrainMarkPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(terrainMarkPos, 3));
+    g.computeVertexNormals(); g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0xd7d4c8, roughness: 0.88, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
+    }));
+    m.receiveShadow = true;
+    group.add(m);
+  }
+  if (filetPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(filetPos, 3));
+    g.computeVertexNormals(); g.computeBoundingSphere();
+    group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0x38434a, roughness: 0.9, side: THREE.DoubleSide,
+    })));
+  }
+  if (bordPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(bordPos, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0x6b5540, roughness: 1, side: THREE.DoubleSide,
+    })));
+  }
+
+  // ---- Haies, murets et clôtures ----------------------------------------
+  // Ces limites de parcelles structurent le paysage d'un lotissement bien plus
+  // que les bâtiments seuls : sans elles, les maisons flottent sur une pelouse.
+  const hedgePos = [], hedgeCol = [], wallPos = [];
+  const hedgeColor = new THREE.Color(0x3f6b32);
+  const hedgeColor2 = new THREE.Color(0x4c7a3a);
+
+  // Une barrière longeant une route est souvent tracée à un mètre de l'axe :
+  // la poser telle quelle barrerait la chaussée. On écarte tout segment qui
+  // empiète sur une voie carrossable.
+  const segmentsRoute = [];
+  for (const r of data.roads) {
+    if (!r.drivable) continue;
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      segmentsRoute.push({
+        x1: r.pts[i][0], z1: r.pts[i][1],
+        x2: r.pts[i + 1][0], z2: r.pts[i + 1][1],
+        demi: r.width / 2 + 0.8,
+      });
+    }
+  }
+  const surChaussee = (x, z) => segmentsRoute.some((s) => {
+    if (Math.abs(s.x1 - x) > 60 && Math.abs(s.z1 - z) > 60) return false;
+    const dx = s.x2 - s.x1, dz = s.z2 - s.z1;
+    const l2 = dx * dx + dz * dz;
+    if (l2 < 1e-6) return false;
+    let t = ((x - s.x1) * dx + (z - s.z1) * dz) / l2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const ddx = x - (s.x1 + dx * t), ddz = z - (s.z1 + dz * t);
+    return ddx * ddx + ddz * ddz < s.demi * s.demi;
+  });
+
+  for (const b of data.barriers ?? []) {
+    if (b.kind === 'tree_row') continue; // traité avec la végétation
+    const solide = b.kind === 'wall';
+    const demi = solide ? 0.16 : b.kind === 'hedge' ? 0.45 : 0.06;
+    for (let i = 0; i < b.pts.length - 1; i++) {
+      const [x1, z1] = b.pts[i], [x2, z2] = b.pts[i + 1];
+      const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+      if (len < 0.3 || len > 120) continue;
+      // Milieu du segment testé : suffisant pour écarter les barrières qui
+      // traversent une route.
+      if (surChaussee((x1 + x2) / 2, (z1 + z2) / 2)) continue;
+      const nx = (-dz / len) * demi, nz = (dx / len) * demi;
+      const h = b.height;
+      const cible = solide ? wallPos : hedgePos;
+      // Base posée sur le terrain : une haie de coteau doit suivre la pente.
+      const yb1 = (relief ? relief.hauteurRoute(x1, z1) : 0) + ROAD_Y;
+      const yb2 = (relief ? relief.hauteurRoute(x2, z2) : 0) + ROAD_Y;
+
+      // Deux flancs et un dessus : suffisant vu depuis la route.
+      for (const s of [1, -1]) {
+        cible.push(
+          x1 + nx * s, yb1, z1 + nz * s, x2 + nx * s, yb2, z2 + nz * s, x2 + nx * s, yb2 + h, z2 + nz * s,
+          x1 + nx * s, yb1, z1 + nz * s, x2 + nx * s, yb2 + h, z2 + nz * s, x1 + nx * s, yb1 + h, z1 + nz * s,
+        );
+      }
+      cible.push(
+        x1 + nx, yb1 + h, z1 + nz, x2 + nx, yb2 + h, z2 + nz, x2 - nx, yb2 + h, z2 - nz,
+        x1 + nx, yb1 + h, z1 + nz, x2 - nx, yb2 + h, z2 - nz, x1 - nx, yb1 + h, z1 - nz,
+      );
+
+      if (!solide) {
+        // Feuillage nuancé : deux verts alternés selon la position.
+        const c = (Math.abs(Math.round(x1) + Math.round(z1)) % 2) ? hedgeColor : hedgeColor2;
+        for (let k = 0; k < 18; k++) hedgeCol.push(c.r, c.g, c.b);
+      }
+    }
+  }
+  if (hedgePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(hedgePos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(hedgeCol, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 1, side: THREE.DoubleSide, flatShading: true,
+    })));
+  }
+  if (wallPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(wallPos, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0xbfb5a4, roughness: 0.95, side: THREE.DoubleSide,
+    })));
+  }
+
+  // ---- Îlots centraux des ronds-points ---------------------------------
+  // OSM décrit le ruban de circulation, mais pas toujours le jardin central.
+  // On le déduit de la boucle réelle : pelouse, bordure, arbuste et fleurs.
+  const ilots = construireIlotsRondsPoints(data, relief);
+  if (ilots) group.add(ilots);
+
+  // ---- Végétation : arbres le long des routes et dans les zones boisées --
+  const trees = plantTrees(data, relief);
+  if (trees) group.add(trees);
+
+  // ---- Lampadaires sur les axes principaux ------------------------------
+  const lamps = placeLamps(data, relief);
+  if (lamps) group.add(lamps);
+
+  scene.add(group);
+  return {
+    group,
+    collisionTris: new Float32Array(collisionTris),
+    // Foyers lumineux, pour l'éclairage public nocturne.
+    foyers: lamps?.userData.foyers ?? [],
+    lampHeads: lamps?.userData.lampHeads ?? null,
+    // Matériau du vitrage : son émission est pilotée par le cycle jour/nuit,
+    // pour que les pièces déclarées éclairées s'allument à la tombée du jour.
+    vitrages,
+    // Matériau de l'eau : la boucle fait dériver ses normales très lentement,
+    // ce qui donne le courant sans animer la moindre géométrie.
+    eau: materiauEau,
+    // Places en épi des aires OSM, pour y garer des véhicules bien orientés.
+    placesEpi,
+    // Groupes de maillages instanciés éligibles au découpage spatial
+    // (`spatial.js`), chacun avec la position de ses entités. Un groupe par
+    // famille d'objets répété dans toute la commune : arbres, lampadaires.
+    // Les voitures garées, construites après `buildWorld`, s'ajoutent à cette
+    // liste depuis `main.js`.
+    instances: [trees?.userData.instances, lamps?.userData.instances].filter(Boolean),
+  };
+}
+
+function construireIlotsRondsPoints(data, relief = null) {
+  const routes = (data.roads ?? []).filter((r) => r.drivable && r.rondPoint && r.pts?.length >= 4);
+  if (!routes.length) return null;
+
+  const g = new THREE.Group();
+  const gazon = new THREE.MeshStandardMaterial({ color: 0x3f7638, roughness: 1 });
+  const bordure = new THREE.MeshStandardMaterial({ color: 0x8f8a7e, roughness: 0.94 });
+  const feuillage = new THREE.MeshStandardMaterial({ color: 0x285d32, roughness: 1, flatShading: true });
+  const tronc = new THREE.MeshStandardMaterial({ color: 0x574331, roughness: 1 });
+  const fleurs = [0xe7b941, 0xd86b4e, 0xf0e1bc, 0x8e4b70]
+    .map((color) => new THREE.MeshStandardMaterial({ color, roughness: 0.88 }));
+
+  for (const r of routes) {
+    const pts = r.pts;
+    let cx = 0, cz = 0;
+    for (const [x, z] of pts) { cx += x; cz += z; }
+    cx /= pts.length; cz /= pts.length;
+    let rayon = 0;
+    for (const [x, z] of pts) rayon += Math.hypot(x - cx, z - cz);
+    rayon = rayon / pts.length - r.width / 2 - 0.22;
+    if (rayon < 0.75 || rayon > 22) continue;
+    const y = (relief ? relief.hauteurRoute(cx, cz) : 0) + ROAD_Y + 0.025;
+
+    const disque = new THREE.Mesh(new THREE.CircleGeometry(rayon, 32), gazon);
+    disque.rotation.x = -Math.PI / 2;
+    disque.position.set(cx, y, cz);
+    disque.receiveShadow = true;
+    g.add(disque);
+
+    const anneau = new THREE.Mesh(new THREE.RingGeometry(rayon, rayon + 0.28, 32), bordure);
+    anneau.rotation.x = -Math.PI / 2;
+    anneau.position.set(cx, y + 0.025, cz);
+    anneau.receiveShadow = true;
+    g.add(anneau);
+
+    // Arbuste central, dimensionné pour préserver les lignes de visibilité.
+    const h = Math.min(2.8, 1.15 + rayon * 0.23);
+    const bois = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.15, h * .55, 6), tronc);
+    bois.position.set(cx, y + h * .275, cz); g.add(bois);
+    const couronne = new THREE.Mesh(new THREE.IcosahedronGeometry(Math.min(1.35, rayon * .28), 1), feuillage);
+    couronne.scale.y = .72;
+    couronne.position.set(cx, y + h * .72, cz);
+    couronne.castShadow = true; couronne.receiveShadow = true;
+    g.add(couronne);
+
+    // Couronne de fleurs colorées, peu polygonale et déterministe.
+    const nb = Math.max(6, Math.min(18, Math.round(rayon * 2.2)));
+    const rr = Math.max(.45, rayon * .62);
+    for (let i = 0; i < nb; i++) {
+      const a = i / nb * Math.PI * 2;
+      const fleur = new THREE.Mesh(new THREE.SphereGeometry(.16, 6, 4), fleurs[i % fleurs.length]);
+      fleur.position.set(cx + Math.cos(a) * rr, y + .16, cz + Math.sin(a) * rr);
+      g.add(fleur);
+    }
+  }
+  return g.children.length ? g : null;
+}
+
+function plantTrees(data, relief = null) {
+  const positions = [];
+
+  // Alignements d'arbres réellement cartographiés : plus fidèles que les
+  // plantations aléatoires le long des routes.
+  for (const b of data.barriers ?? []) {
+    if (b.kind !== 'tree_row') continue;
+    for (let i = 0; i < b.pts.length - 1; i++) {
+      const [x1, z1] = b.pts[i], [x2, z2] = b.pts[i + 1];
+      const len = Math.hypot(x2 - x1, z2 - z1);
+      const n = Math.max(1, Math.floor(len / 9));
+      for (let k = 0; k <= n; k++) {
+        const t = k / (n || 1);
+        const seed = Math.abs(x1 * 17 + z1 * 31 + k);
+        positions.push([x1 + (x2 - x1) * t, z1 + (z2 - z1) * t, 5 + hash(seed) * 3.5]);
+      }
+    }
+  }
+  // Dans les forêts
+  for (const z of data.areas) {
+    if (z.kind !== 'forest' && z.kind !== 'park' && z.kind !== 'orchard') continue;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const [x, zz] of z.pts) {
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minZ = Math.min(minZ, zz); maxZ = Math.max(maxZ, zz);
+    }
+    // Maillage lâche : au pas de 15 m, une grande forêt génère des dizaines de
+    // milliers d'arbres et effondre le framerate.
+    const step = z.kind === 'orchard' ? 26 : 32;
+    for (let x = minX; x < maxX; x += step) {
+      for (let zz = minZ; zz < maxZ; zz += step) {
+        if (!pointInPoly(x, zz, z.pts)) continue;
+        const seed = Math.abs(x * 31 + zz * 17);
+        positions.push([x + (hash(seed) - 0.5) * 8, zz + (hash(seed + 5) - 0.5) * 8, 4 + hash(seed + 9) * 5]);
+      }
+    }
+  }
+  // Arbres cartographiés un par un dans OSM : 415 à Artix, à leur position
+  // réelle. Ils remplacent avantageusement les plantations aléatoires le long
+  // des routes, qui tombaient parfois en plein champ ou sur un trottoir.
+  const arbresReels = new Set();
+  for (const a of data.poi?.arbres ?? []) {
+    // Hauteur : renseignée quand elle existe, sinon tirée d'une plage plausible
+    // pour un arbre d'alignement de bourg.
+    const seed = Math.abs(a.x * 13 + a.z * 7);
+    const h = a.hauteur ?? (a.feuillu ? 7 + hash(seed) * 5 : 9 + hash(seed) * 6);
+    positions.push([a.x, a.z, h, true]);   // true = arbre réel, jamais écarté
+    // Mémorisé pour éviter de replanter un arbre inventé au même endroit.
+    arbresReels.add(`${Math.round(a.x / 12)},${Math.round(a.z / 12)}`);
+  }
+
+  // Alignements le long des routes secondaires, uniquement là où aucun arbre
+  // réel n'est cartographié : ils comblent les axes non relevés sans doubler
+  // les plantations existantes.
+  for (const r of data.roads) {
+    if (!r.drivable || r.width < 6.5) continue;
+    for (let i = 0; i < r.pts.length - 1; i += 3) {
+      const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+      const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+      if (len < 12) continue;
+      const nx = -dz / len, nz = dx / len;
+      const off = r.width / 2 + 3.5;
+      const seed = Math.abs(x1 * 13 + z1 * 7);
+      if (hash(seed) > 0.55) {
+        const px = x1 + nx * off, pz = z1 + nz * off;
+        if (arbresReels.has(`${Math.round(px / 12)},${Math.round(pz / 12)}`)) continue;
+        positions.push([px, pz, 5 + hash(seed + 3) * 3]);
+      }
+    }
+  }
+  if (!positions.length) return null;
+
+  // Plafond de sécurité. Les arbres réellement cartographiés (4e champ à true)
+  // sont conservés en priorité absolue : ce sont eux qui donnent à la ville sa
+  // physionomie exacte. Le reste est trié par proximité du bourg.
+  const MAX_TREES = 3500;
+  if (positions.length > MAX_TREES) {
+    positions.sort((a, b) => {
+      if (a[3] !== b[3]) return a[3] ? -1 : 1;
+      return (a[0] ** 2 + a[1] ** 2) - (b[0] ** 2 + b[1] ** 2);
+    });
+    positions.length = MAX_TREES;
+  }
+
+  const group = new THREE.Group();
+  // Fût peu conique : les platanes d'alignement, régulièrement recépés, ont un
+  // tronc presque cylindrique jusqu'à la couronne.
+  // Le fût est un cylindre de hauteur 1 et de rayon 1 : l'instanciation lui
+  // donne sa hauteur ET son rayon réels, ce qui permet de faire varier
+  // l'épaisseur avec la taille de l'arbre. Un rayon fixe donnait le même
+  // diamètre à un sujet de 4 m et à un platane de 9 m, soit un élancement de
+  // 37 pour 1 sur les grands, quand un platane réel tient entre 12 et 18.
+  // Deux segments en hauteur : le pied s'évase en contrefort, le reste du fût
+  // reste presque droit. 8 côtés au lieu de 6, l'arête hexagonale se lisant
+  // franchement sur les troncs de premier plan.
+  const trunkGeo = new THREE.CylinderGeometry(0.78, 1, 1, 8, 2);
+  {
+    // Renflement du pied : on écarte les sommets du premier quart de hauteur.
+    // Un tronc adulte n'attaque jamais le sol en cylindre net, il s'épate.
+    const p = trunkGeo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const y = p.getY(i);
+      if (y > -0.34) continue;
+      // t vaut 0 au quart de la hauteur, 1 au ras du sol.
+      const t = (-0.34 - y) / 0.16;
+      const k = 1 + t * t * 0.42;
+      p.setX(i, p.getX(i) * k);
+      p.setZ(i, p.getZ(i) * k);
+    }
+    trunkGeo.computeVertexNormals();
+  }
+  // Couronne en trois lobes décalés plutôt qu'un icosaèdre unique. Le sujet
+  // isolé ne présente jamais une boule régulière : la lumière accroche des
+  // masses de feuillage séparées par des creux, et c'est ce découpage qui se
+  // lit de loin, bien avant le détail des feuilles.
+  // Un seul icosaèdre par arbre donnait une silhouette lisible en fond de plan
+  // mais franchement géométrique dès qu'on l'approchait.
+  // Géométrie unitaire : l'instanciation lui donne rayon et aplatissement.
+  const leafGeo = (() => {
+    // Subdivision 1 : 80 faces contre 20, assez pour que le lobe cesse de se
+    // lire comme un polyèdre sans faire exploser le compte de triangles à
+    // 3 500 exemplaires.
+    const lobes = [
+      { p: [0, 0.12, 0], r: 0.82 },
+      { p: [0.42, -0.16, -0.26], r: 0.62 },
+      { p: [-0.38, -0.10, 0.34], r: 0.58 },
+    ].map(({ p, r }) => {
+      const g = new THREE.IcosahedronGeometry(r, 1);
+      // Déformation par sommet : un lobe strictement sphérique reste trop
+      // régulier. On tire chaque sommet le long de sa normale d'un bruit
+      // stable, ce qui creuse la surface sans coûter de géométrie.
+      const a = g.attributes.position;
+      for (let i = 0; i < a.count; i++) {
+        const x = a.getX(i), y = a.getY(i), z = a.getZ(i);
+        const k = 1 + (hash(x * 12.9 + y * 78.2 + z * 37.7) - 0.5) * 0.34;
+        a.setXYZ(i, x * k, y * k, z * k);
+      }
+      g.translate(p[0], p[1], p[2]);
+      return g;
+    });
+    const g = mergeGeometries(lobes);
+    g.computeVertexNormals();
+    return g;
+  })();
+
+  // Charpente : les branches qui relient le fût au houppier. Sans elles la
+  // couronne flotte au-dessus du tronc, défaut visible sur tout sujet de
+  // premier plan. Géométrie unitaire séparée, instanciée avec le matériau
+  // d'écorce, montée sur la même transformation que le fût.
+  // Chaque branche est un tronc de cône incliné partant du sommet du fût.
+  const branchGeo = (() => {
+    const parts = [];
+    const N = 5;
+    for (let i = 0; i < N; i++) {
+      // Angles irréguliers : une charpente régulière trahit la génération.
+      const a = (i / N) * Math.PI * 2 + hash(i * 4.7) * 0.9;
+      const incl = 0.62 + hash(i * 9.3) * 0.30;   // écartement depuis l'axe
+      const lon = 0.72 + hash(i * 2.1) * 0.34;    // longueur de la branche
+      // Branche effilée : forte à l'insertion, fine à l'extrémité.
+      const g = new THREE.CylinderGeometry(0.055, 0.16, lon, 5, 1, true);
+      // Le cylindre est centré : on le remonte pour que sa base soit à 0.
+      g.translate(0, lon / 2, 0);
+      // Inclinaison puis rotation autour de l'axe du tronc.
+      g.rotateZ(incl);
+      g.rotateY(a);
+      parts.push(g);
+    }
+    const g = mergeGeometries(parts);
+    g.computeVertexNormals();
+    return g;
+  })();
+  // Couleur blanche : la teinte vient de la couleur d'instance de chaque
+  // arbre, que le matériau multiplie. Un brun ici les assombrirait toutes.
+  const ecorce = texturerEcorce();
+  // Répétition serrée autour du tronc, lâche en hauteur : c'est ce qui garde
+  // les cannelures verticales. Répéter en Y les recouperait en tronçons.
+  ecorce.repeat.set(3, 1);
+  const trunkMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff, map: ecorce, bumpMap: carteRelief(ecorce), bumpScale: 0.6, roughness: 1,
+  });
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f6b30, roughness: 1, flatShading: true });
+
+  // Cyprès du centre-bourg. Les photographies de rue en montrent plusieurs
+  // autour du carrefour de la mairie : une silhouette conique sombre et
+  // élancée, très différente des feuillus ronds plantés partout ailleurs.
+  // Aucune donnée ne distingue l'espèce d'un arbre à Artix, leur emprise est
+  // donc relevée à la vue.
+  const CYPRES = [
+    { x: 34, z: 78, h: 9.5 }, { x: 37, z: 83, h: 8.2 },
+    { x: 40, z: 88, h: 10.1 }, { x: 30, z: 96, h: 8.8 },
+  ];
+  if (CYPRES.length) {
+    // Cône unique instancié : à la distance où on les voit en roulant, la
+    // silhouette suffit, et trois cônes emboîtés par arbre coûteraient le
+    // triple pour un gain invisible.
+    const cypGeo = new THREE.ConeGeometry(1, 1, 7);
+    const cypMat = new THREE.MeshStandardMaterial({
+      color: 0x24422a, roughness: 1, flatShading: true,
+    });
+    const cypres = new THREE.InstancedMesh(cypGeo, cypMat, CYPRES.length);
+    const m = new THREE.Matrix4();
+    CYPRES.forEach((c, i) => {
+      const sol = (relief ? relief.hauteurRoute(c.x, c.z) : 0) + ROAD_Y;
+      // Le cône est centré sur son axe : on le remonte d'une demi-hauteur.
+      m.makeScale(c.h * 0.16, c.h, c.h * 0.16);
+      m.setPosition(c.x, sol + c.h / 2, c.z);
+      cypres.setMatrixAt(i, m);
+    });
+    cypres.instanceMatrix.needsUpdate = true;
+    cypres.castShadow = false;
+    cypres.receiveShadow = true;
+    group.add(cypres);
+  }
+
+  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, positions.length);
+  const branches = new THREE.InstancedMesh(branchGeo, trunkMat, positions.length);
+  const leaves = new THREE.InstancedMesh(leafGeo, leafMat, positions.length);
+  // Les branches partagent le matériau d'écorce, donc la couleur d'instance du
+  // tronc leur est recopiée : une charpente d'une autre teinte que son fût se
+  // repère immédiatement.
+  branches.castShadow = false;
+  // Pas d'ombre portée sur les feuillages : quelques milliers d'instances dans
+  // la passe d'ombre coûtent bien plus qu'elles n'apportent visuellement.
+  leaves.castShadow = false;
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const col = new THREE.Color();
+  const AXE_Y = new THREE.Vector3(0, 1, 0);
+
+  positions.forEach(([x, z, h, aligne], i) => {
+    // Pied posé sur le terrain : sans cela les arbres d'un coteau flottent.
+    const sol = relief ? relief.hauteurRoute(x, z) : 0;
+    // Les arbres d'alignement d'Artix sont des platanes taillés en tête de
+    // chat : tronc dégagé haut et couronne large et aplatie, très différente
+    // du houppier arrondi d'un sujet libre. Le fût occupe donc une plus grande
+    // part de la hauteur, et la couronne s'étale.
+    // Le fût monte du sol jusqu'au bas de la couronne, sans la traverser.
+    // Le fût monte jusqu'à l'insertion de la charpente, pas plus haut. À 0,86
+    // il ressortait au-dessus du feuillage comme un mât de parasol, la
+    // couronne étant centrée plus haut et fortement aplatie.
+    const hautFut = h * (aligne ? 0.62 : 0.55);
+    // Rayon proportionnel à la hauteur : l'élancement d'un platane adulte
+    // tourne autour de 15 pour 1 (hauteur totale sur diamètre). Le sujet
+    // d'alignement, régulièrement recépé, porte un fût un peu plus fort que
+    // l'arbre libre de même taille. Une variation par arbre évite l'alignement
+    // de perches strictement identiques.
+    const rTronc = h * (aligne ? 0.040 : 0.034) * (0.82 + hash(i * 5.1) * 0.4);
+    m.compose(new THREE.Vector3(x, sol + hautFut / 2, z), q,
+      new THREE.Vector3(rTronc, hautFut, rTronc));
+    trunks.setMatrixAt(i, m);
+    // Écorce : le gris-vert clair du platane côtoie le brun sombre des
+    // feuillus de bord de route. Sans cette variation les 3 500 troncs
+    // ressortent d'un brun uniforme qui trahit l'instanciation.
+    // Clartés basses : un tronc est une surface sombre, même en plein soleil.
+    // La texture d'écorce éclaircit déjà l'ensemble en la multipliant, une
+    // clarté élevée ici donnait des fûts plus clairs que les façades la nuit.
+    // Mesuré sur capture : le platane clair ressortait à 0,67 de la clarté
+    // d'une façade en enduit blanc, là où une écorce (réflectance 0,15 contre
+    // 0,75 pour l'enduit) doit tomber vers 0,25. Ramené en conséquence.
+    const e = hash(i * 8.3);
+    if (e > 0.62) col.setHSL(0.11, 0.05 + e * 0.04, 0.13 + e * 0.04);
+    else col.setHSL(0.08, 0.18 + e * 0.10, 0.09 + e * 0.05);
+    trunks.setColorAt(i, col);
+    branches.setColorAt(i, col);
+    const r = h * (aligne ? 0.42 : 0.34);
+    // Charpente greffée au sommet du fût, à l'échelle de la couronne qu'elle
+    // porte : les branches doivent mordre dans le feuillage, sinon le raccord
+    // se voit autant qu'avant. Une rotation propre à chaque arbre évite que
+    // toute une allée présente la même charpente.
+    const echB = r * 0.92;
+    q.setFromAxisAngle(AXE_Y, hash(i * 6.7) * Math.PI * 2);
+    m.compose(new THREE.Vector3(x, sol + hautFut * 0.94, z), q,
+      new THREE.Vector3(echB, echB, echB));
+    branches.setMatrixAt(i, m);
+    q.identity();
+    // Aplatissement : 0,55 donne la couronne en plateau de la taille en
+    // têtard, 0,95 le houppier presque sphérique d'un arbre libre.
+    const aplat = aligne ? 0.62 : 0.95;
+    // Centre de couronne abaissé : à 1,02 de la hauteur, le houppier coiffait
+    // le fût sans le rejoindre. Il doit envelopper le haut de la charpente,
+    // les branches ressortant en périphérie et non par-dessus.
+    // Rotation propre à chaque arbre : les trois lobes étant décalés, une
+    // orientation commune rendrait le motif répétitif immédiatement lisible.
+    q.setFromAxisAngle(AXE_Y, hash(i * 1.9) * Math.PI * 2);
+    m.compose(new THREE.Vector3(x, sol + h * (aligne ? 0.84 : 0.76), z), q,
+      new THREE.Vector3(r, r * aplat, r));
+    leaves.setMatrixAt(i, m);
+    q.identity();
+    // Palette de feuillages calée sur les photographies du bourg : les grands
+    // conifères d'ornement (cèdres bleus) y côtoient les feuillus, avec des
+    // verts nettement plus clairs et plus gris que le vert foncé uniforme.
+    const t = hash(i * 3.7);
+    if (t > 0.82) {
+      // Conifère bleuté : le cèdre du carrefour est un repère du bourg.
+      col.setHSL(0.34, 0.14 + t * 0.08, 0.44 + t * 0.10);
+    } else if (t > 0.55) {
+      // Feuillu clair, feuillage d'alignement.
+      col.setHSL(0.24 + t * 0.03, 0.32 + t * 0.10, 0.34 + t * 0.08);
+    } else {
+      // Feuillu dense, vert soutenu.
+      col.setHSL(0.26 + t * 0.04, 0.36 + t * 0.14, 0.25 + t * 0.09);
+    }
+    leaves.setColorAt(i, col);
+  });
+  trunks.instanceMatrix.needsUpdate = true;
+  branches.instanceMatrix.needsUpdate = true;
+  leaves.instanceMatrix.needsUpdate = true;
+  // Les couleurs par instance ne remontent au GPU que si leur buffer est
+  // explicitement invalidé après le remplissage.
+  if (trunks.instanceColor) trunks.instanceColor.needsUpdate = true;
+  if (branches.instanceColor) branches.instanceColor.needsUpdate = true;
+  if (leaves.instanceColor) leaves.instanceColor.needsUpdate = true;
+  group.add(trunks, branches, leaves);
+  // Exposé pour le découpage spatial : les trois maillages partagent le même
+  // ordre d'instances et doivent être réordonnés ensemble, sinon le feuillage
+  // d'un arbre se retrouverait sur le fût d'un autre.
+  group.userData.instances = {
+    meshes: [trunks, branches, leaves],
+    positions: positions.map(([x, z]) => [x, z]),
+  };
+  return group;
+}
+
+function placeLamps(data, relief = null) {
+  const spots = [];
+  const reels = new Set();
+
+  // Lampadaires réellement cartographiés : 20 à Artix, à leur emplacement
+  // exact. Ils sont placés en premier et jamais écartés par le plafond.
+  for (const l of data.poi?.lampadaires ?? []) {
+    spots.push([l.x, l.z, true]);
+    reels.add(`${Math.round(l.x / 10)},${Math.round(l.z / 10)}`);
+  }
+
+  // Complément le long des axes du bourg : OSM ne référence que 20 mâts alors
+  // que la commune en compte des centaines. On densifie là où l'éclairage
+  // public existe réellement, c'est-à-dire sur les voies principales et dans
+  // les rues habitées, jamais sur les chemins agricoles.
+  for (const r of data.roads) {
+    if (!r.drivable) continue;
+    // Critère d'éclairage : voie assez large ou rue de lotissement nommée,
+    // et située dans le tissu urbain.
+    const enAgglo = Math.hypot(r.pts[0][0], r.pts[0][1]) < 900;
+    const eclairee = enAgglo && (r.width >= 6 || (r.name && r.width >= 4.5));
+    if (!eclairee) continue;
+
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+      const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+      if (len < 20) continue;
+      const nx = -dz / len, nz = dx / len;
+      const off = r.width / 2 + 1;
+      // Un mât tous les 30 m environ, cote courante en agglomération.
+      const n = Math.max(1, Math.floor(len / 30));
+      for (let k = 0; k <= n; k++) {
+        const t = n ? k / n : 0.5;
+        const px = x1 + dx * t + nx * off;
+        const pz = z1 + dz * t + nz * off;
+        // Pas de doublon avec un lampadaire réel déjà placé.
+        if (reels.has(`${Math.round(px / 10)},${Math.round(pz / 10)}`)) continue;
+        spots.push([px, pz, false]);
+      }
+    }
+  }
+  if (!spots.length) return null;
+
+  const MAX_LAMPS = 1200;
+  if (spots.length > MAX_LAMPS) {
+    // Les mâts réels passent en tête, le reste est trié par proximité du bourg.
+    spots.sort((a, b) => {
+      if (a[2] !== b[2]) return a[2] ? -1 : 1;
+      return (a[0] ** 2 + a[1] ** 2) - (b[0] ** 2 + b[1] ** 2);
+    });
+    spots.length = MAX_LAMPS;
+  }
+
+  const g = new THREE.Group();
+  const poleGeo = new THREE.CylinderGeometry(0.1, 0.14, 7, 5);
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x50555a, roughness: 0.6, metalness: 0.4 });
+  const headGeo = new THREE.BoxGeometry(0.7, 0.16, 0.32);
+  const headMat = new THREE.MeshStandardMaterial({
+    color: 0xffe9b0, emissive: 0xffce70, emissiveIntensity: 1.4,
+  });
+
+  const poles = new THREE.InstancedMesh(poleGeo, poleMat, spots.length);
+  const heads = new THREE.InstancedMesh(headGeo, headMat, spots.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1);
+
+  // Emplacements des foyers lumineux, transmis au moteur d'éclairage nocturne.
+  const foyers = [];
+
+  spots.forEach(([x, z], i) => {
+    const sol = relief ? relief.hauteurRoute(x, z) : 0;
+    m.compose(new THREE.Vector3(x, sol + 3.5, z), q, s);
+    poles.setMatrixAt(i, m);
+    m.compose(new THREE.Vector3(x, sol + 7, z), q, s);
+    heads.setMatrixAt(i, m);
+    // Le foyer est à la hauteur de la lanterne : c'est de là que part la
+    // lumière projetée sur la chaussée.
+    foyers.push({ x, y: sol + 6.9, z });
+  });
+  poles.instanceMatrix.needsUpdate = true;
+  heads.instanceMatrix.needsUpdate = true;
+  g.add(poles, heads);
+  g.userData.lampHeads = headMat;
+  g.userData.foyers = foyers;
+  // Exposé pour le découpage spatial (`spatial.js`) : jusqu'à 1200 mâts,
+  // dessinés en entier quel que soit l'endroit où se trouve la voiture tant
+  // qu'ils ne passent pas par une `GrilleInstances`, comme c'était déjà le
+  // cas pour les arbres avant leur propre découpage.
+  g.userData.instances = { meshes: [poles, heads], positions: spots.map(([x, z]) => [x, z]) };
+  return g;
+}
+
+function pointInPoly(x, z, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, zi] = poly[i], [xj, zj] = poly[j];
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}

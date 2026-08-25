@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b1522" />
+    <title>Artix Racer Babylon.js</title>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <section id="loading" aria-live="polite">
+      <div class="loading-card">
+        <p class="eyebrow">ÉDITION ARCADE · BABYLON.JS</p>
+        <h1>Artix Racer</h1>
+        <p id="loading-text">Initialisation…</p>
+        <div class="track"><span id="loading-bar"></span></div>
+        <small>Données OSM, BD TOPO et LiDAR réelles d’Artix</small>
+      </div>
+    </section>
+
+    <section id="start-screen" class="overlay-panel hidden" aria-label="Choisir un mode de jeu">
+      <div class="menu-card">
+        <p class="eyebrow">ARTIX · PYRÉNÉES-ATLANTIQUES</p>
+        <h2>La ville devient<br><span>votre terrain de jeu.</span></h2>
+        <p class="menu-copy">Une conduite arcade immédiate dans une reconstruction stylisée d’Artix, basée sur ses vraies routes, son relief et ses bâtiments.</p>
+        <div class="mode-grid">
+          <button type="button" data-mode="free">
+            <small>EXPLORATION</small>
+            <strong>Balade libre</strong>
+            <span>Roulez sans contrainte et découvrez la ville.</span>
+          </button>
+          <button type="button" data-mode="challenge" class="primary">
+            <small>CHRONO</small>
+            <strong>Tour d’Artix</strong>
+            <span>Enchaînez les portes et battez votre record.</span>
+          </button>
+        </div>
+        <small class="menu-note">Cliquez sur un mode pour activer le son et démarrer.</small>
+      </div>
+    </section>
+
+    <section id="pause-screen" class="overlay-panel hidden" aria-live="polite">
+      <div class="pause-card">
+        <p class="eyebrow">PAUSE</p>
+        <h2>Artix vous attend.</h2>
+        <p>Appuyez sur <kbd>P</kbd> ou <kbd>Échap</kbd> pour reprendre.</p>
+      </div>
+    </section>
+
+    <header class="topbar hud hidden">
+      <div>
+        <strong>ARTIX RACER</strong>
+        <span>64170 · Béarn</span>
+      </div>
+      <div id="quality-label">Équilibré</div>
+    </header>
+
+    <section class="mission hud hidden" aria-live="polite">
+      <strong id="mission-title">BALADE LIBRE</strong>
+      <span id="mission-detail">Explorez Artix à votre rythme</span>
+      <div class="mission-track"><i id="mission-progress"></i></div>
+    </section>
+
+    <aside class="score-panel hud hidden">
+      <small>SCORE</small>
+      <strong id="score">000000</strong>
+      <span id="surface-status">SUR LA ROUTE</span>
+    </aside>
+
+    <aside class="street-banner hud hidden" aria-live="polite">
+      <small>VOUS ROULEZ SUR</small>
+      <strong id="street-name">Avenue du 18e Régiment d’Infanterie</strong>
+      <span id="place-name">Centre-bourg · Artix</span>
+    </aside>
+
+    <aside class="telemetry hud hidden">
+      <div class="speed"><span id="speed">0</span><small>km/h</small></div>
+      <div class="boost">
+        <span>NITRO</span>
+        <div><i id="boost-bar"></i></div>
+      </div>
+      <div class="metrics">
+        <span id="fps">-- FPS</span>
+        <span id="draws">-- appels</span>
+        <span id="meshes">-- maillages</span>
+        <span id="memory">mémoire indisponible</span>
+      </div>
+    </aside>
+
+    <aside class="minimap hud hidden">
+      <canvas id="minimap" aria-label="Mini-carte d’Artix"></canvas>
+      <span>ARTIX CENTRE</span>
+    </aside>
+
+    <footer class="help hud hidden">
+      <span><kbd>ZQSD</kbd> ou <kbd>WASD</kbd> conduire</span>
+      <span><kbd>Espace</kbd> dérapage</span>
+      <span><kbd>Maj</kbd> nitro</span>
+      <span><kbd>C</kbd> caméra</span>
+      <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> qualité</span>
+      <span><kbd>R</kbd> replacer</span>
+      <span><kbd>T</kbd> relancer le chrono</span>
+    </footer>
+
+    <div class="touch-controls hud hidden" aria-label="Commandes tactiles">
+      <div class="touch-steering">
+        <button type="button" data-control="left" aria-label="Tourner à gauche">‹</button>
+        <button type="button" data-control="right" aria-label="Tourner à droite">›</button>
+      </div>
+      <div class="touch-pedals">
+        <button type="button" data-control="handbrake" aria-label="Dérapage">DRIFT</button>
+        <button type="button" data-control="boost" aria-label="Nitro">NITRO</button>
+        <button type="button" data-control="reverse" aria-label="Freiner ou reculer">−</button>
+        <button type="button" data-control="throttle" class="accelerate" aria-label="Accélérer">+</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
