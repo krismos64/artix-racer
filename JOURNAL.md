@@ -2,6 +2,18 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 6) : itérations fidélité avec Christophe
+
+- Poste : annexes 1079/1083 retirées (elles masquaient le parvis), 18 x 11,5,
+  caisson + grandes lettres LA POSTE sur les DEUX façades.
+- Garde-fou générique : tout modèle posé à la main se rétracte par paliers si
+  un coin mord une chaussée (appliqué aux angles arrondis et immeubles de
+  rue) : plus jamais de débord signalé.
+- Épi réel des commerces : bandes ancrées devant la Poste et la rangée Au
+  Comptoir/Presse/pizzeria (parking.js), côté commerces.
+- Méthode qui marche : Christophe signale depuis le jeu, je mesure dans les
+  données (boîte orientée vs centroïde, caps), je corrige la cause.
+
 ## 2026-08-26 (suite 5) : corrections fidélité du carrefour
 
 - Patte d'Oie : l'immeuble débordait sur la chaussée parce que la position en
