@@ -2,6 +2,18 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 4) : aménagements du corridor à la main
+
+- DÉCOUVERTE : landmarks.js modélisait déjà bien plus que la mairie : église
+  Saint-Pierre, gare, Leclerc Express (construireSupermarche), immeubles
+  d'angle, devantures de TOUS les commerces (construireDevanturesPOI). D'où
+  l'impression de Christophe que le placage HD ne changeait rien : les
+  bâtiments-clés du corridor n'étaient pas concernés.
+- Ajouté ce qui manquait : station-service Leclerc (marquise, pompes, totem),
+  terrasse d'Au Comptoir (store banne + tables), préaux des deux écoles.
+- Doublon supprimé : le bandeau d'enseigne de signage.js répétait les
+  devantures landmarks ; seul le drapeau perpendiculaire est conservé.
+
 ## 2026-08-26 (suite 3) : corridor commerçant en HD
 
 - Placage HD multi-façades du corridor Leclerc -> église : 109 façades
