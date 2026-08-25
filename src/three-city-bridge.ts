@@ -36,6 +36,7 @@ export interface FaithfulCitySources {
   roofsLegacy: AnyRecord | null;
   facades: AnyRecord | null;
   panoramax: AnyRecord | null;
+  facadesPhoto: AnyRecord | null;
 }
 
 export interface FaithfulCityResult {
@@ -343,6 +344,8 @@ export async function buildFaithfulArtix(
   // l'anisotropie maximale avant, sinon elles restent au réglage par défaut.
   (poserAnisotropie as any)(16);
   const data = parseOSM(sources.osm) as AnyRecord;
+  // Façades rectifiées depuis Panoramax : consommées par buildWorld.
+  data.facadesPhoto = sources.facadesPhoto ?? null;
   const bdtopo = (parseBDTopo as any)(sources.buildings, roofs, sources.facades, sources.panoramax) as AnyRecord;
   data.buildings = removeModeledBuildingDuplicates(data, bdtopo.batiments);
   data.altRef = bdtopo.altRef;

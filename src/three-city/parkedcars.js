@@ -174,15 +174,20 @@ function trouverPlaces(data, relief, roadY, passages = []) {
   for (const r of data.roads) {
     if (!r.drivable) continue;
     if (!VOIES_STATIONNEMENT.has(r.kind)) continue;
-    // Une voie de desserte trop étroite ne laisse pas la place.
-    if (r.width < 5.4) continue;
+    // Une voie de desserte trop étroite ne laisse pas la place : en dessous
+    // de 6 m, un véhicule à l'arrêt bloque le croisement, et les panoramiques
+    // des rues étroites d'Artix ne montrent effectivement aucune file.
+    if (r.width < 6) continue;
     if (r.rondPoint || r.bridge) continue;
     const [x0, z0] = r.pts[0];
     const distBourg = Math.hypot(x0, z0);
     if (distBourg > 1000) continue;
 
     // Densité de stationnement : forte en centre-bourg, faible en périphérie.
-    const densite = distBourg < 350 ? 0.62 : distBourg < 650 ? 0.38 : 0.18;
+    // Revue à la baisse après comparaison aux panoramiques : les files quasi
+    // continues n'existent que devant les commerces, pas dans les
+    // lotissements où domine le stationnement sur parcelle.
+    const densite = distBourg < 350 ? 0.52 : distBourg < 650 ? 0.3 : 0.13;
 
     for (let i = 0; i < r.pts.length - 1; i++) {
       const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
@@ -212,11 +217,15 @@ function trouverPlaces(data, relief, roadY, passages = []) {
         // Côté de stationnement : les deux bords sont possibles, sauf en sens
         // unique où l'on se gare majoritairement à droite.
         const cote = r.oneway ? 1 : (hash(graine + 5.9) > 0.5 ? 1 : -1);
-        // Le véhicule est rangé sur l'accotement, son flanc affleurant le bord
-        // de chaussée. Le calcul part du bord et non de l'axe : sinon, sur une
-        // rue étroite, la voiture se retrouve à cheval sur la file de
-        // circulation et bloque le passage.
-        const offset = r.width / 2 + DEMI_LARGEUR - 0.35;
+        // Position latérale conforme à la pratique réelle, vérifiée sur les
+        // panoramiques : sur une voie large, on stationne SUR la chaussée,
+        // roues contre la bordure ; sur une voie moyenne, à cheval sur le
+        // bord pour laisser passer la circulation. L'ancien calcul posait
+        // systématiquement le véhicule au-delà du bord, c'est-à-dire sur le
+        // trottoir ou la bande enherbée, ce qui ne se voit nulle part.
+        const offset = r.width >= 7.5
+          ? r.width / 2 - DEMI_LARGEUR - 0.12   // sur chaussée, contre la rive
+          : r.width / 2 - 0.25;                  // à cheval sur la bordure
         const px = cx + nx * offset * cote;
         const pz = cz + nz * offset * cote;
 

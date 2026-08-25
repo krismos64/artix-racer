@@ -268,6 +268,7 @@ async function start(): Promise<void> {
     loadJson<any>('artix-facades.json'),
     loadJson<any>('artix-panoramax.json'),
   ]);
+  const rawFacadesPhoto = await loadJson<any>('artix-facades-photo.json');
   if (!rawOsm || !rawBati) throw new Error('Les données essentielles d’Artix sont absentes.');
 
   await progress(26, 'Reconstruction du modèle Three.js original…');
@@ -279,6 +280,7 @@ async function start(): Promise<void> {
     roofsLegacy: rawRoofsLegacy,
     facades: rawFacades,
     panoramax: rawPanoramax,
+    facadesPhoto: rawFacadesPhoto,
   }, shadow, progress);
   const map = faithful.data as CityMapData;
   const terrain = faithful.terrain;
@@ -298,6 +300,8 @@ async function start(): Promise<void> {
   await progress(82, 'Chargement du véhicule…');
   const car = new ArcadeCar(scene, world, spawn, shadow);
   await car.loadModel();
+  // Accès de diagnostic : permet de téléporter le véhicule depuis la console.
+  (window as any).__car = car;
 
   const input = new KeyboardInput();
   const audio = new ArcadeAudio();

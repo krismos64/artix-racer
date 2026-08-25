@@ -101,6 +101,12 @@ function textureEquipement(nom, label, couleur) {
   return t;
 }
 
+// Bruit déterministe local, pour varier légèrement les éléments répétés.
+function hash(n) {
+  const s = Math.sin(n * 127.1) * 43758.5453;
+  return s - Math.floor(s);
+}
+
 // Hauteur du sol sous un point : les panneaux doivent suivre le relief.
 function solEn(relief, x, z, roadY) {
   return (relief ? relief.hauteurRoute(x, z) : 0) + roadY;
@@ -637,6 +643,204 @@ export function buildSignage(data, relief, roadY) {
         poses.push([x1, z1]);
       }
       if (poses.length >= 7) break;
+    }
+  }
+
+  // ---- Enseignes de façade des commerces ---------------------------------
+  // Les commerces n'avaient aucun panneau 3D (seul le HUD les connaissait).
+  // Sur les panoramiques du bourg, chaque devanture porte son bandeau au
+  // dessus de la vitrine : c'est lui qu'on reconstitue, plaqué sur l'arête du
+  // bâtiment la plus proche du point OSM du commerce.
+  {
+    // Les façades couvertes par une photo rectifiée portent déjà leur vraie
+    // enseigne : ne pas la doubler d'un bandeau générique.
+    const photoParGraine = new Map();
+    for (const f of data.facadesPhoto?.facades ?? []) photoParGraine.set(f.i, f.k);
+
+    const PALETTE_ENSEIGNE = [0x7a2430, 0x24493a, 0x1f2f45, 0x5c3a1e, 0x3a3a3e];
+    const textureEnseigne = (nom, teinte) => {
+      const L = 512, H = 96;
+      const c = document.createElement('canvas');
+      c.width = L; c.height = H;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#' + teinte.toString(16).padStart(6, '0');
+      ctx.fillRect(0, 0, L, H);
+      ctx.strokeStyle = '#d8cfb8';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(6, 6, L - 12, H - 12);
+      ctx.fillStyle = '#efe8d8';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      let taille = 44;
+      ctx.font = `bold ${taille}px Georgia, 'Times New Roman', serif`;
+      while (ctx.measureText(nom).width > L - 40 && taille > 15) {
+        taille -= 2;
+        ctx.font = `bold ${taille}px Georgia, 'Times New Roman', serif`;
+      }
+      ctx.fillText(nom, L / 2, H / 2 + 2);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = anisotropie();
+      return t;
+    };
+
+    for (const e of poi.equipements) {
+      if (e.info?.icone !== 'commerce') continue;
+      // Bâtiment porteur : l'emprise dont une arête passe au plus près du
+      // point OSM du commerce.
+      let porteur = null, meilleure = 18;
+      for (const b of data.buildings ?? []) {
+        if (!b.pts || b.pts.length < 3) continue;
+        let cx = 0, cz = 0;
+        for (const [px, pz] of b.pts) { cx += px; cz += pz; }
+        cx /= b.pts.length; cz /= b.pts.length;
+        if (Math.abs(cx - e.x) > 40 || Math.abs(cz - e.z) > 40) continue;
+        const n = b.pts.length;
+        for (let k = 0; k < n; k++) {
+          const [ax, az] = b.pts[k], [bx, bz] = b.pts[(k + 1) % n];
+          const dx = bx - ax, dz = bz - az;
+          const l2 = dx * dx + dz * dz;
+          if (l2 < 16) continue;
+          let t = ((e.x - ax) * dx + (e.z - az) * dz) / l2;
+          t = Math.max(0.12, Math.min(0.88, t));
+          const px = ax + dx * t, pz = az + dz * t;
+          const d = Math.hypot(e.x - px, e.z - pz);
+          if (d < meilleure) {
+            meilleure = d;
+            porteur = { b, k, px, pz, ax, az, bx, bz, cx, cz, len: Math.sqrt(l2) };
+          }
+        }
+      }
+      if (!porteur) continue;
+      if (photoParGraine.get(porteur.b.graine) === porteur.k) continue;
+      const { ax, az, bx, bz, px, pz, cx, cz, len } = porteur;
+      const ux = (bx - ax) / len, uz = (bz - az) / len;
+      let nx = uz, nz = -ux;
+      if (nx * (cx - px) + nz * (cz - pz) > 0) { nx = -nx; nz = -nz; }
+      const graine = Math.abs(Math.round(e.x * 13 + e.z * 7));
+      const teinte = PALETTE_ENSEIGNE[graine % PALETTE_ENSEIGNE.length];
+      const largeur = Math.min(len - 1.2, Math.max(2.6, e.nom.length * 0.34));
+      const enseigne = new THREE.Mesh(
+        new THREE.PlaneGeometry(largeur, 0.62),
+        new THREE.MeshStandardMaterial({
+          map: textureEnseigne(e.nom, teinte), roughness: 0.55,
+          polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12,
+        }),
+      );
+      const sol = solEn(relief, px, pz, roadY);
+      enseigne.position.set(px + nx * 0.09, sol + 2.72, pz + nz * 0.09);
+      enseigne.rotation.y = Math.atan2(nx, nz);
+      enseigne.renderOrder = 3;
+      group.add(enseigne);
+    }
+  }
+
+  // ---- Jardinières du carrefour de la mairie ------------------------------
+  // Les photographies de la place du Général de Gaulle montrent des bacs
+  // maçonnés plantés d'arbustes autour de la placette pavée. Même emprise que
+  // le pavage déclaré dans world.js.
+  {
+    const PLACETTE = { x: -1.3, z: 92.1, rayon: 26 };
+    const betonMat = new THREE.MeshStandardMaterial({ color: 0xb9b2a4, roughness: 0.95 });
+    const arbusteMat = new THREE.MeshStandardMaterial({ color: 0x3c6132, roughness: 1, flatShading: true });
+    const fleursMat = new THREE.MeshStandardMaterial({ color: 0xc25a70, roughness: 0.9, flatShading: true });
+    const surVoie = (x, z) => data.roads.some((r) => {
+      if (!r.drivable) return false;
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+        if (Math.abs(x1 - x) > 60 && Math.abs(z1 - z) > 60) continue;
+        const dx = x2 - x1, dz = z2 - z1;
+        const l2 = dx * dx + dz * dz;
+        if (l2 < 1e-6) continue;
+        let t = ((x - x1) * dx + (z - z1) * dz) / l2;
+        t = Math.max(0, Math.min(1, t));
+        const ddx = x - (x1 + dx * t), ddz = z - (z1 + dz * t);
+        if (ddx * ddx + ddz * ddz < (r.width / 2 + 1.1) ** 2) return true;
+      }
+      return false;
+    });
+    let posees = 0;
+    for (let a = 0; a < 16 && posees < 9; a++) {
+      const angle = (a / 16) * Math.PI * 2 + 0.35;
+      const px = PLACETTE.x + Math.cos(angle) * (PLACETTE.rayon - 2.2);
+      const pz = PLACETTE.z + Math.sin(angle) * (PLACETTE.rayon - 2.2);
+      if (surVoie(px, pz)) continue;
+      const sol = solEn(relief, px, pz, roadY);
+      const bac = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.62, 0.46, 8), betonMat);
+      bac.position.set(px, sol + 0.23, pz);
+      group.add(bac);
+      const arbuste = new THREE.Mesh(new THREE.IcosahedronGeometry(0.52, 1), arbusteMat);
+      arbuste.scale.y = 0.85;
+      arbuste.position.set(px, sol + 0.85, pz);
+      group.add(arbuste);
+      // Une jardinière sur trois est fleurie : la place n'est pas un massif
+      // uniforme.
+      if (posees % 3 === 1) {
+        const fleurs = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 0), fleursMat);
+        fleurs.position.set(px + 0.3, sol + 0.62, pz + 0.18);
+        group.add(fleurs);
+      }
+      posees++;
+    }
+  }
+
+  // ---- Poteaux électriques des rues résidentielles ------------------------
+  // Hors du centre-bourg enfoui, la distribution court sur poteaux béton ou
+  // bois : ils rythment toutes les rues de lotissement sur les panoramiques.
+  // Un poteau tous les 55 m environ, d'un seul côté de la voie.
+  {
+    const poteauGeo = new THREE.CylinderGeometry(0.07, 0.1, 7.4, 6);
+    const traverseGeo = new THREE.BoxGeometry(1.0, 0.07, 0.07);
+    const positionsPoteaux = [];
+    for (const r of data.roads) {
+      if (!r.drivable) continue;
+      if (!['residential', 'unclassified'].includes(r.kind)) continue;
+      const [x0, z0] = r.pts[0];
+      const dist = Math.hypot(x0, z0);
+      // Le centre-bourg est desservi en souterrain : pas de poteaux à moins
+      // de 220 m de la place.
+      if (dist < 220 || dist > 1100) continue;
+      let cumul = 30;   // premier poteau décalé de l'entrée de rue
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+        const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+        if (len < 1) continue;
+        const nx = -dz / len, nz = dx / len;
+        let d = 55 - cumul;
+        while (d < len) {
+          const t = d / len;
+          const graine = Math.abs(x1 * 7.3 + z1 * 3.1 + d);
+          const px = x1 + dx * t + nx * (r.width / 2 + 1.15);
+          const pz = z1 + dz * t + nz * (r.width / 2 + 1.15);
+          positionsPoteaux.push([px, pz, Math.atan2(dx, dz), hash(graine)]);
+          d += 55;
+        }
+        cumul = (cumul + len) % 55;
+      }
+    }
+    if (positionsPoteaux.length) {
+      const boisMat = new THREE.MeshStandardMaterial({ color: 0x74675a, roughness: 1 });
+      const poteaux = new THREE.InstancedMesh(poteauGeo, boisMat, positionsPoteaux.length);
+      const traverses = new THREE.InstancedMesh(traverseGeo, boisMat, positionsPoteaux.length);
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const AXE_Y = new THREE.Vector3(0, 1, 0);
+      positionsPoteaux.forEach(([px, pz, cap, g], i) => {
+        const sol = solEn(relief, px, pz, roadY);
+        q.setFromAxisAngle(AXE_Y, cap);
+        m.compose(new THREE.Vector3(px, sol + 3.7, pz), q,
+          new THREE.Vector3(1, 0.94 + g * 0.12, 1));
+        poteaux.setMatrixAt(i, m);
+        // La traverse en tête, perpendiculaire à la rue, porte les isolateurs.
+        m.compose(new THREE.Vector3(px, sol + 7.1, pz), q, new THREE.Vector3(1, 1, 1));
+        traverses.setMatrixAt(i, m);
+      });
+      poteaux.instanceMatrix.needsUpdate = true;
+      traverses.instanceMatrix.needsUpdate = true;
+      poteaux.castShadow = false;
+      traverses.castShadow = false;
+      group.add(poteaux);
+      group.add(traverses);
     }
   }
 

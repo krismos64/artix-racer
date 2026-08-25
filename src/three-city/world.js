@@ -1235,6 +1235,24 @@ export function buildWorld(scene, data) {
   // (galets ou moellons non enduits). Elles reçoivent la texture de galets du
   // gave au lieu de l'enduit lisse, ce que la teinte seule ne peut pas rendre.
   const pierrePos = [], pierreCol = [], pierreUv = [];
+  // Façades photographiques : les murs du centre-bourg dont une photo
+  // Panoramax rectifiée existe (scripts/panoramax-facades-photo.mjs) sont
+  // plaqués avec la photo réelle au lieu du mur procédural. Un jeu de buffers
+  // par atlas, pour un appel de dessin par atlas.
+  const photosFacades = new Map();
+  for (const f of data.facadesPhoto?.facades ?? []) photosFacades.set(f.i, f);
+  const photoBufs = [];
+  const atlasFacades = [];
+  if (photosFacades.size && data.facadesPhoto?.atlas) {
+    const loader = new THREE.TextureLoader();
+    for (let a = 0; a < data.facadesPhoto.atlas; a++) {
+      const t = loader.load(`/textures/facades-atlas-${a}.jpg`);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = anisotropie();
+      atlasFacades.push(t);
+      photoBufs.push({ pos: [], uv: [] });
+    }
+  }
   const roofPos = [], roofCol = [], roofUv = [];
   // Superstructures de toiture : souches de cheminée, lucarnes, blocs de
   // ventilation. Collectées ici pendant la boucle des bâtiments, instanciées
@@ -1457,6 +1475,7 @@ export function buildWorld(scene, data) {
     // couleur, pas un appareil de pierre : la pierre et le galet sont presque
     // gris. On mesure la saturation sur la teinte finale du mur.
     const satMur = Math.max(wr, wg, wb) - Math.min(wr, wg, wb);
+    const photoFacade = photosFacades.get(b.graine);
     const enPierre = satMur < 0.09
       && (b.murs === 'pierre' || b.murs === 'meuliere'
         || (b.grain != null && b.grain > 33));
@@ -1502,6 +1521,27 @@ export function buildWorld(scene, data) {
       // le sommet intermédiaire qui le concentre là où il se voit. Le coût est
       // d'un quad de plus par façade, la géométrie de mur restant très en
       // dessous des postes lourds de la scène.
+      // Arête couverte par une photo rectifiée : le pan reçoit la photo
+      // entière, sans fenêtres ni volets procéduraux (la photo les contient
+      // déjà, aux vraies positions). La collision reste identique.
+      if (photoFacade && i === photoFacade.k && photoBufs[photoFacade.a]) {
+        const bufs = photoBufs[photoFacade.a];
+        bufs.pos.push(
+          x1, BASE_Y, z1, x2, BASE_Y, z2, x2, top, z2,
+          x1, BASE_Y, z1, x2, top, z2, x1, top, z1,
+        );
+        // Les textures Three sont retournées verticalement (flipY) : le haut
+        // du mur pointe vers 1 - v0.
+        const vH = 1 - photoFacade.v0, vB = 1 - photoFacade.v1;
+        bufs.uv.push(
+          photoFacade.u0, vB, photoFacade.u1, vB, photoFacade.u1, vH,
+          photoFacade.u0, vB, photoFacade.u1, vH, photoFacade.u0, vH,
+        );
+        collisionTris.push(x1, BASE_Y, z1, x2, BASE_Y, z2, x2, top, z2);
+        collisionTris.push(x1, BASE_Y, z1, x2, top, z2, x1, top, z1);
+        continue;
+      }
+
       const yMid = Math.min(top, BASE_Y + PIED);
       const paliers = yMid < top - 0.05 ? [BASE_Y, yMid, top] : [BASE_Y, top];
       for (let p = 0; p < paliers.length - 1; p++) {
@@ -2105,6 +2145,23 @@ export function buildWorld(scene, data) {
     m.receiveShadow = true;
     group.add(m);
   }
+
+  photoBufs.forEach((bufs, a) => {
+    if (!bufs.pos.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(bufs.pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(bufs.uv, 2));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // La photo porte déjà son éclairage (prises de vue de janvier) : couleur
+    // blanche, rugosité de crépi, et les ombres portées du décor par-dessus.
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      map: atlasFacades[a], roughness: 0.8, side: THREE.DoubleSide,
+    }));
+    m.name = `facades-photo-${a}`;
+    m.receiveShadow = true;
+    group.add(m);
+  });
 
   let vitrages = null;
   if (winPos.length) {

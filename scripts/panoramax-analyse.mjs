@@ -149,14 +149,17 @@ console.log(`${batiments.length} bâtiments, ${photos.length} photos géoréfér
 console.log('Sélection des points de vue…');
 
 for (const b of batiments) {
-  const candidates = photosProches(b.cx, b.cz, 34)
+  const candidates = photosProches(b.cx, b.cz, 60)
     .map((p) => {
       const [tx, tz, d] = pointProche(b, p.x, p.z);
       return { ...p, tx, tz, dFacade: d };
     })
     // Trop près (< 3,5 m), la façade déborde de la fenêtre ; trop loin, elle
     // se noie dans la rue. La distance idéale est autour de 8-14 m.
-    .filter((p) => p.dFacade >= 3.5 && p.dFacade <= 30)
+    // Jusqu'à 52 m : au-delà de 30 m la mesure perd en finesse mais reste
+    // meilleure qu'une teinte de palette. La confiance en tient compte via le
+    // poids de pixels, plus faible de loin.
+    .filter((p) => p.dFacade >= 3.5 && p.dFacade <= 52)
     .sort((a, b2) => Math.abs(a.dFacade - 11) - Math.abs(b2.dFacade - 11));
 
   let prises = 0;
