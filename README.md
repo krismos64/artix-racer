@@ -256,8 +256,21 @@ Le tout tient dans `public/data/artix-panoramax.json` (110 Ko) ; seuls
 1 218 panoramiques ont dû être téléchargés, un même point de rue décrivant
 tous les bâtiments alentour.
 
-Ce qui manque encore : le placage photographique littéral des façades, et une
-partie du mobilier urbain (enseignes).
+Le **placage photographique** est fait pour le centre-bourg :
+`scripts/panoramax-facades-photo.mjs` choisit pour 80 bâtiments l'arête la
+mieux photographiée, RECTIFIE la portion du panoramique en vraie perspective
+(chaque pixel de sortie est un point 3D du mur re-projeté dans la photo par
+son gisement et son site), borne la fenêtre à la hauteur de gouttière LiDAR,
+écarte automatiquement les vues mangées par le ciel ou la végétation, fond le
+pied de façade (les voitures garées se plaqueraient sinon sur le mur) et range
+le tout dans trois atlas de 2048². En jeu, ces murs portent leur vraie
+devanture : Le Fournil, la Poste, les plaques de rue bilingues.
+
+Les commerces sans photo reçoivent une **enseigne de façade** générée à leur
+nom. S'y ajoutent les jardinières fleuries de la place, les poteaux
+électriques des lotissements, et un stationnement recalé sur les
+panoramiques : sur la chaussée contre la rive, à cheval sur les voies
+moyennes, absent des rues trop étroites.
 
 ## Comment c'est fait
 

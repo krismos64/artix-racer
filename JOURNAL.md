@@ -2,6 +2,28 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-25 (soir) : détails de ville et placage photo
+
+- **Placage photo du centre-bourg** : 80 façades rectifiées en vraie
+  perspective depuis les panoramiques (Le Fournil, Hair Libre, La Poste,
+  plaque Carrèra deu 49au R.I…), 3 atlas 2048², manifeste par arête de
+  bâtiment. Hauteur bornée à la gouttière LiDAR ; rejet auto ciel/végétation ;
+  fenêtres et volets procéduraux coupés sur les arêtes photographiées.
+- **Enseignes** : bandeau nommé sur la façade de chaque commerce POI (ils
+  n'avaient AUCUN panneau 3D), sauf si la façade porte déjà sa photo.
+- **Jardinières** fleuries autour de la placette de la mairie ; **poteaux
+  électriques** instanciés dans les lotissements (centre enfoui).
+- **Stationnement corrigé** : les voitures se garent SUR la chaussée contre
+  la rive (l'ancien calcul les posait sur le trottoir), à cheval sur les
+  voies de 6 à 7,5 m, rien en dessous ; densités revues à la baisse.
+- Analyse Panoramax élargie à 60 m : 2 869 bâtiments caractérisés, 413 volets.
+- Pièges appris : le manifeste doit compter les atlas RÉELLEMENT écrits (un
+  404 sur un atlas fantôme sinon) ; hook perso de Christophe : les
+  suppressions de fichiers doivent passer par `rm`, pas par Python.
+- Reste à faire : élargir le placage photo au-delà de 320 m et de 128 cases ;
+  homogénéiser l'exposition des cases (certaines très claires) ; enseignes
+  suspendues perpendiculaires ; câbles entre poteaux.
+
 ## 2026-08-25 : lancement du chantier
 
 - Analyse complète du projet (architecture hybride Three→Babylon documentée
