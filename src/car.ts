@@ -131,8 +131,11 @@ export class ArcadeCar {
         );
         phare.parent = rig;
         phare.diffuse = Color3.FromHexString('#ffe9c0');
-        phare.intensity = 55;
-        phare.range = 48;
+        // Les matériaux de la ville suivent l'atténuation physique en 1/d² :
+        // l'intensité se lit comme des candelas. 520 donne l'équivalent du
+        // plein soleil à une vingtaine de mètres devant le véhicule.
+        phare.intensity = 520;
+        phare.range = 62;
         this.headlights.push(phare);
 
         const optique = MeshBuilder.CreatePlane(`optique-${cote}`, { width: .3, height: .11 }, this.scene);

@@ -4,6 +4,7 @@ import {
   Color4,
   DefaultRenderingPipeline,
   DirectionalLight,
+  DynamicTexture,
   Engine,
   HemisphericLight,
   ImageProcessingConfiguration,
@@ -16,8 +17,10 @@ import {
   Scene,
   ShadowGenerator,
   SSAO2RenderingPipeline,
+  StandardMaterial,
   UniversalCamera,
   Vector3,
+  VertexData,
 } from '@babylonjs/core';
 import { SkyMaterial } from '@babylonjs/materials';
 import './style.css';
@@ -314,6 +317,7 @@ async function start(): Promise<void> {
   let lampesMateriau: PBRMaterial | null = null;
   let foyersLampes: Array<{ x: number; y: number; z: number }> = [];
   let lampesPool: PointLight[] = [];
+  let lampesGlow: Mesh | null = null;
   let nuitActive = false;
   let lampesTimer = 9;
   const applyAmbiance = (index: number): void => {
@@ -349,9 +353,10 @@ async function start(): Promise<void> {
     if (lampesMateriau) {
       lampesMateriau.unfreeze?.();
       lampesMateriau.emissiveColor = Color3.FromHexString('#ffc878');
-      lampesMateriau.emissiveIntensity = nuitActive ? 1 : 0;
+      lampesMateriau.emissiveIntensity = nuitActive ? 1.7 : 0;
     }
     for (const lampe of lampesPool) lampe.setEnabled(nuitActive);
+    lampesGlow?.setEnabled(nuitActive);
     lampesTimer = 9;
     // La sonde d'environnement se re-rend une fois avec le nouveau ciel.
     probe.cubeTexture.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
@@ -442,11 +447,67 @@ async function start(): Promise<void> {
   for (let i = 0; i < 6; i++) {
     const lampe = new PointLight(`lampe-rue-${i}`, new Vector3(0, -100, 0), scene);
     lampe.diffuse = Color3.FromHexString('#ffc878');
-    lampe.intensity = 18;
-    lampe.range = 26;
+    // Atténuation physique en 1/d² : 130 candelas éclairent franchement la
+    // chaussée sous le mât et portent encore à une quinzaine de mètres.
+    lampe.intensity = 130;
+    lampe.range = 32;
     lampe.setEnabled(false);
     lampesPool.push(lampe);
   }
+
+  // Flaques de lumière sous TOUS les lampadaires : le pool ci-dessus ne fait
+  // vivre que l'entourage immédiat du joueur ; sans les flaques, les rues au
+  // loin restaient noires et les lampes semblaient s'allumer à son passage.
+  // Un unique maillage fusionné de disques émissifs à dégradé radial : des
+  // centaines de halos pour un seul appel de dessin, aucune vraie lumière.
+  const lampGlow = (() => {
+    if (!foyersLampes.length) return null;
+    const positions: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    const SEGMENTS = 10, RAYON = 6.5;
+    for (const f of foyersLampes) {
+      const solY = f.y - 6.9 + .07;
+      const base = positions.length / 3;
+      positions.push(f.x, solY, f.z);
+      uvs.push(.5, .5);
+      for (let sg = 0; sg <= SEGMENTS; sg++) {
+        const a = (sg / SEGMENTS) * Math.PI * 2;
+        positions.push(f.x + Math.cos(a) * RAYON, solY, f.z + Math.sin(a) * RAYON);
+        uvs.push(.5 + Math.cos(a) * .5, .5 + Math.sin(a) * .5);
+        if (sg > 0) indices.push(base, base + sg, base + sg + 1);
+      }
+    }
+    const mesh = new Mesh('halos-lampadaires', scene);
+    const data = new VertexData();
+    data.positions = positions;
+    data.uvs = uvs;
+    data.indices = indices;
+    data.applyToMesh(mesh);
+    // Dégradé radial dessiné une fois : blanc sodium au centre, néant au bord.
+    const taille = 128;
+    const tex = new DynamicTexture('halo-lampe', { width: taille, height: taille }, scene, false);
+    const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
+    const grad = ctx.createRadialGradient(taille / 2, taille / 2, 4, taille / 2, taille / 2, taille / 2);
+    grad.addColorStop(0, 'rgba(255,204,130,0.55)');
+    grad.addColorStop(.45, 'rgba(255,190,110,0.22)');
+    grad.addColorStop(1, 'rgba(255,180,100,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, taille, taille);
+    tex.update(false);
+    tex.hasAlpha = true;
+    const materiau = new StandardMaterial('halo-lampe-materiau', scene);
+    materiau.emissiveTexture = tex;
+    materiau.opacityTexture = tex;
+    materiau.disableLighting = true;
+    materiau.alphaMode = Engine.ALPHA_ADD;
+    materiau.disableDepthWrite = true;
+    mesh.material = materiau;
+    mesh.isPickable = false;
+    mesh.setEnabled(false);
+    return mesh;
+  })();
+  lampesGlow = lampGlow;
 
   const input = new KeyboardInput();
   const audio = new ArcadeAudio();
