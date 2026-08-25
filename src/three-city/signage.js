@@ -874,8 +874,6 @@ export function buildSignage(data, relief, roadY) {
   // puis triangulé (scripts/panoramax-poteaux.mjs). À défaut, un semis
   // heuristique dans les lotissements, comme avant le relevé.
   {
-    const poteauGeo = new THREE.CylinderGeometry(0.07, 0.1, 7.4, 6);
-    const traverseGeo = new THREE.BoxGeometry(1.0, 0.07, 0.07);
     const positionsPoteaux = [];
     const releves = data.poteauxReels?.poteaux ?? [];
     if (releves.length >= 20) {
@@ -912,9 +910,82 @@ export function buildSignage(data, relief, roadY) {
         }
       }
     }
-    // Altitude de chaque tête, mémorisée pour les câbles.
+
+    // ---- Chaînage des lignes ---------------------------------------------
+    // Les poteaux d'une même voie sont triés par abscisse curviligne. Deux
+    // détections à moins de 8 m décrivent le même support (la triangulation
+    // dédouble parfois) : la chaîne les enjambe au lieu de se rompre. Une
+    // portée détectée de plus de 55 m cache forcément des supports que le
+    // relevé a manqués (une portée réelle n'excède guère 50 m) : ils sont
+    // interpolés le long de la ligne, plantés ET câblés.
+    const liens = [];
+    if (positionsPoteaux.length >= 2) {
+      const paires = new Set();
+      for (const r of data.roads) {
+        if (!r.drivable) continue;
+        const surVoie = [];
+        let base = 0;
+        for (let i = 0; i < r.pts.length - 1; i++) {
+          const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+          const dx = x2 - x1, dz = z2 - z1;
+          const l2 = dx * dx + dz * dz;
+          const len = Math.sqrt(l2);
+          if (len < 0.5) continue;
+          positionsPoteaux.forEach(([px, pz], idx) => {
+            if (Math.abs(px - x1) > len + 20 || Math.abs(pz - z1) > len + 20) return;
+            let t = ((px - x1) * dx + (pz - z1) * dz) / l2;
+            if (t < -0.05 || t > 1.05) return;
+            t = Math.max(0, Math.min(1, t));
+            const d = Math.hypot(px - (x1 + dx * t), pz - (z1 + dz * t));
+            if (d < 13) surVoie.push({ idx, s: base + t * len });
+          });
+          base += len;
+        }
+        surVoie.sort((a, b) => a.s - b.s);
+        let ancre = surVoie[0];
+        for (let i = 1; i < surVoie.length; i++) {
+          const b = surVoie[i];
+          const ecart = b.s - ancre.s;
+          if (ecart < 8) continue;             // même support dédoublé
+          if (ecart <= 220 && ancre.idx !== b.idx) {
+            const cle = ancre.idx < b.idx ? `${ancre.idx}-${b.idx}` : `${b.idx}-${ancre.idx}`;
+            if (!paires.has(cle)) {
+              paires.add(cle);
+              liens.push([ancre.idx, b.idx]);
+            }
+          }
+          ancre = b;
+        }
+      }
+      // Interpolation des supports manquants sur les longues portées.
+      const liensFinaux = [];
+      for (const [ia, ib] of liens) {
+        const [xa, za, capA] = positionsPoteaux[ia];
+        const [xb, zb] = positionsPoteaux[ib];
+        const d = Math.hypot(xb - xa, zb - za);
+        if (d <= 55) { liensFinaux.push([ia, ib]); continue; }
+        const n = Math.ceil(d / 48);
+        let precedent = ia;
+        for (let k = 1; k < n; k++) {
+          const t = k / n;
+          const idx = positionsPoteaux.length;
+          positionsPoteaux.push([
+            xa + (xb - xa) * t, za + (zb - za) * t, capA,
+            hash(Math.abs(xa * 3.1 + zb * 7.7 + k))]);
+          liensFinaux.push([precedent, idx]);
+          precedent = idx;
+        }
+        liensFinaux.push([precedent, ib]);
+      }
+      liens.length = 0;
+      liens.push(...liensFinaux);
+    }
+
+    // ---- Rendu des supports ----------------------------------------------
     const tetes = positionsPoteaux.map(([px, pz]) => solEn(relief, px, pz, roadY) + 7.05);
     if (positionsPoteaux.length) {
+      const poteauGeo = new THREE.CylinderGeometry(0.07, 0.1, 7.4, 6);
+      const traverseGeo = new THREE.BoxGeometry(1.0, 0.07, 0.07);
       const boisMat = new THREE.MeshStandardMaterial({ color: 0x74675a, roughness: 1 });
       const poteaux = new THREE.InstancedMesh(poteauGeo, boisMat, positionsPoteaux.length);
       const traverses = new THREE.InstancedMesh(traverseGeo, boisMat, positionsPoteaux.length);
@@ -938,63 +1009,26 @@ export function buildSignage(data, relief, roadY) {
       group.add(traverses);
     }
 
-    // ---- Câbles entre poteaux --------------------------------------------
-    // Chaînage voie par voie : les poteaux à moins de 13 m d'une même rue
-    // sont triés par abscisse curviligne et reliés deux à deux. La caténaire
-    // est un ruban vertical fin qui fléchit d'une soixantaine de centimetres,
-    // double pour figurer la paire de conducteurs.
-    if (positionsPoteaux.length >= 2) {
-      const paires = new Set();
-      const liens = [];
-      for (const r of data.roads) {
-        if (!r.drivable) continue;
-        // Abscisse curviligne cumulée de chaque poteau proche de la voie.
-        const surVoie = [];
-        let base = 0;
-        for (let i = 0; i < r.pts.length - 1; i++) {
-          const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
-          const dx = x2 - x1, dz = z2 - z1;
-          const l2 = dx * dx + dz * dz;
-          const len = Math.sqrt(l2);
-          if (len < 0.5) continue;
-          positionsPoteaux.forEach(([px, pz], idx) => {
-            if (Math.abs(px - x1) > len + 20 || Math.abs(pz - z1) > len + 20) return;
-            let t = ((px - x1) * dx + (pz - z1) * dz) / l2;
-            if (t < -0.05 || t > 1.05) return;
-            t = Math.max(0, Math.min(1, t));
-            const d = Math.hypot(px - (x1 + dx * t), pz - (z1 + dz * t));
-            if (d < 13) surVoie.push({ idx, s: base + t * len, d });
-          });
-          base += len;
-        }
-        surVoie.sort((a, b) => a.s - b.s);
-        for (let i = 0; i < surVoie.length - 1; i++) {
-          const a = surVoie[i], b = surVoie[i + 1];
-          if (a.idx === b.idx) continue;
-          const ecart = b.s - a.s;
-          if (ecart < 12 || ecart > 85) continue;
-          const cle = a.idx < b.idx ? `${a.idx}-${b.idx}` : `${b.idx}-${a.idx}`;
-          if (paires.has(cle)) continue;
-          paires.add(cle);
-          liens.push([a.idx, b.idx]);
-        }
-      }
+    // ---- Câbles ----------------------------------------------------------
+    // Caténaire parabolique entre chaque paire chaînée, doublée pour figurer
+    // les conducteurs. Ruban vertical fin fusionné en un seul maillage.
+    if (liens.length) {
       const cablePos = [];
-      const SEGMENTS = 6, EPAISSEUR = 0.04, FLECHE = 0.6;
+      const SEGMENTS = 6, EPAISSEUR = 0.05, FLECHE = 0.55;
       for (const [ia, ib] of liens) {
         const [xa, za] = positionsPoteaux[ia];
         const [xb, zb] = positionsPoteaux[ib];
         const ya = tetes[ia], yb = tetes[ib];
         const dx = xb - xa, dz = zb - za;
         const len = Math.hypot(dx, dz);
-        const nx = -dz / len, nz = dx / len;   // décalage entre les deux fils
+        if (len < 2) continue;
+        const nx = -dz / len, nz = dx / len;
         for (const cote of [-0.18, 0.18]) {
           let px1 = xa + nx * cote, pz1 = za + nz * cote, py1 = ya;
           for (let sg = 1; sg <= SEGMENTS; sg++) {
             const t = sg / SEGMENTS;
             const px2 = xa + dx * t + nx * cote;
             const pz2 = za + dz * t + nz * cote;
-            // Parabole : flèche maximale au centre de la portée.
             const py2 = ya + (yb - ya) * t - FLECHE * 4 * t * (1 - t);
             cablePos.push(
               px1, py1, pz1, px2, py2, pz2, px2, py2 - EPAISSEUR, pz2,
@@ -1009,7 +1043,6 @@ export function buildSignage(data, relief, roadY) {
         g.setAttribute('position', new THREE.Float32BufferAttribute(cablePos, 3));
         g.computeVertexNormals();
         g.computeBoundingSphere();
-        // Conducteur sombre mat : de loin un trait, exactement ce qu'il faut.
         group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
           color: 0x26272a, roughness: 0.9, side: THREE.DoubleSide,
         })));

@@ -241,8 +241,10 @@ for (let i = 0; i < rayons.length; i++) {
 }
 console.log(`${intersections.length} intersections plausibles.`);
 
-// Regroupement : un poteau confirmé est un amas d'au moins 3 intersections
-// dans un rayon d'un mètre et demi.
+// Regroupement : un poteau confirmé est un amas d'au moins 2 intersections
+// dans un rayon d'un mètre et demi. Le seuil à 3 laissait passer trop peu de
+// supports (217) pour reconstituer des lignes continues ; à 2, les filtres de
+// silhouette et d'arbres cartographiés restent en place.
 const grilleInt = new Map();
 for (const [x, z] of intersections) {
   const k = `${Math.round(x / 1.5)},${Math.round(z / 1.5)}`;
@@ -252,7 +254,7 @@ for (const [x, z] of intersections) {
 }
 let candidats = [];
 for (const e of grilleInt.values()) {
-  if (e.n >= 3) candidats.push({ x: e.sx / e.n, z: e.sz / e.n, n: e.n });
+  if (e.n >= 2) candidats.push({ x: e.sx / e.n, z: e.sz / e.n, n: e.n });
 }
 // Fusion des amas voisins (le même poteau peut chevaucher deux cellules).
 candidats.sort((a, b) => b.n - a.n);
