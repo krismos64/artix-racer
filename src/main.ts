@@ -10,6 +10,7 @@ import {
   Mesh,
   MeshBuilder,
   PBRMaterial,
+  PointLight,
   ReflectionProbe,
   RenderTargetTexture,
   Scene,
@@ -81,7 +82,7 @@ async function loadJson<T>(name: string, required = false): Promise<T | null> {
 // heure, sans quoi les ombres contredisent le ciel.
 const SUN_DIRECTION = new Vector3(-.52, -.83, .34).normalize();
 
-function createSky(scene: Scene): Mesh {
+function createSky(scene: Scene): { sky: Mesh; skyMaterial: SkyMaterial } {
   // Ciel analytique officiel (modèle de Preetham) plutôt qu'un gradient peint :
   // la diffusion atmosphérique donne le voile de l'horizon, le bleu profond du
   // zénith et le halo solaire au bon endroit, celui de la lumière qui projette
@@ -109,7 +110,7 @@ function createSky(scene: Scene): Mesh {
   sky.infiniteDistance = true;
   sky.isPickable = false;
   sky.applyFog = false;
-  return sky;
+  return { sky, skyMaterial: material };
 }
 
 function createBackdrop(scene: Scene): Mesh[] {
@@ -156,7 +157,7 @@ function createBackdrop(scene: Scene): Mesh[] {
   return [mountains];
 }
 
-function createEnvironment(scene: Scene, probeMeshes: Mesh[]): void {
+function createEnvironment(scene: Scene, probeMeshes: Mesh[]): ReflectionProbe {
   // L'éclairage d'ambiance PBR (IBL) est rendu depuis le vrai ciel plutôt que
   // depuis trois gradients de 32 pixels : carrosseries, vitrages et toitures
   // reflètent ainsi exactement le ciel affiché, avec le sol de prairie en
@@ -178,6 +179,7 @@ function createEnvironment(scene: Scene, probeMeshes: Mesh[]): void {
   probe.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
   scene.environmentTexture = probe.cubeTexture;
   scene.environmentIntensity = .85;
+  return probe;
 }
 
 async function start(): Promise<void> {
@@ -208,9 +210,9 @@ async function start(): Promise<void> {
   scene.imageProcessingConfiguration.exposure = .94;
   scene.imageProcessingConfiguration.contrast = 1.18;
 
-  const sky = createSky(scene);
+  const { sky, skyMaterial } = createSky(scene);
   const backdrop = createBackdrop(scene);
-  createEnvironment(scene, [sky, ...backdrop]);
+  const probe = createEnvironment(scene, [sky, ...backdrop]);
 
   const ambient = new HemisphericLight('ambient', new Vector3(.15, 1, .1), scene);
   ambient.diffuse = new Color3(.76, .84, .92);
@@ -230,6 +232,131 @@ async function start(): Promise<void> {
   shadow.bias = .0025;
   shadow.normalBias = .035;
   shadow.setDarkness(.24);
+
+  // ---- Ambiances d'éclairage (touche L) ----------------------------------
+  // Le ciel analytique, la lumière directionnelle, le brouillard et la sonde
+  // d'environnement dérivent tous de la même direction de soleil : changer
+  // d'heure revient à re-régler ce petit jeu de paramètres puis à re-rendre
+  // la sonde une fois. La fin de journée est l'ambiance la plus payante :
+  // le soleil rasant allonge les ombres des bâtiments dans les rues.
+  interface Ambiance {
+    nom: string;
+    sunDir: Vector3;
+    sunDiffuse: Color3;
+    sunIntensity: number;
+    ambientIntensity: number;
+    ambientDiffuse: Color3;
+    ambientGround: Color3;
+    fog: Color3;
+    clear: Color4;
+    turbidity: number;
+    exposure: number;
+    darkness: number;
+    fenetres: number;      // intensité d'émission des vitrages
+  }
+  const AMBIANCES: Ambiance[] = [
+    {
+      nom: 'Midi',
+      sunDir: SUN_DIRECTION.clone(),
+      sunDiffuse: new Color3(1, .92, .8),
+      sunIntensity: 1.28,
+      ambientIntensity: .72,
+      ambientDiffuse: new Color3(.76, .84, .92),
+      ambientGround: new Color3(.28, .31, .25),
+      fog: new Color3(.64, .75, .83),
+      clear: new Color4(.55, .70, .84, 1),
+      turbidity: 2.6,
+      exposure: .94,
+      darkness: .24,
+      fenetres: 0,
+    },
+    {
+      nom: 'Fin de journée',
+      // Soleil à une douzaine de degrés au-dessus de l'horizon, côté ouest.
+      sunDir: new Vector3(-.82, -.22, .52).normalize(),
+      sunDiffuse: new Color3(1, .68, .42),
+      sunIntensity: 1.35,
+      ambientIntensity: .42,
+      ambientDiffuse: new Color3(.72, .62, .66),
+      ambientGround: new Color3(.30, .25, .22),
+      fog: new Color3(.76, .62, .52),
+      clear: new Color4(.72, .58, .48, 1),
+      // Le voile chaud du soir : la turbidité élevée qui verdit le plein midi
+      // donne ici l'orangé attendu, le soleil étant bas.
+      turbidity: 4.6,
+      exposure: .9,
+      darkness: .17,
+      fenetres: .12,
+    },
+    {
+      nom: 'Nuit',
+      // Clair de lune : mêmes ombres douces, lumière froide très faible. Le
+      // soleil du ciel analytique passe SOUS l'horizon, qui vire au bleu nuit.
+      sunDir: new Vector3(-.35, -.72, .42).normalize(),
+      sunDiffuse: new Color3(.5, .6, .82),
+      sunIntensity: .16,
+      ambientIntensity: .14,
+      ambientDiffuse: new Color3(.32, .38, .55),
+      ambientGround: new Color3(.08, .09, .13),
+      fog: new Color3(.06, .08, .13),
+      clear: new Color4(.05, .07, .12, 1),
+      turbidity: 2,
+      exposure: .85,
+      darkness: .5,
+      fenetres: .85,
+    },
+  ];
+  let ambianceIndex = 0;
+  // Renseignés après la construction de la ville et du véhicule : la touche L
+  // n'est lue qu'une fois la partie lancée, ces références existent donc au
+  // premier appel.
+  let carNuit: { setNight(active: boolean): void } | null = null;
+  let lampesMateriau: PBRMaterial | null = null;
+  let foyersLampes: Array<{ x: number; y: number; z: number }> = [];
+  let lampesPool: PointLight[] = [];
+  let nuitActive = false;
+  let lampesTimer = 9;
+  const applyAmbiance = (index: number): void => {
+    const a = AMBIANCES[index];
+    sun.direction.copyFrom(a.sunDir);
+    sun.diffuse.copyFrom(a.sunDiffuse);
+    sun.intensity = a.sunIntensity;
+    ambient.intensity = a.ambientIntensity;
+    ambient.diffuse.copyFrom(a.ambientDiffuse);
+    ambient.groundColor.copyFrom(a.ambientGround);
+    scene.fogColor.copyFrom(a.fog);
+    scene.clearColor.copyFrom(a.clear);
+    scene.imageProcessingConfiguration.exposure = a.exposure;
+    shadow.setDarkness(a.darkness);
+    skyMaterial.turbidity = a.turbidity;
+    // La nuit, le « soleil » du ciel passe sous l'horizon indépendamment de la
+    // direction de la lumière de lune.
+    const cielDir = a.nom === 'Nuit' ? new Vector3(-.35, .1, .42).normalize() : a.sunDir;
+    skyMaterial.sunPosition = cielDir.scale(-1000);
+    // Vitrages : leur émission raconte les pièces éclairées à la tombée du
+    // jour. Le matériau vient de la conversion Three, retrouvé par son mesh.
+    const vitrages = scene.getMeshByName('vitrages');
+    const materiauVitrage = vitrages?.material as PBRMaterial | null;
+    if (materiauVitrage) {
+      materiauVitrage.unfreeze?.();
+      materiauVitrage.emissiveColor = new Color3(1, .78, .5);
+      materiauVitrage.emissiveIntensity = a.fenetres;
+    }
+    // Éclairage nocturne : phares et feux du véhicule, lanternes émissives et
+    // pool de lampes de rue autour du joueur.
+    nuitActive = a.nom === 'Nuit';
+    carNuit?.setNight(nuitActive);
+    if (lampesMateriau) {
+      lampesMateriau.unfreeze?.();
+      lampesMateriau.emissiveColor = Color3.FromHexString('#ffc878');
+      lampesMateriau.emissiveIntensity = nuitActive ? 1 : 0;
+    }
+    for (const lampe of lampesPool) lampe.setEnabled(nuitActive);
+    lampesTimer = 9;
+    // La sonde d'environnement se re-rend une fois avec le nouveau ciel.
+    probe.cubeTexture.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
+    console.info(`Ambiance : ${a.nom}`);
+  };
 
   const camera = new UniversalCamera('camera', new Vector3(0, 8, -12), scene);
   camera.fov = 1.03;
@@ -303,6 +430,22 @@ async function start(): Promise<void> {
   // Accès de diagnostic : permet de téléporter le véhicule depuis la console.
   (window as any).__car = car;
 
+  // Éclairage public nocturne : un petit pool de lampes réelles suit le
+  // véhicule et se pose sur les foyers de lampadaires les plus proches. Six
+  // sources suffisent : au-delà du rayon d'une lanterne au sodium, l'œil ne
+  // distingue plus quelle lampe éclaire quoi.
+  carNuit = car;
+  lampesMateriau = faithful.lampMaterial;
+  foyersLampes = faithful.foyers;
+  for (let i = 0; i < 6; i++) {
+    const lampe = new PointLight(`lampe-rue-${i}`, new Vector3(0, -100, 0), scene);
+    lampe.diffuse = Color3.FromHexString('#ffc878');
+    lampe.intensity = 18;
+    lampe.range = 26;
+    lampe.setEnabled(false);
+    lampesPool.push(lampe);
+  }
+
   const input = new KeyboardInput();
   const audio = new ArcadeAudio();
   const traffic = new TrafficSystem(scene, map.roads, (x, z) => world.surfaceY(x, z), shadow);
@@ -375,6 +518,27 @@ async function start(): Promise<void> {
     if (playing && input.tapped('c')) cameraMode = (cameraMode + 1) % 3;
     if (playing && input.tapped('r')) car.reset();
     if (playing && input.tapped('t')) session.start('challenge');
+    if (input.tapped('l')) {
+      ambianceIndex = (ambianceIndex + 1) % AMBIANCES.length;
+      applyAmbiance(ambianceIndex);
+    }
+
+    if (nuitActive && foyersLampes.length) {
+      lampesTimer += dt;
+      if (lampesTimer > .7) {
+        lampesTimer = 0;
+        const px = car.root.position.x, pz = car.root.position.z;
+        const proches = foyersLampes
+          .map((f) => ({ f, d: (f.x - px) ** 2 + (f.z - pz) ** 2 }))
+          .sort((a, b) => a.d - b.d)
+          .slice(0, lampesPool.length);
+        lampesPool.forEach((lampe, i) => {
+          const foyer = proches[i]?.f;
+          if (foyer) lampe.position.set(foyer.x, foyer.y, foyer.z);
+          else lampe.position.y = -100;
+        });
+      }
+    }
 
     if (playing && !paused) {
       car.update(dt, input);

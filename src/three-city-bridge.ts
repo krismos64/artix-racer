@@ -44,6 +44,10 @@ export interface FaithfulCityResult {
   terrain: AnyRecord;
   altitudeReference: number;
   spawn: { x: number; z: number; heading: number; road?: string | null; width?: number };
+  // Éclairage nocturne : positions des foyers de lampadaires et matériau
+  // Babylon des lanternes (pour allumer leur émission à la nuit).
+  foyers: Array<{ x: number; y: number; z: number }>;
+  lampMaterial: PBRMaterial | null;
   meshCount: number;
   instanceCount: number;
   materialCount: number;
@@ -77,6 +81,13 @@ class ThreeCityConverter {
     private readonly scene: Scene,
     private readonly shadows: ShadowGenerator | null,
   ) {}
+
+  // Matériau Babylon issu de la conversion d'un matériau Three, si ce dernier
+  // a été rencontré pendant la traversée. Sert à piloter après coup une
+  // propriété (émission des lanternes la nuit).
+  materialFor(source: THREE.Material | null | undefined): PBRMaterial | null {
+    return source ? this.materials.get(source) ?? null : null;
+  }
 
   convert(root: THREE.Object3D): void {
     root.updateMatrixWorld(true);
@@ -151,6 +162,10 @@ class ThreeCityConverter {
     // deux faces est donc le garde-fou fidèle et déterministe.
     material.backFaceCulling = false;
     material.twoSidedLighting = true;
+    // Nuit : phares du joueur et lampadaires proches s'ajoutent au soleil et à
+    // l'ambiante. Le plafond par défaut (4) éteindrait silencieusement les
+    // lampes surnuméraires.
+    material.maxSimultaneousLights = 10;
 
     const albedo = this.texture(standard.map);
     if (albedo) {
@@ -302,8 +317,9 @@ class ThreeCityConverter {
     // le depth buffer entre certains groupes. Les chaussées se dessinaient
     // alors par-dessus les bâtiments et formaient les longues bandes visibles
     // sur la capture. Les zOffset des matériaux suffisent pour le z-fighting.
-    const shadowMeshes = new Set(['murs', 'toitures', 'cheminees', 'lucarnes', 'ventilations']);
-    const shouldCastShadow = source.castShadow || shadowMeshes.has(source.name);
+    const shadowMeshes = new Set(['murs', 'murs-pierre', 'toitures', 'cheminees', 'lucarnes', 'ventilations']);
+    const shouldCastShadow = source.castShadow || shadowMeshes.has(source.name)
+      || source.name.startsWith('facades-photo');
     if (shouldCastShadow && !source.userData.noShadowCast) this.shadows?.addShadowCaster(mesh, false);
     mesh.freezeWorldMatrix();
     this.stats.meshes++;
@@ -413,6 +429,8 @@ export async function buildFaithfulArtix(
     terrain,
     altitudeReference: bdtopo.altRef,
     spawn,
+    foyers: (world.foyers ?? []) as Array<{ x: number; y: number; z: number }>,
+    lampMaterial: converter.materialFor(world.lampHeads as THREE.Material | null),
     meshCount: converter.stats.meshes,
     instanceCount: converter.stats.instances,
     materialCount: converter.stats.materials,

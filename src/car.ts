@@ -10,6 +10,8 @@ import {
   SceneLoader,
   ShadowGenerator,
   Space,
+  SpotLight,
+  StandardMaterial,
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
@@ -97,6 +99,59 @@ export class ArcadeCar {
     this.root = new TransformNode('player-car', scene);
     this.root.position.set(spawn.x, world.surfaceY(spawn.x, spawn.z), spawn.z);
     this.root.rotationQuaternion = Quaternion.FromEulerAngles(0, this.heading, 0);
+  }
+
+  // Éclairage nocturne du véhicule : deux projecteurs de phares et quatre
+  // plaques émissives (optiques blanches à l'avant, feux rouges à l'arrière).
+  // Construit paresseusement au premier passage en ambiance nuit, tout est
+  // parenté au châssis. L'avant du véhicule est +Z local : la rotation Y de
+  // `heading` envoie ce +Z sur (sin h, 0, cos h), le vecteur d'avance de la
+  // physique.
+  private nightNodes: TransformNode | null = null;
+  private headlights: SpotLight[] = [];
+
+  setNight(active: boolean): void {
+    if (active && !this.nightNodes) {
+      const rig = new TransformNode('car-nuit', this.scene);
+      rig.parent = this.root;
+      const feuMat = new StandardMaterial('feu-arriere', this.scene);
+      feuMat.emissiveColor = Color3.FromHexString('#ff2a1e');
+      feuMat.disableLighting = true;
+      const optiqueMat = new StandardMaterial('optique-avant', this.scene);
+      optiqueMat.emissiveColor = Color3.FromHexString('#fff3d2');
+      optiqueMat.disableLighting = true;
+      for (const cote of [-1, 1]) {
+        // Projecteur : porté vers l'avant et rabattu vers la chaussée, portée
+        // limitée pour ne pas éclairer tout le quartier.
+        const phare = new SpotLight(
+          `phare-${cote}`,
+          new Vector3(cote * .58, .68, 1.9),
+          new Vector3(cote * .04, -.22, 1).normalize(),
+          1.05, 8, this.scene,
+        );
+        phare.parent = rig;
+        phare.diffuse = Color3.FromHexString('#ffe9c0');
+        phare.intensity = 55;
+        phare.range = 48;
+        this.headlights.push(phare);
+
+        const optique = MeshBuilder.CreatePlane(`optique-${cote}`, { width: .3, height: .11 }, this.scene);
+        optique.parent = rig;
+        optique.position.set(cote * .58, .66, 2.02);
+        optique.material = optiqueMat;
+        optique.isPickable = false;
+
+        const feu = MeshBuilder.CreatePlane(`feu-${cote}`, { width: .34, height: .1 }, this.scene);
+        feu.parent = rig;
+        feu.position.set(cote * .55, .74, -2.05);
+        feu.rotation.y = Math.PI;
+        feu.material = feuMat;
+        feu.isPickable = false;
+      }
+      this.nightNodes = rig;
+    }
+    this.nightNodes?.setEnabled(active);
+    for (const phare of this.headlights) phare.setEnabled(active);
   }
 
   async loadModel(): Promise<void> {
