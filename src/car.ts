@@ -123,22 +123,25 @@ export class ArcadeCar {
       for (const cote of [-1, 1]) {
         // Projecteur : porté vers l'avant et rabattu vers la chaussée, portée
         // limitée pour ne pas éclairer tout le quartier.
-        // Faisceau resserré et presque horizontal : un phare rabattu vers le
-        // sol écrase la chaussée à cinq mètres, alors que la lumière doit
-        // porter devant.
+        // Faisceau étroit, quasi horizontal, à forte concentration axiale :
+        // l'énergie se dépose entre quinze et trente-cinq mètres devant le
+        // véhicule. Le bord du cône, seul à frôler la chaussée proche, est
+        // éteint par l'exposant élevé : c'est lui qui écrasait le premier
+        // plan dans les réglages précédents.
         const phare = new SpotLight(
           `phare-${cote}`,
           new Vector3(cote * .58, .68, 1.9),
-          new Vector3(cote * .04, -.12, 1).normalize(),
-          .88, 12, this.scene,
+          new Vector3(cote * .04, -.055, 1).normalize(),
+          .58, 26, this.scene,
         );
+        phare.innerAngle = .3;
         phare.parent = rig;
         phare.diffuse = Color3.FromHexString('#ffe9c0');
         // Les matériaux de la ville suivent l'atténuation physique en 1/d² :
         // l'intensité se lit comme des candelas. 520 donne l'équivalent du
         // plein soleil à une vingtaine de mètres devant le véhicule.
-        phare.intensity = 320;
-        phare.range = 62;
+        phare.intensity = 480;
+        phare.range = 70;
         this.headlights.push(phare);
 
         const optique = MeshBuilder.CreatePlane(`optique-${cote}`, { width: .3, height: .11 }, this.scene);

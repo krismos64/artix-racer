@@ -603,6 +603,17 @@ async function start(): Promise<void> {
           else lampe.position.y = -100;
         });
       }
+      // Intensité continue en fonction de la distance au joueur : pleine à
+      // moins de 18 m, nulle au-delà de 36 m. Une lampe du pool se
+      // repositionne donc toujours éteinte et monte en puissance à
+      // l'approche : c'est ce qui supprime l'allumage visible au passage,
+      // les halos au sol assurant la constance de l'éclairage perçu.
+      const px = car.root.position.x, pz = car.root.position.z;
+      for (const lampe of lampesPool) {
+        const d = Math.hypot(lampe.position.x - px, lampe.position.z - pz);
+        const t = Math.max(0, Math.min(1, (36 - d) / 18));
+        lampe.intensity = 70 * t * t;
+      }
     }
 
     if (playing && !paused) {
