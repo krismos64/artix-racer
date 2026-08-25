@@ -99,7 +99,7 @@ export const BATIMENTS_MODELISES = new Set([
   1128,   // Leclerc Express du centre-bourg, dans les murs de l'ancien Intermarché
 ]);
 
-export function parseBDTopo(raw, toitures = null, facades = null) {
+export function parseBDTopo(raw, toitures = null, facades = null, panoramax = null) {
   const batiments = [];
   let altSomme = 0, altN = 0;
 
@@ -139,6 +139,17 @@ export function parseBDTopo(raw, toitures = null, facades = null) {
   const teintes = new Map();
   for (const f of facades?.facades ?? []) {
     if ((f.q ?? 0) >= 0.35) teintes.set(f.i, f.c);
+  }
+
+  // Relevés Panoramax étendus : analyse systématique des panoramiques par
+  // bâtiment (scripts/panoramax-analyse.mjs). Ils priment sur l'ancien relevé
+  // de teintes : mesurés sur des fenêtres cadrées façade par façade, avec
+  // occultations vérifiées, ils couvrent aussi la couleur des volets et un
+  // indice de grain du parement (fort sur pierre et galets apparents, faible
+  // sur enduit lisse).
+  const releves = new Map();
+  for (const f of panoramax?.facades ?? []) {
+    if ((f.q ?? 0) >= 0.35) releves.set(f.i, f);
   }
 
   raw.batiments.forEach((b, i) => {
@@ -192,7 +203,9 @@ export function parseBDTopo(raw, toitures = null, facades = null) {
       zSol: b.zSol ?? null,
       graine: i,
       toiture: parIndex.get(i) ?? null,
-      teinteMur: teintes.get(i) ?? null,
+      teinteMur: releves.get(i)?.mur ?? teintes.get(i) ?? null,
+      volets: releves.get(i)?.volets ?? null,
+      grain: releves.get(i)?.grain ?? null,
     });
   });
 

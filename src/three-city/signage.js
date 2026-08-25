@@ -503,15 +503,141 @@ export function buildSignage(data, relief, roadY) {
       montant.position.set(sx * 1.2, 1.18, -0.55);
       abri.add(montant);
     }
-    const fond = new THREE.Mesh(
-      new THREE.PlaneGeometry(2.5, 1.9),
-      new THREE.MeshStandardMaterial({ color: 0x2a3a48, roughness: 0.2, metalness: 0.2 }),
-    );
-    fond.position.set(0, 1.25, -0.6);
+    // Vitrage : fond et parois latérales transparents, comme les abribus
+    // réels du réseau, avec un bandeau opaque en tête qui porte la structure.
+    const verre = new THREE.MeshStandardMaterial({
+      color: 0x9fb6c2, roughness: 0.08, metalness: 0.1,
+      transparent: true, opacity: 0.24, side: THREE.DoubleSide,
+    });
+    const fond = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 1.75), verre);
+    fond.position.set(0, 1.05, -0.6);
     abri.add(fond);
+    const bandeau = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.28, 0.04), abriMat);
+    bandeau.position.set(0, 2.06, -0.6);
+    abri.add(bandeau);
+    for (const sx of [-1, 1]) {
+      const paroi = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.75), verre);
+      paroi.rotation.y = Math.PI / 2;
+      paroi.position.set(sx * 1.24, 1.05, -0.05);
+      abri.add(paroi);
+    }
+    // Banc : une lame de bois sur deux pieds, à hauteur d'assise.
+    const banc = new THREE.Mesh(
+      new THREE.BoxGeometry(1.9, 0.05, 0.34),
+      new THREE.MeshStandardMaterial({ color: 0x7a5c3d, roughness: 0.85 }),
+    );
+    banc.position.set(0, 0.48, -0.38);
+    abri.add(banc);
+    for (const sx of [-1, 1]) {
+      const pied = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.46, 0.3), abriMat);
+      pied.position.set(sx * 0.8, 0.24, -0.38);
+      abri.add(pied);
+    }
+    // Cadre d'affichage sur la paroi côté arrivée du bus : une tache claire
+    // qui casse la symétrie et se lit comme une affiche horaire.
+    const affiche = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.52, 0.78),
+      new THREE.MeshStandardMaterial({ color: 0xe8e2d2, roughness: 0.6 }),
+    );
+    affiche.rotation.y = -Math.PI / 2;
+    affiche.position.set(1.22, 1.32, -0.05);
+    abri.add(affiche);
     abri.position.set(pos.x, sol, pos.z);
     abri.rotation.y = cap;
     group.add(abri);
+  }
+
+  // ---- Entrées d'agglomération bilingues --------------------------------
+  // Artix est la première commune de France de plus de 3 000 habitants à
+  // avoir adopté la signalisation bilingue français/occitan (2000). Le
+  // panneau EB10 porte donc ARTIX et, dessous, Artics en graphie béarnaise.
+  // Position : sur chaque axe entrant, au dernier point de la route qui reste
+  // au contact du bâti continu du bourg.
+  {
+    const texAgglo = (() => {
+      const L = 256, H = 192;
+      const c = document.createElement('canvas');
+      c.width = L; c.height = H;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#f4f1ea';
+      ctx.fillRect(0, 0, L, H);
+      ctx.strokeStyle = '#c2342b';
+      ctx.lineWidth = 12;
+      ctx.strokeRect(8, 8, L - 16, H * 0.62 - 16);
+      ctx.fillStyle = '#1a1c20';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `bold ${H * 0.22}px Helvetica, Arial, sans-serif`;
+      ctx.fillText('ARTIX', L / 2, H * 0.31 - 6);
+      // Panneau complémentaire occitan, cadre plus fin.
+      ctx.strokeStyle = '#7b7f83';
+      ctx.lineWidth = 5;
+      ctx.strokeRect(8, H * 0.66, L - 16, H * 0.30);
+      ctx.font = `600 italic ${H * 0.17}px Helvetica, Arial, sans-serif`;
+      ctx.fillText('Artics', L / 2, H * 0.81);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = anisotropie();
+      return t;
+    })();
+    // Grille grossière du bâti pour mesurer le contact avec le bourg.
+    const CEL = 60;
+    const bati = new Set();
+    for (const b of data.buildings ?? []) {
+      let cx = 0, cz = 0;
+      for (const [px, pz] of b.pts) { cx += px; cz += pz; }
+      cx /= b.pts.length; cz /= b.pts.length;
+      bati.add(`${Math.round(cx / CEL)},${Math.round(cz / CEL)}`);
+    }
+    const contactBati = (x, z) => {
+      const gx = Math.round(x / CEL), gz = Math.round(z / CEL);
+      for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) if (bati.has(`${gx + i},${gz + j}`)) return true;
+      }
+      return false;
+    };
+    const poses = [];
+    const matPanneau = new THREE.MeshStandardMaterial({
+      map: texAgglo, roughness: 0.35, metalness: 0.15, side: THREE.FrontSide,
+    });
+    for (const r of data.roads) {
+      if (!r.drivable || r.width < 5.6 || r.pts.length < 4) continue;
+      // Parcours depuis l'extérieur : premier point encore hors du bâti dont
+      // le suivant entre au contact du bourg.
+      for (const sens of [1, -1]) {
+        const pts = sens === 1 ? r.pts : [...r.pts].reverse();
+        const [x0, z0] = pts[0];
+        if (Math.hypot(x0, z0) < 550 || contactBati(x0, z0)) continue;
+        let pose = null;
+        for (let i = 0; i < pts.length - 1; i++) {
+          if (contactBati(pts[i + 1][0], pts[i + 1][1])) { pose = i; break; }
+        }
+        if (pose == null) continue;
+        const [x1, z1] = pts[pose], [x2, z2] = pts[pose + 1];
+        if (poses.some(([px2, pz2]) => Math.hypot(px2 - x1, pz2 - z1) < 320)) continue;
+        const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+        if (len < 1) continue;
+        // Sur l'accotement droit du sens entrant, face au conducteur.
+        const nx = dz / len, nz = -dx / len;
+        const px = x1 + nx * (r.width / 2 + 1.4);
+        const pz = z1 + nz * (r.width / 2 + 1.4);
+        const sol = solEn(relief, px, pz, roadY);
+        const mât = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.045, 0.045, 2.6, 8),
+          new THREE.MeshStandardMaterial({ color: 0x76797c, roughness: 0.45, metalness: 0.6 }),
+        );
+        mât.position.set(px, sol + 1.3, pz);
+        group.add(mât);
+        const panneau = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 0.79), matPanneau);
+        panneau.position.set(px, sol + 2.2, pz);
+        // Face au trafic entrant : la normale du plan pointe vers l'extérieur
+        // du bourg, à l'opposé du sens de parcours.
+        panneau.rotation.y = Math.atan2(-dx, -dz);
+        group.add(panneau);
+        poses.push([x1, z1]);
+      }
+      if (poses.length >= 7) break;
+    }
   }
 
   // ---- Feux tricolores ---------------------------------------------------

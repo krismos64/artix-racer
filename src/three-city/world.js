@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { couleurMur, couleurToit } from './bdtopo.js';
-import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce,
+import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce, texturerGalets,
   texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage,
   texturerNormalesEau, bruit,
   relief as carteRelief, anisotropie } from './textures.js';
@@ -1239,6 +1239,13 @@ export function buildWorld(scene, data) {
   // fenêtres allumées reçoivent une teinte chaude que le canal d'émission
   // reprend, ce qui évite un second maillage pour quelques centaines de baies.
   const winPos = [], winCol = [], winEmi = [];
+  // Volets ouverts, plaqués au mur de part et d'autre des baies. C'est le
+  // détail qui distingue une rue béarnaise réelle d'une maquette : sur les
+  // panoramiques Panoramax du bourg, presque toutes les façades d'habitation
+  // en portent. Couleur relevée sur les photos quand l'analyse l'a détectée,
+  // sinon palette des teintes réellement vues à Artix.
+  const voletPos = [], voletCol = [];
+  const PALETTE_VOLETS = [0x7a2f2b, 0x3e5a3c, 0x4a5f70, 0x6d4a33, 0x8a8d86, 0x5c3a41];
   // Encadrement des baies, en maillage séparé : un dormant clair autour d'une
   // vitre sombre est ce qui rend une fenêtre lisible de loin, bien plus que la
   // teinte du vitrage lui-même.
@@ -1395,6 +1402,34 @@ export function buildWorld(scene, data) {
       wr = Math.min(0.62, wr * k);
       wg = Math.min(0.62, wg * k);
       wb = Math.min(0.62, wb * k);
+    }
+
+    // Couleur des volets du bâtiment. Relevée sur les panoramiques quand
+    // l'analyse en a détecté (b.volets), sinon tirée de la palette béarnaise
+    // pour l'essentiel des habitations : sur les photos du bourg, une façade
+    // d'habitation sans volets est l'exception. Hangars, bâtiments légers et
+    // grands volumes n'en portent pas.
+    let voletR = 0, voletG = 0, voletB = 0, aVolets = false;
+    if (!b.leger && b.surface < 420 && b.usage !== 'Industriel') {
+      let hex = b.volets;
+      if (hex == null && hash(b.graine * 7.31 + 2.4) < 0.8) {
+        hex = PALETTE_VOLETS[Math.floor(hash(b.graine * 3.7 + 9.1) * PALETTE_VOLETS.length)];
+      }
+      if (hex != null) {
+        aVolets = true;
+        voletR = ((hex >> 16) & 255) / 255;
+        voletG = ((hex >> 8) & 255) / 255;
+        voletB = (hex & 255) / 255;
+        // Une teinte mesurée dans l'ombre tirerait vers le noir : on remonte
+        // les valeurs très sombres vers le bois peint qu'elles décrivent.
+        const lv = voletR * 0.2126 + voletG * 0.7152 + voletB * 0.0722;
+        if (lv < 0.09) {
+          const k = 0.09 / Math.max(0.02, lv);
+          voletR = Math.min(1, voletR * k);
+          voletG = Math.min(1, voletG * k);
+          voletB = Math.min(1, voletB * k);
+        }
+      }
     }
 
     // Salissure de pied de façade : la pluie rejaillit du sol et noircit le
@@ -1609,6 +1644,35 @@ export function buildWorld(scene, data) {
               cxw + ax3 + sx3, yB - APPUI_EP, czw + az3 + sz3,
               cxw - ax3 + sx3, yB - APPUI_EP, czw - az3 + sz3,
             );
+
+            // Volets ouverts, un vantail de chaque côté du dormant, plaqués au
+            // mur. Leur saillie (5 cm) reste entre la vitre et le dormant :
+            // pas de conflit de profondeur, et l'ombre portée du vantail sur
+            // l'enduit se lit en lumière rasante.
+            if (aVolets) {
+              const LV = 0.44; // largeur d'un vantail
+              const oxv = nx * 0.05, ozv = nz * 0.05;
+              // Nuance par baie : deux vantaux d'une même maison n'ont jamais
+              // exactement le même vieillissement.
+              const nv = 0.92 + hash(Math.abs(cxw * 8.7 + czw * 5.3)) * 0.16;
+              const rv = Math.min(1, voletR * nv), gvv = Math.min(1, voletG * nv), bv = Math.min(1, voletB * nv);
+              for (const cote of [-1, 1]) {
+                const centre = largeur / 2 + MARGE + 0.03 + LV / 2;
+                const c1 = (dx / len) * (centre * cote - LV / 2 * cote);
+                const c2 = (dx / len) * (centre * cote + LV / 2 * cote);
+                const d1 = (dz / len) * (centre * cote - LV / 2 * cote);
+                const d2 = (dz / len) * (centre * cote + LV / 2 * cote);
+                voletPos.push(
+                  cxw + c1 + oxv, yb2, czw + d1 + ozv,
+                  cxw + c2 + oxv, yb2, czw + d2 + ozv,
+                  cxw + c2 + oxv, yh2, czw + d2 + ozv,
+                  cxw + c1 + oxv, yb2, czw + d1 + ozv,
+                  cxw + c2 + oxv, yh2, czw + d2 + ozv,
+                  cxw + c1 + oxv, yh2, czw + d1 + ozv,
+                );
+                for (let s = 0; s < 6; s++) voletCol.push(rv, gvv, bv);
+              }
+            }
           }
         }
       }
@@ -2086,6 +2150,19 @@ export function buildWorld(scene, data) {
     group.add(m);
   }
 
+  if (voletPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(voletPos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(voletCol, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Bois peint mat : rugosité élevée, couleur portée par les sommets
+    // (relevés Panoramax ou palette). Un seul maillage pour toute la commune.
+    group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.85, side: THREE.DoubleSide,
+    })));
+  }
+
   if (appuiPos.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(appuiPos, 3));
@@ -2370,7 +2447,7 @@ export function buildWorld(scene, data) {
   // ---- Haies, murets et clôtures ----------------------------------------
   // Ces limites de parcelles structurent le paysage d'un lotissement bien plus
   // que les bâtiments seuls : sans elles, les maisons flottent sur une pelouse.
-  const hedgePos = [], hedgeCol = [], wallPos = [];
+  const hedgePos = [], hedgeCol = [], wallPos = [], wallUV = [];
   const hedgeColor = new THREE.Color(0x3f6b32);
   const hedgeColor2 = new THREE.Color(0x4c7a3a);
 
@@ -2429,6 +2506,18 @@ export function buildWorld(scene, data) {
         x1 + nx, yb1 + h, z1 + nz, x2 - nx, yb2 + h, z2 - nz, x1 - nx, yb1 + h, z1 - nz,
       );
 
+      if (solide) {
+        // Coordonnees de texture des murets : u suit le lineaire du mur,
+        // v la hauteur, a l'echelle d'environ 1,2 m par repetition du motif
+        // de galets. Sans UV, la texture serait inapplicable.
+        const ECH = 1.2;
+        const L = len / ECH, H = h / ECH, W = (demi * 2) / ECH;
+        for (let f = 0; f < 2; f++) {
+          wallUV.push(0, 0, L, 0, L, H, 0, 0, L, H, 0, H);
+        }
+        wallUV.push(0, 0, L, 0, L, W, 0, 0, L, W, 0, W);
+      }
+
       if (!solide) {
         // Feuillage nuancé : deux verts alternés selon la position.
         const c = (Math.abs(Math.round(x1) + Math.round(z1)) % 2) ? hedgeColor : hedgeColor2;
@@ -2449,10 +2538,15 @@ export function buildWorld(scene, data) {
   if (wallPos.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(wallPos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(wallUV, 2));
     g.computeVertexNormals();
     g.computeBoundingSphere();
+    // Galets roules du gave de Pau, l'appareil des murets anciens de la
+    // plaine : motif texture plus relief, la lumiere rasante fait le reste.
+    const galets = texturerGalets(256);
     group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0xbfb5a4, roughness: 0.95, side: THREE.DoubleSide,
+      color: 0xcac2b2, roughness: 0.95, side: THREE.DoubleSide,
+      map: galets, bumpMap: carteRelief(galets), bumpScale: 0.6,
     })));
   }
 

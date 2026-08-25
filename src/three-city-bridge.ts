@@ -34,6 +34,7 @@ export interface FaithfulCitySources {
   roofs: AnyRecord | null;
   roofsLegacy: AnyRecord | null;
   facades: AnyRecord | null;
+  panoramax: AnyRecord | null;
 }
 
 export interface FaithfulCityResult {
@@ -336,7 +337,7 @@ export async function buildFaithfulArtix(
 ): Promise<FaithfulCityResult> {
   const roofs = sources.roofs?.toits?.length ? sources.roofs : sources.roofsLegacy;
   const data = parseOSM(sources.osm) as AnyRecord;
-  const bdtopo = (parseBDTopo as any)(sources.buildings, roofs, sources.facades) as AnyRecord;
+  const bdtopo = (parseBDTopo as any)(sources.buildings, roofs, sources.facades, sources.panoramax) as AnyRecord;
   data.buildings = removeModeledBuildingDuplicates(data, bdtopo.batiments);
   data.altRef = bdtopo.altRef;
 

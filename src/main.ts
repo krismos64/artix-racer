@@ -15,6 +15,7 @@ import {
   Scene,
   ShadowGenerator,
   SSAO2RenderingPipeline,
+  StandardMaterial,
   UniversalCamera,
   Vector3,
 } from '@babylonjs/core';
@@ -94,12 +95,17 @@ function createSky(scene: Scene): Mesh {
   material.useSunPosition = true;
   material.sunPosition = SUN_DIRECTION.scale(-1000);
   // Voile léger d'une journée d'été béarnaise : l'air n'y est jamais aussi sec
-  // qu'en montagne, l'horizon blanchit sensiblement.
-  material.turbidity = 5.5;
-  material.rayleigh = 1.6;
-  material.mieCoefficient = .006;
+  // qu'en montagne, l'horizon blanchit sensiblement. La luminance reste à sa
+  // valeur par défaut : en dessous de 1, le modèle de Preetham vire au
+  // vert-jaune sous le tone mapping ACES.
+  // Réglages calés en direct dans le navigateur : au-delà de 3 de turbidité,
+  // le voile vire au vert moutarde sous ACES ; en dessous de 2, le ciel
+  // devient gris de plomb.
+  material.turbidity = 2.6;
+  material.rayleigh = 1.4;
+  material.mieCoefficient = .004;
   material.mieDirectionalG = .8;
-  material.luminance = .35;
+  material.luminance = 1;
   sky.material = material;
   sky.infiniteDistance = true;
   sky.isPickable = false;
@@ -156,13 +162,18 @@ function createEnvironment(scene: Scene, probeMeshes: Mesh[]): void {
   // depuis trois gradients de 32 pixels : carrosseries, vitrages et toitures
   // reflètent ainsi exactement le ciel affiché, avec le sol de prairie en
   // contre-jour. Rendu une seule fois au démarrage, le soleil étant fixe.
+  //
+  // Contrainte GPU : les maillages rendus DANS la sonde ne doivent jamais
+  // échantillonner l'environnement qu'elle est en train d'écrire, sous peine
+  // de boucle de rétroaction (GL_INVALID_OPERATION). La sonde ne voit donc que
+  // des matériaux Standard sans texture de réflexion : le ciel analytique et
+  // un disque de sol en couleur diffuse.
   const horizonGround = MeshBuilder.CreateDisc('horizon-ground', { radius: 2400, tessellation: 48 }, scene);
   horizonGround.rotation.x = Math.PI / 2;
   horizonGround.position.y = -6;
-  const groundMaterial = new PBRMaterial('horizon-ground-material', scene);
-  groundMaterial.albedoColor = Color3.FromHexString('#7d8a5c');
-  groundMaterial.metallic = 0;
-  groundMaterial.roughness = 1;
+  const groundMaterial = new StandardMaterial('horizon-ground-material', scene);
+  groundMaterial.diffuseColor = Color3.FromHexString('#7d8a5c');
+  groundMaterial.specularColor = Color3.Black();
   groundMaterial.backFaceCulling = false;
   groundMaterial.freeze();
   horizonGround.material = groundMaterial;
@@ -170,7 +181,11 @@ function createEnvironment(scene: Scene, probeMeshes: Mesh[]): void {
 
   const probe = new ReflectionProbe('environnement', 128, scene, true);
   probe.position.set(0, 14, 0);
-  for (const mesh of [...probeMeshes, horizonGround]) probe.renderList!.push(mesh);
+  for (const mesh of probeMeshes) {
+    if (mesh.material && mesh.material instanceof PBRMaterial) continue;
+    probe.renderList!.push(mesh);
+  }
+  probe.renderList!.push(horizonGround);
   probe.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
   scene.environmentTexture = probe.cubeTexture;
   scene.environmentIntensity = .85;
@@ -187,6 +202,8 @@ async function start(): Promise<void> {
   engine.setHardwareScalingLevel(QUALITY[DEFAULT_QUALITY].hardwareScaling);
 
   const scene = new Scene(engine);
+  // Accès de diagnostic depuis la console du navigateur.
+  (window as any).__scene = scene;
   // Les données et les géométries sources viennent de Three.js (repère main
   // droite). Babylon utilise le même repère pour conserver l'orientation des
   // faces, des normales et des rotations sans conversion destructive.
@@ -253,13 +270,14 @@ async function start(): Promise<void> {
   ssao.maxZ = 260;
 
   await progress(12, 'Chargement des données réelles d’Artix…');
-  const [rawOsm, rawBati, rawPoi, rawRoofs, rawRoofsLegacy, rawFacades] = await Promise.all([
+  const [rawOsm, rawBati, rawPoi, rawRoofs, rawRoofsLegacy, rawFacades, rawPanoramax] = await Promise.all([
     loadJson<any>('artix-osm.json', true),
     loadJson<any>('artix-bdtopo.json', true),
     loadJson<any>('artix-poi.json'),
     loadJson<any>('artix-toits-lidar.json'),
     loadJson<any>('artix-toitures.json'),
     loadJson<any>('artix-facades.json'),
+    loadJson<any>('artix-panoramax.json'),
   ]);
   if (!rawOsm || !rawBati) throw new Error('Les données essentielles d’Artix sont absentes.');
 
@@ -271,6 +289,7 @@ async function start(): Promise<void> {
     roofs: rawRoofs,
     roofsLegacy: rawRoofsLegacy,
     facades: rawFacades,
+    panoramax: rawPanoramax,
   }, shadow, progress);
   const map = faithful.data as CityMapData;
   const terrain = faithful.terrain;

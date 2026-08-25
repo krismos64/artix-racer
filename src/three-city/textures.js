@@ -363,6 +363,79 @@ export function texturerPave(taille = 256) {
   return tex;
 }
 
+// Galets du gave de Pau : les murets anciens d'Artix, comme partout dans la
+// plaine du gave, sont montés en galets roulés pris dans un mortier clair.
+// C'est un motif immédiatement reconnaissable sur les photos du bourg, très
+// différent d'un moellon équarri : pierres ovoïdes, lits grossièrement
+// horizontaux, joints larges.
+//
+// Rendue en niveaux de gris clairs (multipliée par la couleur du matériau),
+// avec une carte de relief tirée par `relief()` : le bombé de chaque galet
+// accroche la lumière rasante, ce qui fait tout le caractère de l'appareil.
+export function texturerGalets(taille = 256) {
+  const c = canvas(taille);
+  const ctx = c.getContext('2d');
+  // Fond : mortier granuleux.
+  const img = ctx.createImageData(taille, taille);
+  const d = img.data;
+  const grain = bruit(taille, taille, 48, 87);
+  for (let i = 0; i < taille * taille; i++) {
+    const v = 150 + (grain(i % taille, Math.floor(i / taille)) - 0.5) * 26;
+    d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v;
+    d[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  // Galets en lits horizontaux décalés. Taille et orientation varient d'un
+  // galet à l'autre : un appareil trop régulier se lirait comme un papier
+  // peint. Semé déterministe pour que le mur soit identique à chaque
+  // lancement.
+  let s = 4213;
+  const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  const RANGS = 7;
+  const hRang = taille / RANGS;
+  for (let rang = 0; rang < RANGS + 1; rang++) {
+    let x = -rnd() * 20;
+    while (x < taille + 20) {
+      const rx = hRang * (0.52 + rnd() * 0.3);   // demi-largeur
+      const ry = hRang * (0.34 + rnd() * 0.12);  // demi-hauteur
+      const cx = x + rx;
+      const cy = rang * hRang + hRang / 2 + (rnd() - 0.5) * hRang * 0.3;
+      const teinte = 175 + rnd() * 60;
+      const angle = (rnd() - 0.5) * 0.5;
+      // Le galet, avec un dégradé haut/bas qui suggère le bombé.
+      const deg = ctx.createLinearGradient(0, cy - ry, 0, cy + ry);
+      deg.addColorStop(0, `rgb(${Math.min(255, teinte + 26)},${Math.min(255, teinte + 24)},${Math.min(255, teinte + 18)})`);
+      deg.addColorStop(1, `rgb(${teinte - 34},${teinte - 34},${teinte - 30})`);
+      ctx.fillStyle = deg;
+      ctx.save();
+      ctx.translate(cx % taille, cy);
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx * 0.88, ry * 0.88, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // Répétition horizontale propre : le galet qui déborde est redessiné
+      // de l'autre côté.
+      if (cx > taille - rx || cx < rx) {
+        ctx.save();
+        ctx.translate(cx > taille / 2 ? cx - taille : cx + taille, cy);
+        ctx.rotate(angle);
+        ctx.fillStyle = deg;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx * 0.88, ry * 0.88, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      x += rx * 1.9 + rnd() * 6;
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = anisotropie();
+  return tex;
+}
+
 // Écorce : cannelures verticales et plaques de desquamation.
 //
 // Rendue en niveaux de gris, la teinte étant portée par la couleur d'instance
