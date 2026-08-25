@@ -22,7 +22,9 @@ import { ParkingsEpi } from './three-city/parking.js';
 import { VoituresGarees } from './three-city/parkedcars.js';
 import { parsePOI } from './three-city/poi.js';
 import { buildSignage } from './three-city/signage.js';
+import { Pietons } from './three-city/pedestrians.js';
 import { pointsAltitude, Terrain } from './three-city/terrain.js';
+import { Touffes } from './three-city/touffes.js';
 import { poserAnisotropie } from './three-city/textures.js';
 import { buildWorld, GARDE_SOL, ROAD_Y } from './three-city/world.js';
 
@@ -49,6 +51,10 @@ export interface FaithfulCityResult {
   // Babylon des lanternes (pour allumer leur émission à la nuit).
   foyers: Array<{ x: number; y: number; z: number }>;
   lampMaterial: PBRMaterial | null;
+  // Contenu animé (passants, touffes d'herbe) : la logique Three d'origine
+  // reste vivante, ses matrices d'instances alimentant des thin instances
+  // Babylon. À appeler chaque frame depuis la boucle de jeu.
+  vivant: { update(dt: number, temps: number, x: number, z: number): void } | null;
   meshCount: number;
   instanceCount: number;
   materialCount: number;
@@ -88,6 +94,16 @@ class ThreeCityConverter {
   // propriété (émission des lanternes la nuit).
   materialFor(source: THREE.Material | null | undefined): PBRMaterial | null {
     return source ? this.materials.get(source) ?? null : null;
+  }
+
+  // Accès publics pour le pont d'instances vivantes : conversion d'une
+  // géométrie et d'un matériau hors de la traversée de scène.
+  vertexDataFor(geometry: THREE.BufferGeometry): { data: VertexData; vertices: number; indices: number } {
+    return this.vertexData(geometry);
+  }
+
+  materialLive(source: THREE.Material): PBRMaterial {
+    return this.material(source);
   }
 
   convert(root: THREE.Object3D): void {
@@ -350,6 +366,63 @@ function removeModeledBuildingDuplicates(data: AnyRecord, buildings: AnyRecord[]
   });
 }
 
+// Pont d'instances vivantes : un InstancedMesh Three animé chaque frame par
+// sa logique d'origine, rendu par Babylon en thin instances. Les matrices
+// d'instances des deux moteurs partagent exactement le même agencement
+// mémoire (colonne-major, translation en 12..14) : le Float32Array de Three
+// est branché TEL QUEL comme buffer de thin instances, sans copie. Seules les
+// couleurs d'instances demandent une recopie, Three les rangeant par trois
+// composantes et Babylon par quatre.
+class LiveInstancedBridge {
+  private readonly paires: Array<{
+    three: THREE.InstancedMesh;
+    babylon: Mesh;
+    couleurs: Float32Array | null;
+    versionCouleurs: number;
+  }> = [];
+
+  constructor(private readonly scene: Scene, private readonly converter: ThreeCityConverter) {}
+
+  adopter(im: THREE.InstancedMesh, name: string): void {
+    const mesh = new Mesh(name, this.scene);
+    const { data } = this.converter.vertexDataFor(im.geometry);
+    data.applyToMesh(mesh);
+    mesh.material = this.converter.materialLive(im.material as THREE.Material);
+    // Le pool se déplace avec le véhicule : la sphère englobante serait
+    // toujours fausse, on force le rendu comme le faisait frustumCulled=false.
+    mesh.alwaysSelectAsActiveMesh = true;
+    mesh.isPickable = false;
+    mesh.receiveShadows = true;
+    mesh.thinInstanceSetBuffer('matrix', im.instanceMatrix.array as Float32Array, 16, false);
+    mesh.thinInstanceCount = im.count;
+    this.paires.push({ three: im, babylon: mesh, couleurs: null, versionCouleurs: -1 });
+  }
+
+  sync(): void {
+    for (const p of this.paires) {
+      p.babylon.thinInstanceCount = p.three.count;
+      p.babylon.thinInstanceBufferUpdated('matrix');
+      const ic = p.three.instanceColor;
+      if (ic && ic.version !== p.versionCouleurs) {
+        p.versionCouleurs = ic.version;
+        const n = ic.count;
+        if (!p.couleurs || p.couleurs.length < n * 4) {
+          p.couleurs = new Float32Array(n * 4);
+          p.couleurs.fill(1);
+        }
+        const src = ic.array as Float32Array;
+        for (let i = 0; i < n; i++) {
+          p.couleurs[i * 4] = src[i * 3];
+          p.couleurs[i * 4 + 1] = src[i * 3 + 1];
+          p.couleurs[i * 4 + 2] = src[i * 3 + 2];
+          p.couleurs[i * 4 + 3] = 1;
+        }
+        p.babylon.thinInstanceSetBuffer('color', p.couleurs, 4, false);
+      }
+    }
+  }
+}
+
 export async function buildFaithfulArtix(
   scene: Scene,
   sources: FaithfulCitySources,
@@ -428,11 +501,78 @@ export async function buildFaithfulArtix(
   });
   sourceScene.clear();
 
+  // ---- Contenu animé : passants et touffes d'herbe ------------------------
+  // Les modules Three d'origine gardent toute leur logique (réseau piéton,
+  // replantation par cellules) ; seul leur rendu passe par le pont de thin
+  // instances. Ils ne rejoignent pas sourceScene, qui est vidée juste au-dessus.
+  let vivant: FaithfulCityResult['vivant'] = null;
+  try {
+    // L'herbe s'écarte de la chaussée et de ses abords, comme dans le jeu
+    // d'origine : grille de segments de voies au pas de 100 m.
+    const CELL = 100;
+    const roadGrid = new Map<string, Array<{ x1: number; z1: number; x2: number; z2: number; w: number }>>();
+    for (const r of data.roads as Array<{ drivable: boolean; width: number; pts: Array<[number, number]> }>) {
+      if (!r.drivable) continue;
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const seg = { x1: r.pts[i][0], z1: r.pts[i][1], x2: r.pts[i + 1][0], z2: r.pts[i + 1][1], w: r.width };
+        const cx1 = Math.floor(Math.min(seg.x1, seg.x2) / CELL), cx2 = Math.floor(Math.max(seg.x1, seg.x2) / CELL);
+        const cz1 = Math.floor(Math.min(seg.z1, seg.z2) / CELL), cz2 = Math.floor(Math.max(seg.z1, seg.z2) / CELL);
+        for (let cx = cx1; cx <= cx2; cx++) {
+          for (let cz = cz1; cz <= cz2; cz++) {
+            const k = `${cx},${cz}`;
+            if (!roadGrid.has(k)) roadGrid.set(k, []);
+            roadGrid.get(k)!.push(seg);
+          }
+        }
+      }
+    }
+    const herbePlantable = (x: number, z: number): boolean => {
+      const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oz = -1; oz <= 1; oz++) {
+          const segs = roadGrid.get(`${cx + ox},${cz + oz}`);
+          if (!segs) continue;
+          for (const seg of segs) {
+            const dx = seg.x2 - seg.x1, dz = seg.z2 - seg.z1;
+            const len2 = dx * dx + dz * dz;
+            if (len2 < 1e-6) continue;
+            let t = ((x - seg.x1) * dx + (z - seg.z1) * dz) / len2;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const ddx = x - (seg.x1 + dx * t), ddz = z - (seg.z1 + dz * t);
+            if (ddx * ddx + ddz * ddz < (seg.w / 2 + 2.6) ** 2) return false;
+          }
+        }
+      }
+      return true;
+    };
+
+    const groupeFactice = new THREE.Group();
+    const touffes = new (Touffes as any)(groupeFactice, terrain, ROAD_Y, { estPlantable: herbePlantable });
+    const pietons = new (Pietons as any)(data, terrain, ROAD_Y, 110);
+    const live = new LiveInstancedBridge(scene, converter);
+    live.adopter(touffes.mesh, 'touffes-herbe');
+    if (pietons.effectif) {
+      const parties = [pietons.corps, pietons.tete, pietons.cheveux,
+        pietons.jambeG, pietons.jambeD, pietons.brasG, pietons.brasD];
+      parties.forEach((im, i) => live.adopter(im, `pietons-${i}`));
+    }
+    vivant = {
+      update(dt: number, temps: number, x: number, z: number): void {
+        if (pietons.effectif) pietons.update(Math.min(dt, .1), temps, { x, z });
+        touffes.maj(x, z, true);
+        live.sync();
+      },
+    };
+  } catch (error) {
+    console.warn('Contenu animé indisponible :', error);
+  }
+
   return {
     data,
     terrain,
     altitudeReference: bdtopo.altRef,
     spawn,
+    vivant,
     foyers: (world.foyers ?? []) as Array<{ x: number; y: number; z: number }>,
     lampMaterial: converter.materialFor(world.lampHeads as THREE.Material | null),
     meshCount: converter.stats.meshes,

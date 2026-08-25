@@ -619,6 +619,8 @@ async function start(): Promise<void> {
     if (playing && !paused) {
       car.update(dt, input);
       world.update(car.root.position.x, car.root.position.z);
+      // Passants et touffes d'herbe : logique Three animée, rendu Babylon.
+      faithful.vivant?.update(dt, performance.now() / 1000, car.root.position.x, car.root.position.z);
       if (traffic.update(dt, car.root.position.x, car.root.position.z, performance.now() / 1000)) car.hitTraffic();
       session.update(dt, car.root.position.x, car.root.position.z, car.speed);
       audio.update(car.speed, car.boosting, car.drifting);
