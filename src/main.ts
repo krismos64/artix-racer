@@ -403,6 +403,7 @@ async function start(): Promise<void> {
   const rawFacadesPhoto = await loadJson<any>('artix-facades-photo.json');
   const rawSols = await loadJson<any>('artix-sols.json');
   const rawPoteaux = await loadJson<any>('artix-poteaux.json');
+  const rawFacadesCentre = await loadJson<any>('artix-facades-centre.json');
   if (!rawOsm || !rawBati) throw new Error('Les données essentielles d’Artix sont absentes.');
 
   await progress(26, 'Reconstruction du modèle Three.js original…');
@@ -417,6 +418,7 @@ async function start(): Promise<void> {
     facadesPhoto: rawFacadesPhoto,
     sols: rawSols,
     poteaux: rawPoteaux,
+    facadesCentre: rawFacadesCentre,
   }, shadow, progress);
   const map = faithful.data as CityMapData;
   const terrain = faithful.terrain;

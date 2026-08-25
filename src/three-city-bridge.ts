@@ -41,6 +41,7 @@ export interface FaithfulCitySources {
   facadesPhoto: AnyRecord | null;
   sols: AnyRecord | null;
   poteaux: AnyRecord | null;
+  facadesCentre: AnyRecord | null;
 }
 
 export interface FaithfulCityResult {
@@ -437,6 +438,9 @@ export async function buildFaithfulArtix(
   const data = parseOSM(sources.osm) as AnyRecord;
   // Façades rectifiées depuis Panoramax : consommées par buildWorld.
   data.facadesPhoto = sources.facadesPhoto ?? null;
+  // Placage HD multi-façades du corridor commerçant, prioritaire sur le
+  // placage général.
+  data.facadesCentre = sources.facadesCentre ?? null;
   // Sols mesurés (chaussées, parkings, usure des passages) : buildWorld et
   // buildSignage s'en servent pour caler leurs teintes sur les photos.
   data.sols = sources.sols ?? null;

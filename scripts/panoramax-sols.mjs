@@ -280,6 +280,51 @@ for (const q of passages) {
 }
 console.log(`  ${sortiePassages.length} passages mesurés.`);
 
+// ---------------------------------------------------------------------------
+// 4. Relevés locaux du corridor du centre-bourg
+// ---------------------------------------------------------------------------
+// Dans le corridor commerçant (Leclerc, Au Comptoir, écoles, mairie, église),
+// la teinte de chaussée est relevée TOUS LES 12 M le long des voies plutôt
+// que par type : les reprises d'enrobé, les zones pavées et les abords usés
+// se lisent tronçon par tronçon.
+console.log('Relevés locaux du corridor…');
+const ANCRES = [[99, -36], [45, -21], [-52, -31], [-13, -126], [-52, -110],
+  [-12, 50], [8, 107], [12, 170]];
+const dansCorridor = (x, z) => ANCRES.some(([ax, az]) => Math.hypot(x - ax, z - az) < 95);
+const sortieLocaux = [];
+for (const r of routes) {
+  for (let i = 0; i < r.pts.length - 1; i++) {
+    const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+    const len = Math.hypot(x2 - x1, z2 - z1);
+    for (let d = 6; d < len; d += 12) {
+      const t = d / len;
+      const qx = x1 + (x2 - x1) * t, qz = z1 + (z2 - z1) * t;
+      if (!dansCorridor(qx, qz)) continue;
+      const proches = photosProches(qx, qz, 9).filter((p) => p.d > 1.5);
+      if (!proches.length) continue;
+      try {
+        const p = proches[0];
+        const pano = await panoRaw(p.id);
+        const gisement = Math.atan2(qx - p.x, -(qz - p.z)) * 180 / Math.PI;
+        const site = -Math.atan2(CAM_H, Math.max(2, p.d)) * 180 / Math.PI;
+        const pixels = fenetre(pano, p.az, gisement, site, 6, 4)
+          .filter(([r2, g2, b2]) => {
+            const lum = r2 * 0.299 + g2 * 0.587 + b2 * 0.114;
+            const sat = Math.max(r2, g2, b2) - Math.min(r2, g2, b2);
+            return lum > 25 && lum < 165 && sat < 38;
+          });
+        if (pixels.length < 60) continue;
+        sortieLocaux.push({
+          x: Math.round(qx * 10) / 10,
+          z: Math.round(qz * 10) / 10,
+          c: (mediane(pixels, 0) << 16) | (mediane(pixels, 1) << 8) | mediane(pixels, 2),
+        });
+      } catch { /* photo illisible */ }
+    }
+  }
+}
+console.log(`  ${sortieLocaux.length} relevés locaux.`);
+
 mkdirSync('public/data', { recursive: true });
 writeFileSync('public/data/artix-sols.json', JSON.stringify({
   source: 'Panoramax IGN, Licence Ouverte 2.0 — sols mesurés sur les panoramiques',
@@ -287,5 +332,6 @@ writeFileSync('public/data/artix-sols.json', JSON.stringify({
   routes: sortieRoutes,
   parkings: sortieParkings,
   passages: sortiePassages,
+  locaux: sortieLocaux,
 }));
 console.log('Écrit : public/data/artix-sols.json');

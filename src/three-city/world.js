@@ -652,8 +652,39 @@ export function buildWorld(scene, data) {
   })();
   // Complète les couleurs de sommets de chaussée jusqu'au niveau actuel du
   // buffer de positions, avec le facteur du type de voie courant.
-  const teinterRoute = (kind) => {
-    const f = facteursRoute?.get(kind) ?? [1, 1, 1];
+  // Relevés locaux du corridor commerçant : la teinte est mesurée tous les
+  // 12 m, tronçon par tronçon, et prime sur le facteur par type de voie.
+  const solsLocaux = data.sols?.locaux ?? [];
+  const baseKind = (() => {
+    const mesures = data.sols?.routes ?? null;
+    if (!mesures) return null;
+    let somme = [0, 0, 0], n = 0;
+    for (const kind of Object.keys(mesures)) {
+      const c = mesures[kind].c, pds = mesures[kind].n;
+      somme[0] += ((c >> 16) & 255) * pds;
+      somme[1] += ((c >> 8) & 255) * pds;
+      somme[2] += (c & 255) * pds;
+      n += pds;
+    }
+    return n ? somme.map((v) => v / n) : null;
+  })();
+  const teinterRoute = (kind, pts = null) => {
+    let f = facteursRoute?.get(kind) ?? [1, 1, 1];
+    if (pts && solsLocaux.length && baseKind) {
+      const [mx, mz] = pts[Math.floor(pts.length / 2)];
+      let releve = null, dMin = 22;
+      for (const q of solsLocaux) {
+        const d = Math.hypot(q.x - mx, q.z - mz);
+        if (d < dMin) { dMin = d; releve = q; }
+      }
+      if (releve) {
+        f = [
+          Math.max(0.82, Math.min(1.2, ((releve.c >> 16) & 255) / baseKind[0])),
+          Math.max(0.82, Math.min(1.2, ((releve.c >> 8) & 255) / baseKind[1])),
+          Math.max(0.82, Math.min(1.2, (releve.c & 255) / baseKind[2])),
+        ];
+      }
+    }
     while (roadCol.length < roadPos.length) roadCol.push(f[0], f[1], f[2]);
   };
   const pathPos = [], pathUv = [], pathNrm = [];
@@ -701,7 +732,7 @@ export function buildWorld(scene, data) {
         const troncon = r.pts.slice(debut, i + 1);
         const rev = revSeg[debut];
         if (rev === 'pave') ribbon(troncon, r.width, ROAD_Y, pavePos, paveUv, paveNrm, relief);
-        else if (rev === 'route') { ribbon(troncon, r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief); teinterRoute(r.kind); }
+        else if (rev === 'route') { ribbon(troncon, r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief); teinterRoute(r.kind, troncon); }
         else ribbon(troncon, r.width, ROAD_Y - 0.03, pathPos, pathUv, pathNrm, relief);
         debut = i;
       }
@@ -718,7 +749,7 @@ export function buildWorld(scene, data) {
       // voiture le franchit sans que le terrain ait besoin d'être creusé.
       ribbon(r.pts, r.width, ROAD_Y, roadPos, roadUv, roadNrm, relief,
         r.bridge ? 0.85 : 0);
-      teinterRoute(r.kind);
+      teinterRoute(r.kind, r.pts);
     } else {
       ribbon(r.pts, r.width, ROAD_Y - 0.03, pathPos, pathUv, pathNrm, relief);
     }
@@ -1080,9 +1111,11 @@ export function buildWorld(scene, data) {
         const px2 = cx + ux * uc + vx * vc, pz2 = cz + uz * uc + vz * vc;
         if (!pointInPoly(px2, pz2, p.pts)) continue;
         const graine = Math.abs(px2 * 13.7 + pz2 * 29.3);
-        // Une place sur deux environ reste libre : un parking plein comme un
-        // parking vide se remarquent tous les deux comme artificiels.
-        if (hash(graine) > 0.55) continue;
+        // Une place sur deux environ reste libre en périphérie ; dans le
+        // corridor commerçant du centre, les panoramiques montrent l'épi
+        // presque plein en journée.
+        const occupation = Math.hypot(px2, pz2) < 230 ? 0.78 : 0.55;
+        if (hash(graine) > occupation) continue;
         placesEpi.push({
           x: px2, z: pz2,
           y: (relief ? relief.hauteurRoute(px2, pz2) : 0) + ROAD_Y,
@@ -1322,19 +1355,37 @@ export function buildWorld(scene, data) {
   // Panoramax rectifiée existe (scripts/panoramax-facades-photo.mjs) sont
   // plaqués avec la photo réelle au lieu du mur procédural. Un jeu de buffers
   // par atlas, pour un appel de dessin par atlas.
+  // Deux manifestes fusionnés : le placage général (une façade par bâtiment,
+  // toute la zone urbanisée) et le placage HD du corridor commerçant
+  // (plusieurs façades par bâtiment, enseignes lisibles), qui PRIME quand les
+  // deux couvrent la même arête. Clé : bâtiment -> arête -> case d'atlas.
   const photosFacades = new Map();
-  for (const f of data.facadesPhoto?.facades ?? []) photosFacades.set(f.i, f);
   const photoBufs = [];
   const atlasFacades = [];
-  if (photosFacades.size && data.facadesPhoto?.atlas) {
-    const loader = new THREE.TextureLoader();
-    for (let a = 0; a < data.facadesPhoto.atlas; a++) {
-      const t = loader.load(`/textures/facades-atlas-${a}.jpg`);
+  const loader = new THREE.TextureLoader();
+  const chargerAtlas = (prefixe, nombre) => {
+    const base = atlasFacades.length;
+    for (let a = 0; a < nombre; a++) {
+      const t = loader.load(`/textures/${prefixe}-${a}.jpg`);
       t.colorSpace = THREE.SRGBColorSpace;
       t.anisotropy = anisotropie();
       atlasFacades.push(t);
       photoBufs.push({ pos: [], uv: [] });
     }
+    return base;
+  };
+  const fusionner = (manifeste, base) => {
+    for (const f of manifeste?.facades ?? []) {
+      let parArete = photosFacades.get(f.i);
+      if (!parArete) photosFacades.set(f.i, parArete = new Map());
+      parArete.set(f.k, { ...f, a: f.a + base });
+    }
+  };
+  if (data.facadesPhoto?.atlas) {
+    fusionner(data.facadesPhoto, chargerAtlas('facades-atlas', data.facadesPhoto.atlas));
+  }
+  if (data.facadesCentre?.atlas) {
+    fusionner(data.facadesCentre, chargerAtlas('facades-centre', data.facadesCentre.atlas));
   }
   const roofPos = [], roofCol = [], roofUv = [];
   // Superstructures de toiture : souches de cheminée, lucarnes, blocs de
@@ -1558,7 +1609,7 @@ export function buildWorld(scene, data) {
     // couleur, pas un appareil de pierre : la pierre et le galet sont presque
     // gris. On mesure la saturation sur la teinte finale du mur.
     const satMur = Math.max(wr, wg, wb) - Math.min(wr, wg, wb);
-    const photoFacade = photosFacades.get(b.graine);
+    const photosBati = photosFacades.get(b.graine);
     const enPierre = satMur < 0.09
       && (b.murs === 'pierre' || b.murs === 'meuliere'
         || (b.grain != null && b.grain > 33));
@@ -1607,7 +1658,8 @@ export function buildWorld(scene, data) {
       // Arête couverte par une photo rectifiée : le pan reçoit la photo
       // entière, sans fenêtres ni volets procéduraux (la photo les contient
       // déjà, aux vraies positions). La collision reste identique.
-      if (photoFacade && i === photoFacade.k && photoBufs[photoFacade.a]) {
+      const photoFacade = photosBati?.get(i);
+      if (photoFacade && photoBufs[photoFacade.a]) {
         const bufs = photoBufs[photoFacade.a];
         bufs.pos.push(
           x1, BASE_Y, z1, x2, BASE_Y, z2, x2, top, z2,
