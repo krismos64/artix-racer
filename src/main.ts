@@ -2,20 +2,23 @@ import {
   CascadedShadowGenerator,
   Color3,
   Color4,
-  CubeTexture,
   DefaultRenderingPipeline,
   DirectionalLight,
   Engine,
   HemisphericLight,
   ImageProcessingConfiguration,
+  Mesh,
   MeshBuilder,
   PBRMaterial,
+  ReflectionProbe,
+  RenderTargetTexture,
   Scene,
-  ShaderMaterial,
   ShadowGenerator,
+  SSAO2RenderingPipeline,
   UniversalCamera,
   Vector3,
 } from '@babylonjs/core';
+import { SkyMaterial } from '@babylonjs/materials';
 import './style.css';
 import { ArcadeAudio } from './audio';
 import { ArcadeCar, KeyboardInput } from './car';
@@ -73,46 +76,38 @@ async function loadJson<T>(name: string, required = false): Promise<T | null> {
   }
 }
 
-function createSky(scene: Scene): void {
-  const sky = MeshBuilder.CreateSphere('sky', { diameter: 4200, segments: 24 }, scene);
-  const material = new ShaderMaterial('sky-gradient', scene, {
-    vertexSource: `
-      precision highp float;
-      attribute vec3 position;
-      uniform mat4 worldViewProjection;
-      varying vec3 direction;
-      void main(void) {
-        direction = normalize(position);
-        gl_Position = worldViewProjection * vec4(position, 1.0);
-      }
-    `,
-    fragmentSource: `
-      precision highp float;
-      varying vec3 direction;
-      void main(void) {
-        float h = clamp(direction.y * 0.5 + 0.5, 0.0, 1.0);
-        vec3 horizon = vec3(0.72, 0.82, 0.89);
-        vec3 zenith = vec3(0.16, 0.40, 0.68);
-        vec3 color = mix(horizon, zenith, smoothstep(0.35, 0.92, h));
-        float haze = pow(1.0 - abs(direction.y), 6.0);
-        color = mix(color, vec3(0.88, 0.82, 0.72), haze * 0.30);
-        vec3 sunDirection = normalize(vec3(-0.42, 0.26, 0.78));
-        float sun = pow(max(dot(direction, sunDirection), 0.0), 420.0);
-        float glow = pow(max(dot(direction, sunDirection), 0.0), 18.0);
-        color += vec3(1.0, 0.66, 0.25) * sun * 1.7;
-        color += vec3(0.35, 0.18, 0.05) * glow * 0.23;
-        gl_FragColor = vec4(color, 1.0);
-      }
-    `,
-  }, { attributes: ['position'], uniforms: ['worldViewProjection'] });
+// Direction du soleil, partagée entre la lumière directionnelle, le ciel
+// analytique et la sonde d'environnement : les trois doivent raconter la même
+// heure, sans quoi les ombres contredisent le ciel.
+const SUN_DIRECTION = new Vector3(-.52, -.83, .34).normalize();
+
+function createSky(scene: Scene): Mesh {
+  // Ciel analytique officiel (modèle de Preetham) plutôt qu'un gradient peint :
+  // la diffusion atmosphérique donne le voile de l'horizon, le bleu profond du
+  // zénith et le halo solaire au bon endroit, celui de la lumière qui projette
+  // les ombres. L'ancien shader avait un soleil peint en dur, déconnecté de la
+  // DirectionalLight.
+  const sky = MeshBuilder.CreateBox('sky', { size: 4200 }, scene);
+  const material = new SkyMaterial('sky-analytique', scene);
   material.backFaceCulling = false;
   material.disableDepthWrite = true;
+  material.useSunPosition = true;
+  material.sunPosition = SUN_DIRECTION.scale(-1000);
+  // Voile léger d'une journée d'été béarnaise : l'air n'y est jamais aussi sec
+  // qu'en montagne, l'horizon blanchit sensiblement.
+  material.turbidity = 5.5;
+  material.rayleigh = 1.6;
+  material.mieCoefficient = .006;
+  material.mieDirectionalG = .8;
+  material.luminance = .35;
   sky.material = material;
   sky.infiniteDistance = true;
   sky.isPickable = false;
+  sky.applyFog = false;
+  return sky;
 }
 
-function createBackdrop(scene: Scene): void {
+function createBackdrop(scene: Scene): Mesh[] {
   const mountainMaterial = new PBRMaterial('pyrenees-material', scene);
   mountainMaterial.albedoColor = Color3.FromHexString('#536d78');
   mountainMaterial.emissiveColor = Color3.FromHexString('#14232a');
@@ -153,30 +148,32 @@ function createBackdrop(scene: Scene): void {
       cloud.infiniteDistance = true;
     }
   });
+  return [mountains];
 }
 
-function createEnvironment(scene: Scene): void {
-  const face = (top: string, bottom: string): string => {
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = 32;
-    const context = canvas.getContext('2d')!;
-    const gradient = context.createLinearGradient(0, 0, 0, 32);
-    gradient.addColorStop(0, top);
-    gradient.addColorStop(.58, bottom);
-    gradient.addColorStop(1, '#77786d');
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, 32, 32);
-    return canvas.toDataURL('image/png');
-  };
-  const horizon = face('#6e9dd1', '#d8e1e5');
-  const zenith = face('#3771ad', '#8db2d7');
-  const ground = face('#9b9b8f', '#494b43');
-  scene.environmentTexture = CubeTexture.CreateFromImages(
-    [horizon, zenith, horizon, horizon, ground, horizon],
-    scene,
-    false,
-  );
-  scene.environmentIntensity = .72;
+function createEnvironment(scene: Scene, probeMeshes: Mesh[]): void {
+  // L'éclairage d'ambiance PBR (IBL) est rendu depuis le vrai ciel plutôt que
+  // depuis trois gradients de 32 pixels : carrosseries, vitrages et toitures
+  // reflètent ainsi exactement le ciel affiché, avec le sol de prairie en
+  // contre-jour. Rendu une seule fois au démarrage, le soleil étant fixe.
+  const horizonGround = MeshBuilder.CreateDisc('horizon-ground', { radius: 2400, tessellation: 48 }, scene);
+  horizonGround.rotation.x = Math.PI / 2;
+  horizonGround.position.y = -6;
+  const groundMaterial = new PBRMaterial('horizon-ground-material', scene);
+  groundMaterial.albedoColor = Color3.FromHexString('#7d8a5c');
+  groundMaterial.metallic = 0;
+  groundMaterial.roughness = 1;
+  groundMaterial.backFaceCulling = false;
+  groundMaterial.freeze();
+  horizonGround.material = groundMaterial;
+  horizonGround.isPickable = false;
+
+  const probe = new ReflectionProbe('environnement', 128, scene, true);
+  probe.position.set(0, 14, 0);
+  for (const mesh of [...probeMeshes, horizonGround]) probe.renderList!.push(mesh);
+  probe.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
+  scene.environmentTexture = probe.cubeTexture;
+  scene.environmentIntensity = .85;
 }
 
 async function start(): Promise<void> {
@@ -205,16 +202,16 @@ async function start(): Promise<void> {
   scene.imageProcessingConfiguration.exposure = .94;
   scene.imageProcessingConfiguration.contrast = 1.18;
 
-  createSky(scene);
-  createBackdrop(scene);
-  createEnvironment(scene);
+  const sky = createSky(scene);
+  const backdrop = createBackdrop(scene);
+  createEnvironment(scene, [sky, ...backdrop]);
 
   const ambient = new HemisphericLight('ambient', new Vector3(.15, 1, .1), scene);
   ambient.diffuse = new Color3(.76, .84, .92);
   ambient.groundColor = new Color3(.28, .31, .25);
   ambient.intensity = .72;
 
-  const sun = new DirectionalLight('sun', new Vector3(-.52, -.83, .34), scene);
+  const sun = new DirectionalLight('sun', SUN_DIRECTION.clone(), scene);
   sun.diffuse = new Color3(1, .92, .8);
   sun.intensity = 1.28;
   const shadow = new CascadedShadowGenerator(1536, sun);
@@ -245,6 +242,15 @@ async function start(): Promise<void> {
   scene.imageProcessingConfiguration.vignetteWeight = 1.1;
   scene.imageProcessingConfiguration.vignetteStretch = .25;
   scene.imageProcessingConfiguration.vignetteColor = new Color4(.025, .035, .045, 1);
+
+  // Occlusion ambiante en profil Qualité : c'est elle qui assoit les bâtiments
+  // au sol et creuse les angles de rue, la zone la plus « flottante » du rendu
+  // sans elle. Créée détachée, attachée par applyQuality.
+  const ssao = new SSAO2RenderingPipeline('ssao', scene, { ssaoRatio: .5, blurRatio: .5 }, []);
+  ssao.radius = 1.9;
+  ssao.totalStrength = 1.05;
+  ssao.samples = 12;
+  ssao.maxZ = 260;
 
   await progress(12, 'Chargement des données réelles d’Artix…');
   const [rawOsm, rawBati, rawPoi, rawRoofs, rawRoofsLegacy, rawFacades] = await Promise.all([
@@ -309,6 +315,11 @@ async function start(): Promise<void> {
     camera.maxZ = profile.fogEnd + 250;
     sun.shadowEnabled = profile.shadows;
     pipeline.bloomEnabled = next !== 'performance';
+    if (next === 'quality') {
+      scene.postProcessRenderPipelineManager.attachCamerasToRenderPipeline('ssao', camera);
+    } else {
+      scene.postProcessRenderPipelineManager.detachCamerasFromRenderPipeline('ssao', camera);
+    }
     world.setQuality(profile.chunkRadius, profile.vegetationDensity);
     traffic.setDensity(next === 'performance' ? .5 : next === 'balanced' ? .78 : 1);
     qualityEl.textContent = profile.label;

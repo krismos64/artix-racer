@@ -11,6 +11,7 @@
   "dependencies": {
     "@babylonjs/core": "^9.22.2",
     "@babylonjs/loaders": "^9.22.2",
+    "@babylonjs/materials": "^9.22.2",
     "earcut": "^3.0.2",
     "three": "^0.170.0"
   },
@@ -18,6 +19,7 @@
     "@cloudflare/vite-plugin": "1.37.1",
     "@types/earcut": "^3.0.0",
     "@types/three": "^0.170.0",
+    "sharp": "^0.35.3",
     "typescript": "^5.9.2",
     "vite": "^8.2.2"
   },
