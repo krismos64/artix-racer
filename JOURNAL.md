@@ -2,6 +2,26 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-25 (nuit) : musique, ambiances, éclairage nocturne, sols mesurés
+
+- Musique en boucle (music1.mp3, streaming, touche M).
+- Touche L : trois ambiances (midi, fin de journée dorée, nuit) : ciel,
+  brouillard, exposition, ombres et sonde IBL re-rendue à chaque bascule.
+- Nuit complète : phares SpotLight + optiques/feux émissifs (avant = +Z local
+  du châssis), lanternes émissives, pool de 6 lampes sodium recyclées sur les
+  foyers proches, fenêtres allumées. Plafond de lumières simultanées à 10
+  dans le bridge.
+- panoramax-sols.mjs : enrobé mesuré par type de voie (residential PLUS
+  sombre que secondary, la mesure bat l'intuition), 78 parkings classés
+  (20 stabilisé, 1 herbe), usure réelle de 140 passages piétons.
+- Rendu : vertex colors de chaussée par kind (écart relatif clampé ±14 %),
+  dalles de grave sur les aires stabilisées, passages piétons du blanc neuf
+  au gris effacé.
+- Piège : les nœuds de signalisation sont dans artix-poi.json sous la clé
+  `poi`, pas `elements`.
+- À ajuster en jouant : intensité des phares (55) et des lampes (18), portée
+  éventuellement.
+
 ## 2026-08-25 (soir) : détails de ville et placage photo
 
 - **Placage photo du centre-bourg** : 80 façades rectifiées en vraie
