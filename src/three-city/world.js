@@ -961,11 +961,22 @@ export function buildWorld(scene, data) {
   // bataille : traits et véhicules suivaient la normale au bord, donc 90°.
   //
   // Les cotes se déduisent ensuite de l'angle propre à chaque aire.
+  // Emprises des bâtiments modélisés à la main : aucune place générée dedans.
+  const emprisesInterdites = data.emprisesModelisees ?? [];
+  const dansEmpriseModelisee = (x, z) => emprisesInterdites.some((e) => pointInPoly(x, z, e.pts));
   for (const p of data.parkings ?? []) {
     if (p.station) continue;   // une station-service n'a pas de places marquées
     // Pas de peinture sur la grave compactée ni sur l'herbe : le marquage et
     // les places rangées n'existent que sur l'enrobé.
     if (classeAire(p) !== 'enrobe') continue;
+    // Le parking du Leclerc Express est modélisé EN DUR d'après l'orthophoto
+    // (parking.js) : l'aire OSM correspondante est écartée du générateur.
+    {
+      let acx = 0, acz = 0;
+      for (const [qx, qz] of p.pts) { acx += qx; acz += qz; }
+      acx /= p.pts.length; acz /= p.pts.length;
+      if (Math.hypot(acx - 44.4, acz + 66.7) < 45) continue;
+    }
     // Grand axe de l'aire, par analyse en composantes principales : les places
     // se rangent perpendiculairement à lui, comme sur un parking réel.
     let cx = 0, cz = 0;
@@ -1116,6 +1127,7 @@ export function buildWorld(scene, data) {
         // presque plein en journée.
         const occupation = Math.hypot(px2, pz2) < 230 ? 0.78 : 0.55;
         if (hash(graine) > occupation) continue;
+        if (dansEmpriseModelisee(px2, pz2)) continue;
         placesEpi.push({
           x: px2, z: pz2,
           y: (relief ? relief.hauteurRoute(px2, pz2) : 0) + ROAD_Y,

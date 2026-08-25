@@ -2421,6 +2421,35 @@ export function buildLandmarks(data, relief, roadY) {
       });
     }
 
+    // Abri caddies du Leclerc Express, contre la façade côté parking : toit
+    // translucide sur poteaux et file de chariots imbriqués.
+    {
+      const abri = new THREE.Group();
+      const metalC = new THREE.MeshStandardMaterial({ color: 0x8f959a, roughness: 0.35, metalness: 0.6 });
+      const toitC = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.08, 1.7),
+        new THREE.MeshStandardMaterial({
+          color: 0xdfe4e6, roughness: 0.25, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+        }));
+      toitC.position.y = 2.15;
+      abri.add(toitC);
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          const poteauC = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.15, 8), metalC);
+          poteauC.position.set(sx * 1.95, 1.07, sz * 0.75);
+          abri.add(poteauC);
+        }
+      }
+      // File de caddies : petites cages métalliques imbriquées.
+      for (let k = 0; k < 6; k++) {
+        const caddie = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.5, 0.62), metalC);
+        caddie.position.set(-1.7 + k * 0.62, 0.62, 0);
+        abri.add(caddie);
+      }
+      const solA = (relief ? relief.hauteurRoute(38, -72.5) : 0) + roadY;
+      abri.position.set(38, solA, -72.5);
+      group.add(abri);
+    }
+
     // Préaux : écoles élémentaires Jean Moulin et Jean Sarrailh, posés côté
     // cour, à l'écart de la rue.
     for (const [px, pz, capP] of [[-70, -31, 0.3], [352, -715, 1.2]]) {

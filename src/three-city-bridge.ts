@@ -447,7 +447,9 @@ export async function buildFaithfulArtix(
   // Poteaux triangulés depuis les panoramiques : positions réelles des
   // supports aériens, consommées par buildSignage.
   data.poteauxReels = sources.poteaux ?? null;
+  // Renseigné après parseBDTopo, plus bas.
   const bdtopo = (parseBDTopo as any)(sources.buildings, roofs, sources.facades, sources.panoramax) as AnyRecord;
+  data.emprisesModelisees = bdtopo.emprisesModelisees ?? [];
   data.buildings = removeModeledBuildingDuplicates(data, bdtopo.batiments);
   data.altRef = bdtopo.altRef;
 

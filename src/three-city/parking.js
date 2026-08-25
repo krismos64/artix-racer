@@ -122,6 +122,26 @@ function trouverBandes(data) {
       largeurVoie: 7,
     });
   }
+  // Parking du Leclerc Express, relevé sur l'ORTHOPHOTO IGN : deux grandes
+  // double-rangées est-ouest dos à dos entre le magasin et la rue, places
+  // perpendiculaires, allées de desserte entre elles. L'aire OSM
+  // correspondante est écartée du générateur automatique (world.js).
+  const LECLERC = [
+    { x1: 27, z1: -57.5, x2: 62, z2: -57.5, nx: 0, nz: -1 },
+    { x1: 27, z1: -57.5, x2: 62, z2: -57.5, nx: 0, nz: 1 },
+    { x1: 27, z1: -43, x2: 62, z2: -43, nx: 0, nz: -1 },
+    { x1: 27, z1: -43, x2: 62, z2: -43, nx: 0, nz: 1 },
+  ];
+  for (const r of LECLERC) {
+    const len = Math.hypot(r.x2 - r.x1, r.z2 - r.z1);
+    bandes.push({
+      x1: r.x1, z1: r.z1, x2: r.x2, z2: r.z2,
+      ux: (r.x2 - r.x1) / len, uz: (r.z2 - r.z1) / len,
+      nx: r.nx, nz: r.nz, len,
+      // Dos à dos sur la ligne de fond commune : pas de retrait.
+      largeurVoie: 0.2,
+    });
+  }
   return bandes;
 }
 

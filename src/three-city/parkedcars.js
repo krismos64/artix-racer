@@ -109,7 +109,13 @@ function indexerBatiments(buildings) {
 function trouverPlaces(data, relief, roadY, passages = []) {
   const places = [];
   const carrefours = noeudsCarrefour(data.roads);
-  const dansBatiment = indexerBatiments(data.buildings);
+  // Les emprises des bâtiments modélisés à la main (Leclerc, gare, Poste…)
+  // sont retirées de `buildings` mais restent des obstacles : sans elles, les
+  // voitures se garaient à moitié dans la vitrine du Leclerc Express.
+  const dansBatiment = indexerBatiments([
+    ...(data.buildings ?? []),
+    ...(data.emprisesModelisees ?? []),
+  ]);
 
   // Grille des points à éviter (carrefours et passages piétons), pour ne pas
   // faire 600 × 800 comparaisons.

@@ -104,6 +104,10 @@ export const BATIMENTS_MODELISES = new Set([
 
 export function parseBDTopo(raw, toitures = null, facades = null, panoramax = null) {
   const batiments = [];
+  // Emprises des bâtiments remplacés par un modèle à la main : retirées du
+  // bâti ordinaire, elles doivent RESTER opposables au stationnement
+  // automatique, sans quoi les voitures se garent dans le Leclerc.
+  const emprisesModelisees = [];
   let altSomme = 0, altN = 0;
 
   const parIndex = new Map();
@@ -172,7 +176,10 @@ export function parseBDTopo(raw, toitures = null, facades = null, panoramax = nu
     if (surface < 9) return;
 
     // Écarté : ce bâtiment est construit à la main dans `landmarks.js`.
-    if (BATIMENTS_MODELISES.has(i)) return;
+    if (BATIMENTS_MODELISES.has(i)) {
+      emprisesModelisees.push({ pts: contour });
+      return;
+    }
 
     // Hauteur : mesurée quand elle existe, sinon déduite des étages, sinon
     // estimée depuis l'emprise au sol.
@@ -214,7 +221,7 @@ export function parseBDTopo(raw, toitures = null, facades = null, panoramax = nu
 
   // Altitude moyenne du bourg : sert de référence pour poser le terrain.
   const altRef = altN ? altSomme / altN : 0;
-  return { batiments, altRef };
+  return { batiments, altRef, emprisesModelisees };
 }
 
 // Choisit la teinte de façade d'un bâtiment d'après son matériau réel.
