@@ -2,6 +2,23 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 15) : McDo parfait, Leclerc Drive, station U colorée
+
+- **McDonald's refondu sur Street View mars 2026** : soubassement en
+  parement de pierre gris clair (les lattes brunes du premier jet étaient
+  fausses), attique passé en PANNEAUX alternés corten / vert très foncé /
+  blanc, M jaunes sur les panneaux blancs, « McDonald's » en lettres grises
+  argentées sur le corten, meneaux noirs de la bande vitrée, photinias
+  rouges et verts en pied de façade, jardinière rouge.
+- **E.Leclerc Drive** (halle 589, rue Jean Monnet) : attique brun très
+  foncé filant, casquette ORANGE de l'entrée, sas blanc, enseignes
+  « E.Leclerc DRIVE » (carré bleu, DRIVE orange) sur les QUATRE façades de
+  la boîte orientée (demandé), plus « Location E.Leclerc » au rond orange.
+- **Station Super U refaite** : l'auvent blanc à chant rouge du premier jet
+  ne correspondait pas : le vrai a un bandeau de LATTES BOIS assorti au
+  magasin. Ajoutés : îlots de pompes blancs à flanc vert, local AdBlue à
+  bande verte, totem de prix à tête U rouge.
+
 ## 2026-08-26 (suite 14) : deuxième tournée Street View
 
 - **Crèche municipale + Bibliothèque Pour Tous EN DUR** (bât 2013 retiré) :

@@ -1393,7 +1393,7 @@ function construireDevanturesPOI(data, relief, roadY) {
     'Auberge du Parc', 'Gendarmerie nationale',
     'Intermarché', 'Leader Price', 'Crèche Municipale', 'Calandreta Artics',
     "Pizz'Artix", 'Maison de la santé', 'Gamm Vert', 'Mr.Bricolage', 'Action',
-    'CERFRANCE ADOUR OCEAN', 'Bibliothèque Pour Tous']);
+    'CERFRANCE ADOUR OCEAN', 'Bibliothèque Pour Tous', 'E.Leclerc Drive']);
   const palettes = ['#9b4934', '#315d68', '#4f704f', '#7d5935', '#68435f', '#285b86'];
 
   for (const e of commerces) {
@@ -3266,25 +3266,64 @@ function construireSuperU(sol) {
     }
   }
 
-  // Station-service Super U au bord de la voie : auvent blanc à chant rouge
-  // sur quatre fûts (POI fuel (1402, 559)).
+  // Station-service Super U derrière le McDonald's. Street View mars 2026 :
+  // auvent au BANDEAU DE LATTES BOIS (assorti au magasin), îlots de pompes,
+  // local AdBlue blanc à damier vert, totem de prix U.
   {
     const sx = 1402.2, sz = 559.2;
     const ySt = sol(sx, sz);
-    const auventS = new THREE.Mesh(new THREE.BoxGeometry(13, 0.5, 7),
-      new THREE.MeshStandardMaterial({ color: 0xf0efe8, roughness: 0.6 }));
-    auventS.position.set(sx, ySt + 4.6, sz);
+    const latteBois = new THREE.MeshStandardMaterial({ color: 0x9a7648, roughness: 0.85 });
+    const auventS = new THREE.Mesh(new THREE.BoxGeometry(14, 0.35, 8),
+      new THREE.MeshStandardMaterial({ color: 0xe8e6e0, roughness: 0.6 }));
+    auventS.position.set(sx, ySt + 4.7, sz);
     g.add(auventS);
-    const chant = new THREE.Mesh(new THREE.BoxGeometry(13.1, 0.5, 0.2),
-      new THREE.MeshStandardMaterial({ color: 0xcc0f2f, roughness: 0.5 }));
-    chant.position.set(sx, ySt + 4.6, sz - 3.55);
-    g.add(chant);
+    // Bandeau de lattes bois sur les quatre chants de l'auvent.
+    for (const [dx, dz, lx, lz] of [[0, -4.05, 14.1, 0.15], [0, 4.05, 14.1, 0.15], [-7.05, 0, 0.15, 8.1], [7.05, 0, 0.15, 8.1]]) {
+      const chant = new THREE.Mesh(new THREE.BoxGeometry(lx, 0.9, lz), latteBois);
+      chant.position.set(sx + dx, ySt + 4.7, sz + dz);
+      g.add(chant);
+    }
     for (const [dx, dz] of [[-5, -2.4], [5, -2.4], [-5, 2.4], [5, 2.4]]) {
-      const fut = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 4.4, 10),
+      const fut = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 4.5, 10),
         new THREE.MeshStandardMaterial({ color: 0x9a9a96, roughness: 0.5, metalness: 0.4 }));
-      fut.position.set(sx + dx, ySt + 2.2, sz + dz);
+      fut.position.set(sx + dx, ySt + 2.25, sz + dz);
       g.add(fut);
     }
+    // Îlots de pompes : blocs blancs à flanc vert.
+    for (const dx of [-3, 3]) {
+      const ilot = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.18, 5),
+        new THREE.MeshStandardMaterial({ color: 0xc9c7c0, roughness: 0.9 }));
+      ilot.position.set(sx + dx, ySt + 0.09, sz);
+      g.add(ilot);
+      for (const dz of [-1.4, 1.4]) {
+        const pompe = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.7, 0.5),
+          new THREE.MeshStandardMaterial({ color: 0xefeee8, roughness: 0.55 }));
+        pompe.position.set(sx + dx, ySt + 1.03, sz + dz);
+        g.add(pompe);
+        const flanc = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.5, 0.52),
+          new THREE.MeshStandardMaterial({ color: 0x4a9c3a, roughness: 0.6 }));
+        flanc.position.set(sx + dx, ySt + 1.75, sz + dz);
+        g.add(flanc);
+      }
+    }
+    // Local AdBlue : cube blanc à bande damier verte.
+    const adblue = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.2, 2),
+      new THREE.MeshStandardMaterial({ color: 0xefeee8, roughness: 0.7 }));
+    adblue.position.set(sx + 10, ySt + 1.1, sz + 4);
+    g.add(adblue);
+    const damier = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.4, 2.05),
+      new THREE.MeshStandardMaterial({ color: 0x4a9c3a, roughness: 0.6 }));
+    damier.position.set(sx + 10, ySt + 0.55, sz + 4);
+    g.add(damier);
+    // Totem de prix : caisson blanc à tête U rouge.
+    const totem = new THREE.Mesh(new THREE.BoxGeometry(1.4, 3.4, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0xf2f1ec, roughness: 0.6 }));
+    totem.position.set(sx - 9, ySt + 1.7, sz - 4);
+    g.add(totem);
+    const teteU = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.9, 0.42),
+      new THREE.MeshStandardMaterial({ color: 0xcc0f2f, roughness: 0.5 }));
+    teteU.position.set(sx - 9, ySt + 3.85, sz - 4);
+    g.add(teteU);
   }
 
   g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
@@ -3299,22 +3338,51 @@ function construireSuperU(sol) {
 // vers le parking et le rond-point.
 function construireMcDo() {
   const g = new THREE.Group();
-  const L = 27.4, PROF = 19.1, H_SOUB = 1.0, H_VITRE = 1.7, H_ATTIQUE = 1.5;
-  const latte = new THREE.MeshStandardMaterial({ color: 0x6a5644, roughness: 0.85 });
-  const noir = new THREE.MeshStandardMaterial({ color: 0x2b2b2e, roughness: 0.7 });
+  const L = 27.4, PROF = 19.1, H_SOUB = 1.0, H_VITRE = 1.7, H_ATTIQUE = 1.8;
+  // Street View mars 2026 : le soubassement est un parement de pierre gris
+  // clair (pas des lattes), l'attique est fait de PANNEAUX alternés corten,
+  // vert très foncé et blanc, portant les M jaunes et le lettrage gris.
+  const pierre = new THREE.MeshStandardMaterial({ color: 0xb8b5ac, roughness: 0.9 });
+  const noir = new THREE.MeshStandardMaterial({ color: 0x1f2a24, roughness: 0.7 });
   const vitre = new THREE.MeshStandardMaterial({ color: 0x262c31, roughness: 0.2, metalness: 0.1 });
   const blanc = new THREE.MeshStandardMaterial({ color: 0xf0efe8, roughness: 0.6 });
+  const corten = new THREE.MeshStandardMaterial({ color: 0x8a4a30, roughness: 0.8 });
 
-  // Corps : soubassement latté, bande vitrée filante, attique noir.
-  const soub = new THREE.Mesh(new THREE.BoxGeometry(L, H_SOUB, PROF), latte);
+  const soub = new THREE.Mesh(new THREE.BoxGeometry(L, H_SOUB, PROF), pierre);
   soub.position.y = H_SOUB / 2;
   g.add(soub);
   const cVitre = new THREE.Mesh(new THREE.BoxGeometry(L - 0.2, H_VITRE, PROF - 0.2), vitre);
   cVitre.position.y = H_SOUB + H_VITRE / 2;
   g.add(cVitre);
+  // Meneaux noirs de la bande vitrée, côté parking.
+  for (let k = 0; k < 8; k++) {
+    const meneau = new THREE.Mesh(new THREE.BoxGeometry(0.1, H_VITRE, 0.08),
+      new THREE.MeshStandardMaterial({ color: 0x17181a, roughness: 0.5 }));
+    meneau.position.set(-L / 2 + 2.2 + k * (L - 4.4) / 7, H_SOUB + H_VITRE / 2, -PROF / 2 - 0.02);
+    g.add(meneau);
+  }
   const attique = new THREE.Mesh(new THREE.BoxGeometry(L, H_ATTIQUE, PROF), noir);
   attique.position.y = H_SOUB + H_VITRE + H_ATTIQUE / 2;
   g.add(attique);
+  // Panneaux d'attique plaqués : corten et blancs, sur les faces nord (-Z,
+  // parking) et est (+X, route).
+  const yAtt = H_SOUB + H_VITRE + H_ATTIQUE / 2;
+  const panneauxAttique = [
+    // [face, décalage le long de la façade, largeur, matériau]
+    ['N', -8.5, 6, corten], ['N', -2.5, 3.2, blanc], ['N', 6, 9, corten],
+    ['E', -5, 4, corten], ['E', 1.5, 3.2, blanc], ['E', 6.5, 4.5, corten],
+  ];
+  for (const [face, du, larg, mat] of panneauxAttique) {
+    const pan = new THREE.Mesh(new THREE.PlaneGeometry(larg, H_ATTIQUE - 0.1), mat);
+    if (face === 'N') {
+      pan.position.set(du, yAtt, -PROF / 2 - 0.04);
+      pan.rotation.y = Math.PI;
+    } else {
+      pan.position.set(L / 2 + 0.04, yAtt, du);
+      pan.rotation.y = Math.PI / 2;
+    }
+    g.add(pan);
+  }
 
   // Toit : deux pans asymétriques décalés, noirs, soulignés d'une rive
   // blanche, la silhouette signature du pavillon.
@@ -3330,39 +3398,66 @@ function construireMcDo() {
     g.add(rive);
   }
 
-  // Enseignes de l'attique : lettres blanches et arches jaunes, côté parking
-  // (nord, -Z local) et côté route (est, +X local).
-  const texMcDo = (() => {
+  // M jaunes sur les panneaux blancs, « McDonald's » en lettres grises
+  // argentées sur les pans corten (comme sur les photos).
+  const texM = (() => {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 256;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, 256, 256);
+    ctx.fillStyle = '#f2c200';
+    ctx.font = 'bold 250px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('m', 128, 96);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const texLettrage = (() => {
     const c = document.createElement('canvas');
     c.width = 1024; c.height = 128;
     const ctx = c.getContext('2d');
-    ctx.fillStyle = '#2b2b2e';
-    ctx.fillRect(0, 0, 1024, 128);
-    // Arches : deux arcs de parabole pleins.
-    ctx.fillStyle = '#f2c200';
-    ctx.font = 'bold 150px Helvetica, Arial, sans-serif';
+    ctx.clearRect(0, 0, 1024, 128);
+    ctx.fillStyle = '#c9c7c2';
+    ctx.font = 'bold 92px Helvetica, Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('m', 140, 52);
-    ctx.fillStyle = '#f2efe8';
-    ctx.font = 'bold 74px Helvetica, Arial, sans-serif';
-    ctx.fillText("McDonald's", 560, 66);
+    ctx.fillText("McDonald's", 512, 68);
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = anisotropie();
     return t;
   })();
   const yEns = H_SOUB + H_VITRE + H_ATTIQUE / 2;
-  const ensN = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.15),
-    new THREE.MeshStandardMaterial({ map: texMcDo, roughness: 0.5 }));
-  ensN.position.set(0, yEns, -PROF / 2 - 0.02);
-  ensN.rotation.y = Math.PI;
-  g.add(ensN);
-  const ensE = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.15),
-    new THREE.MeshStandardMaterial({ map: texMcDo, roughness: 0.5 }));
-  ensE.position.set(L / 2 + 0.02, yEns, 0);
-  ensE.rotation.y = Math.PI / 2;
-  g.add(ensE);
+  const matM = new THREE.MeshStandardMaterial({ map: texM, roughness: 0.5, transparent: true, alphaTest: 0.2 });
+  const matLettrage = new THREE.MeshStandardMaterial({ map: texLettrage, roughness: 0.4, metalness: 0.3, transparent: true, alphaTest: 0.2 });
+  for (const [face, du] of [['N', -2.5], ['E', 1.5]]) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), matM);
+    if (face === 'N') { m.position.set(du, yEns, -PROF / 2 - 0.08); m.rotation.y = Math.PI; }
+    else { m.position.set(L / 2 + 0.08, yEns, du); m.rotation.y = Math.PI / 2; }
+    g.add(m);
+  }
+  for (const [face, du] of [['N', 6], ['E', 6.5]]) {
+    const lett = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 0.95), matLettrage);
+    if (face === 'N') { lett.position.set(du, yEns, -PROF / 2 - 0.08); lett.rotation.y = Math.PI; }
+    else { lett.position.set(L / 2 + 0.08, yEns, du); lett.rotation.y = Math.PI / 2; }
+    g.add(lett);
+  }
+  // Photinias rouges et verts en pied de façade, jardinière rouge : la
+  // végétation d'enseigne du parvis (Street View).
+  for (const [dx, teinte, ech] of [[-9, 0xa83a2c, 1], [-5.5, 0x3f6d3f, 0.85], [-1.5, 0xa83a2c, 0.9], [3, 0x3f6d3f, 1], [7.5, 0xa83a2c, 0.8]]) {
+    const buisson = new THREE.Mesh(new THREE.SphereGeometry(0.75, 10, 8),
+      new THREE.MeshStandardMaterial({ color: teinte, roughness: 0.95 }));
+    buisson.scale.set(ech, 0.8 * ech, ech);
+    buisson.position.set(dx, 0.55, -PROF / 2 - 1.6);
+    g.add(buisson);
+  }
+  const jardiniere = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.7, 1.1),
+    new THREE.MeshStandardMaterial({ color: 0xc5334a, roughness: 0.6 }));
+  jardiniere.position.set(-12.5, 0.35, -PROF / 2 - 2.2);
+  g.add(jardiniere);
 
   // Tour de jeux : volume rouge-orangé à panneaux, toit cintré gris, hublot
   // et toboggan sombre : le repère des enfants, très visible de la route.
@@ -3396,6 +3491,110 @@ function construireMcDo() {
     tour.add(toboggan);
     tour.position.set(L / 2 - 2.5, 0, -PROF / 2 - 5.2);
     g.add(tour);
+  }
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Décor du E.Leclerc Drive, rue Jean Monnet (halle 589, laissée au bâti
+// ordinaire). Street View mai 2026 : bardage blanc nervuré, ATTIQUE brun
+// très foncé filant, casquette ORANGE à l'entrée, enseignes « E.Leclerc
+// DRIVE » (logo bleu, DRIVE orange) : posées ici sur les QUATRE façades de
+// la boîte orientée, plus « Location E.Leclerc » sur la façade principale.
+function construireLeclercDrive(sol) {
+  const g = new THREE.Group();
+  const CX = 1047.3, CZ = 676.3;
+  const U = [0.874, 0.486], V = [-0.486, 0.874];
+  const DEMI_L = 34.3, DEMI_l = 23.9;
+  const H = 4.1;
+  const yBase = sol(CX, CZ);
+  const brunFonce = new THREE.MeshStandardMaterial({ color: 0x3a3028, roughness: 0.75 });
+
+  const texDrive = (() => {
+    const c = document.createElement('canvas');
+    c.width = 768; c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#3a3028';
+    ctx.fillRect(0, 0, 768, 128);
+    // Carré bleu E.Leclerc, puis DRIVE en orange.
+    ctx.fillStyle = '#1d50a8';
+    ctx.fillRect(40, 18, 300, 92);
+    ctx.fillStyle = '#f2f1ec';
+    ctx.font = 'bold 58px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('E.Leclerc', 190, 66);
+    ctx.fillStyle = '#e87820';
+    ctx.font = 'bold 72px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('DRIVE', 380, 68);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const matDrive = new THREE.MeshStandardMaterial({ map: texDrive, roughness: 0.5 });
+
+  // Une enseigne au milieu de chaque façade de la boîte orientée, normale
+  // vers l'extérieur.
+  const faces = [
+    { mx: CX + U[0] * DEMI_L, mz: CZ + U[1] * DEMI_L, n: U },
+    { mx: CX - U[0] * DEMI_L, mz: CZ - U[1] * DEMI_L, n: [-U[0], -U[1]] },
+    { mx: CX + V[0] * DEMI_l, mz: CZ + V[1] * DEMI_l, n: V },
+    { mx: CX - V[0] * DEMI_l, mz: CZ - V[1] * DEMI_l, n: [-V[0], -V[1]] },
+  ];
+  for (const f of faces) {
+    const ens = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 1.1), matDrive);
+    ens.position.set(f.mx + f.n[0] * 0.15, yBase + H - 0.8, f.mz + f.n[1] * 0.15);
+    ens.rotation.y = Math.atan2(f.n[0], f.n[1]);
+    g.add(ens);
+  }
+
+  // Façade principale sud-ouest (+V) : attique brun filant, casquette orange
+  // au-dessus de l'entrée, sas blanc, enseigne Location.
+  {
+    const f = faces[2];
+    const rot = Math.atan2(f.n[0], f.n[1]);
+    const attique = new THREE.Mesh(new THREE.BoxGeometry(36, 1.5, 0.3), brunFonce);
+    attique.position.set(f.mx + f.n[0] * 0.1, yBase + H - 0.75, f.mz + f.n[1] * 0.1);
+    attique.rotation.y = Math.atan2(-U[1], -U[0]);
+    g.add(attique);
+    const casquette = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.5, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0xe87820, roughness: 0.55 }));
+    casquette.position.set(f.mx + U[0] * 8 + f.n[0] * 0.7, yBase + 2.6, f.mz + U[1] * 8 + f.n[1] * 0.7);
+    casquette.rotation.y = Math.atan2(-U[1], -U[0]);
+    g.add(casquette);
+    const sas = new THREE.Mesh(new THREE.BoxGeometry(6, 3.2, 1.4),
+      new THREE.MeshStandardMaterial({ color: 0xefeee8, roughness: 0.6 }));
+    sas.position.set(f.mx - U[0] * 10 + f.n[0] * 0.6, yBase + 1.6, f.mz - U[1] * 10 + f.n[1] * 0.6);
+    sas.rotation.y = Math.atan2(-U[1], -U[0]);
+    g.add(sas);
+    const texLoc = (() => {
+      const c = document.createElement('canvas');
+      c.width = 512; c.height = 96;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#3a3028';
+      ctx.fillRect(0, 0, 512, 96);
+      ctx.fillStyle = '#e87820';
+      ctx.beginPath();
+      ctx.arc(60, 48, 32, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#f2f1ec';
+      ctx.font = 'bold 50px Helvetica, Arial, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Location', 120, 50);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = anisotropie();
+      return t;
+    })();
+    const ensLoc = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.85),
+      new THREE.MeshStandardMaterial({ map: texLoc, roughness: 0.5 }));
+    ensLoc.position.set(f.mx + U[0] * 8 + f.n[0] * 0.28, yBase + H - 0.75, f.mz + U[1] * 8 + f.n[1] * 0.28);
+    ensLoc.rotation.y = rot;
+    g.add(ensLoc);
   }
 
   g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
@@ -4391,6 +4590,9 @@ export function buildLandmarks(data, relief, roadY) {
       totemM.position.set(1412, solZC(1412, 507), 507);
       totemM.rotation.y = Math.atan2(-0.97, -0.26);
       group.add(totemM);
+      // E.Leclerc Drive : décor plaqué sur la halle 589, enseignes sur les
+      // quatre façades de la boîte orientée.
+      group.add(construireLeclercDrive(solZC));
       // Crédit Agricole : devanture sur l'arête mesurée du bâtiment
       // tertiaire 1479 (8 m, milieu (1262,84, 543,11), normale 2,48 rad),
       // bandeau anthracite à lettres vert enseigne.

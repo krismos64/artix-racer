@@ -722,7 +722,7 @@ export function buildSignage(data, relief, roadY) {
         'Auberge du Parc', 'Gendarmerie nationale',
         'Intermarché', 'Leader Price', 'Crèche Municipale', 'Calandreta Artics',
         "Pizz'Artix", 'Maison de la santé', 'Gamm Vert', 'Mr.Bricolage', 'Action',
-        'CERFRANCE ADOUR OCEAN', 'Bibliothèque Pour Tous'].includes(e.nom)) continue;
+        'CERFRANCE ADOUR OCEAN', 'Bibliothèque Pour Tous', 'E.Leclerc Drive'].includes(e.nom)) continue;
       // Bâtiment porteur : l'emprise dont une arête passe au plus près du
       // point OSM du commerce.
       let porteur = null, meilleure = 18;
