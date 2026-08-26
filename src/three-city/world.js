@@ -142,6 +142,176 @@ function analyserEmprise(pts, ax, az, px, pz) {
   };
 }
 
+// ---- Trottoirs à bordures du centre-bourg --------------------------------
+// Deux rubans latéraux surélevés de 12 cm le long des voies du bourg :
+// plateau gris-beige, chant de bordure clair côté chaussée, chant fermé
+// côté accotement. Même technique de bissectrices que `ribbon`, pour que
+// les virages restent d'un seul tenant. Les quads sont sautés près des
+// carrefours (le raccord y est fait par les passages piétons et les
+// bateaux), dans les aires de parking, et le long des bandes de
+// stationnement en dur qui jouxtent la chaussée.
+function construireTrottoirs(data, relief, group) {
+  const RAYON_BOURG = 380;
+  const LARG = 1.55, HAUT = 0.12, R_CARREFOUR = 7;
+  const KINDS = new Set(['residential', 'tertiary', 'unclassified', 'living_street', 'secondary']);
+
+  // Carrefours : points partagés par au moins deux voies carrossables,
+  // indexés en grille pour un test rapide par sommet.
+  const compte = new Map();
+  const cleC = (x, z) => `${Math.round(x)},${Math.round(z)}`;
+  for (const r of data.roads) {
+    if (!r.drivable) continue;
+    const vus = new Set();
+    for (const [x, z] of r.pts) {
+      const k = cleC(x, z);
+      if (vus.has(k)) continue;
+      vus.add(k);
+      compte.set(k, (compte.get(k) ?? 0) + 1);
+    }
+  }
+  const CELL = 24;
+  const grilleCarr = new Map();
+  for (const [k, n] of compte) {
+    if (n < 2) continue;
+    const [x, z] = k.split(',').map(Number);
+    const kg = `${Math.floor(x / CELL)},${Math.floor(z / CELL)}`;
+    if (!grilleCarr.has(kg)) grilleCarr.set(kg, []);
+    grilleCarr.get(kg).push([x, z]);
+  }
+  const presCarrefour = (x, z) => {
+    const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oz = -1; oz <= 1; oz++) {
+        for (const [px, pz] of grilleCarr.get(`${cx + ox},${cz + oz}`) ?? []) {
+          if (Math.hypot(px - x, pz - z) < R_CARREFOUR) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // Aires de parking : le trottoir ne les traverse pas.
+  const parkings = (data.parkings ?? []).map((q) => {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [x, z] of q.pts) {
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+      z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+    }
+    return { pts: q.pts, x0, x1, z0, z1 };
+  });
+  const dansParking = (x, z) => {
+    for (const q of parkings) {
+      if (x < q.x0 - 1 || x > q.x1 + 1 || z < q.z0 - 1 || z > q.z1 + 1) continue;
+      if (pointInPoly(x, z, q.pts)) return true;
+    }
+    return false;
+  };
+
+  // Bandes de stationnement en dur posées SUR la chaussée (parking.js) : le
+  // trottoir ne doit pas les recouvrir. Segments d'axe relevés là-bas.
+  const BANDES = [[25.2, 1, 17.2, 30]];
+  const presBande = (x, z) => {
+    for (const [x1, z1, x2, z2] of BANDES) {
+      const dx = x2 - x1, dz = z2 - z1;
+      const l2 = dx * dx + dz * dz;
+      let t = ((x - x1) * dx + (z - z1) * dz) / l2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      if (Math.hypot(x - (x1 + dx * t), z - (z1 + dz * t)) < 9) return true;
+    }
+    return false;
+  };
+
+  const platPos = [], platCol = [];
+  const chantPos = [];
+  const quadY = (tab, a, ya, b, yb, c, yc, d, yd) => {
+    tab.push(a[0], ya, a[1], b[0], yb, b[1], c[0], yc, c[1]);
+    tab.push(a[0], ya, a[1], c[0], yc, c[1], d[0], yd, d[1]);
+  };
+
+  for (const r of data.roads) {
+    if (!r.drivable || r.bridge || !KINDS.has(r.kind)) continue;
+    if (r.width < 5) continue;
+    if (Math.hypot(r.pts[0][0], r.pts[0][1]) > RAYON_BOURG) continue;
+    const p = densifier(r.pts, 8);
+    if (p.length < 2) continue;
+
+    // Bissectrices par sommet, comme dans `ribbon`.
+    const normales = [];
+    for (let i = 0; i < p.length; i++) {
+      let ix = 0, iz = 0, ox = 0, oz = 0;
+      if (i > 0) {
+        const l = Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]) || 1;
+        ix = (p[i][0] - p[i - 1][0]) / l; iz = (p[i][1] - p[i - 1][1]) / l;
+      }
+      if (i < p.length - 1) {
+        const l = Math.hypot(p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]) || 1;
+        ox = (p[i + 1][0] - p[i][0]) / l; oz = (p[i + 1][1] - p[i][1]) / l;
+      }
+      if (i === 0) { ix = ox; iz = oz; }
+      if (i === p.length - 1) { ox = ix; oz = iz; }
+      let bx = ix + ox, bz = iz + oz;
+      const bl = Math.hypot(bx, bz);
+      if (bl < 1e-6) { bx = ix; bz = iz; } else { bx /= bl; bz /= bl; }
+      const cosHalf = Math.max(0.4, ix * bx + iz * bz);
+      normales.push([-bz / cosHalf, bx / cosHalf]);
+    }
+
+    // Teinte du plateau : gris-beige clair, nuancé par voie.
+    const g0 = Math.abs(r.pts[0][0] * 3.1 + r.pts[0][1] * 7.7);
+    const nuance = 0.94 + (Math.abs(Math.sin(g0 * 12.9898) * 43758.5453) % 1) * 0.12;
+
+    for (const cote of [-1, 1]) {
+      for (let i = 0; i < p.length - 1; i++) {
+        const mx = (p[i][0] + p[i + 1][0]) / 2, mz = (p[i][1] + p[i + 1][1]) / 2;
+        if (presCarrefour(mx, mz) || presBande(mx, mz)) continue;
+        const dInt = r.width / 2 + 0.04, dExt = r.width / 2 + LARG;
+        const nI = normales[i], nJ = normales[i + 1];
+        const extMx = mx + nI[0] * cote * dExt, extMz = mz + nI[1] * cote * dExt;
+        if (dansParking(extMx, extMz)) continue;
+        const a = [p[i][0] + nI[0] * cote * dInt, p[i][1] + nI[1] * cote * dInt];
+        const b = [p[i + 1][0] + nJ[0] * cote * dInt, p[i + 1][1] + nJ[1] * cote * dInt];
+        const c = [p[i + 1][0] + nJ[0] * cote * dExt, p[i + 1][1] + nJ[1] * cote * dExt];
+        const d = [p[i][0] + nI[0] * cote * dExt, p[i][1] + nI[1] * cote * dExt];
+        const yA = (relief ? relief.hauteurRoute(p[i][0], p[i][1]) : 0) + ROAD_Y + HAUT;
+        const yB = (relief ? relief.hauteurRoute(p[i + 1][0], p[i + 1][1]) : 0) + ROAD_Y + HAUT;
+        // Plateau.
+        quadY(platPos, a, yA, b, yB, c, yB, d, yA);
+        for (let v = 0; v < 6; v++) platCol.push(nuance, nuance, nuance * 0.99);
+        // Chant de bordure côté chaussée, et chant de fermeture côté
+        // accotement (la pelouse est plus basse que le plateau).
+        quadY(chantPos, a, yA - HAUT - 0.05, b, yB - HAUT - 0.05, b, yB, a, yA);
+        quadY(chantPos, d, yA, c, yB, c, yB - HAUT - 0.05, d, yA - HAUT - 0.05);
+      }
+    }
+  }
+
+  if (platPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(platPos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(platCol, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0x8f8d85, vertexColors: true, roughness: 0.96, side: THREE.DoubleSide,
+    }));
+    m.name = 'trottoirs';
+    m.receiveShadow = true;
+    group.add(m);
+  }
+  if (chantPos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(chantPos, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      color: 0xb8b5ab, roughness: 0.85, side: THREE.DoubleSide,
+    }));
+    m.name = 'bordures-trottoir';
+    m.receiveShadow = true;
+    group.add(m);
+  }
+}
+
 // Rétrécit un contour vers son centroïde. Sert à poser l'acrotère d'un toit
 // plat : la face intérieure du muret suit le contour réduit de son épaisseur.
 // Un vrai décalage de polygone gérerait les arêtes qui se croisent ; à
@@ -527,6 +697,9 @@ export function buildWorld(scene, data) {
     m.renderOrder = -5;
     group.add(m);
   }
+
+  // Trottoirs à bordures du centre-bourg (voir construireTrottoirs).
+  construireTrottoirs(data, relief, group);
 
   // ---- Eau ---------------------------------------------------------------
   // L'eau était posée à une altitude fixe de 0,05 alors que tout le reste de

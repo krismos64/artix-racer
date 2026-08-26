@@ -77,6 +77,17 @@ Barrouilhet, captures de Christophe à l'appui.
   drapeau VERTICAL rouge à sigle, à la limite salon/banque (82,05, -49,15) ;
   croix verte de la pharmacie juste à côté (83,81, -50,19) : signalétique
   déportée qui capte la D32.
+- **Trottoirs à bordures du centre-bourg** (construireTrottoirs, world.js) :
+  deux rubans latéraux surélevés de 12 cm le long des voies du bourg
+  (rayon 380 m, largeur ≥ 5 m), plateau gris-beige nuancé par voie, chant
+  de bordure clair côté chaussée et chant de fermeture côté accotement.
+  Bissectrices par sommet comme `ribbon` (virages d'un seul tenant), quads
+  sautés à moins de 7 m des carrefours (les bateaux et passages y font le
+  raccord), dans les aires de parking OSM et le long de la bande en dur du
+  18e RI. Limites assumées : pas de collision physique (la voiture traverse
+  le plateau en y roulant, roues noyées de 12 cm) ; la terrasse d'Au
+  Comptoir et les seuils posés à roadY sont recouverts de 12 cm : à
+  surélever si ça se voit en jeu.
 - **Couronnement des toits.** (1) Chants de rive : un bandeau vertical de
   13 cm sous l'égout de chaque couverture, sur le contour débordé (buffer
   dédié, hors de la texture tuile), planche claire ou zinc selon un tirage
