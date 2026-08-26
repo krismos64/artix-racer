@@ -35,6 +35,7 @@ npm run build && npm run preview
 | R | Réapparaître au point de départ |
 | F | Remettre la voiture sur ses roues |
 | T | Accélérer l'écoulement du temps (cycle jour/nuit) |
+| L | Ambiance d'éclairage : Midi, Fin de journée, Nuit |
 | B | Klaxon |
 | M / N | Musique / son |
 | O | Ombres portées (désactivées par défaut, coûteuses) |
@@ -164,6 +165,47 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 - **Abribus vitrés** avec banc et cadre d'affichage.
 - Anisotropie 16 sur toutes les textures, relief du gravillon sur la chaussée,
   micro-relief du couvert herbeux.
+- **Feuillage découpé par texture alpha** : les couronnes se dentellent en
+  paquets de feuilles et deviennent poreuses, le ciel passant par les vides.
+- **Trois ambiances d'éclairage** sur la touche L : midi, fin de journée aux
+  ombres longues, nuit. Chaque bascule re-rend la sonde d'environnement et
+  ajuste ciel, brouillard, exposition et noirceur des ombres.
+- **Nuit complète** : phares à faisceau resserré portant à trente mètres,
+  optiques et feux émissifs, lanternes allumées, halos de lumière sodium au
+  sol sous les 357 lampadaires (permanents, sans attendre le passage du
+  joueur), fenêtres des habitations éclairées.
+- **Ville habitée** : 110 passants marchent sur les cheminements piétons
+  réels, s'arrêtent pour discuter, traversent aux passages ; touffes d'herbe
+  3D sur les bas-côtés.
+- **Lignes aériennes** : 357 poteaux triangulés depuis les panoramiques
+  (+ 77 interpolés), reliés par 210 portées de caténaires paraboliques.
+
+### Le centre-bourg modélisé à la main
+
+Le corridor commerçant, du Leclerc Express à l'église, est reconstruit
+bâtiment par bâtiment d'après les photographies et les orthophotos, avec ses
+enseignes réelles :
+
+- **Leclerc Express** et sa devanture, sa **station-service** (marquise à
+  bandeau bleu, pompes, totem) posée sur l'emprise mesurée de son auvent, son
+  **parking entier** relevé sur orthophoto (double-rangées dos à dos) et son
+  abri caddies
+- **La Poste** : R+1 crème à balcon filant, LA POSTE en grandes lettres sur
+  les deux façades, caisson jaune, distributeur bleu encastré, drapeaux et
+  boîte aux lettres
+- **Au Comptoir · Brasserie** et sa terrasse (store banne, tables, chaises),
+  **maison de la presse**, café, **Maison Chaudron** (bandeau noir aux lettres
+  dorées, ARTISAN BOULANGER PÂTISSIER, épi de blé en drapeau)
+- **CPC Invest**, **MMA** et ses trois macarons, **Caisse d'Épargne** (lettres
+  anthracite, écureuil en drapeau), **pharmacie Barrouilhet** (bandeau
+  vertical à croix vertes, croix lumineuse d'angle)
+- **Mairie**, **église Saint-Pierre**, **gare**, immeubles d'angle du
+  carrefour de la Patte d'Oie, jardinières de la place, préaux des écoles
+
+Le stationnement suit les photos : file longitudinale devant les commerces,
+bande en bataille côté est de l'avenue, place du Général de Gaulle laissée en
+esplanade piétonne, et les bandes se rognent automatiquement quand elles
+approchent une chaussée.
 
 ### La minicarte
 
@@ -235,42 +277,49 @@ plaques d'immatriculation et visages déjà floutés. `npm run fetch-facades` y
 relève la teinte réelle des façades. La source libre est ici techniquement
 supérieure, pas un pis-aller.
 
-Depuis août 2026, l'exploitation de Panoramax va bien au-delà de la teinte :
-`scripts/panoramax-inventaire.mjs` recense les **76 365 panoramiques** de la
-zone (balayage par cellules de l'API STAC), puis `scripts/panoramax-analyse.mjs`
-choisit pour chaque bâtiment les meilleurs points de vue (distance à la façade,
-écart de gisement, occultations vérifiées contre le bâti voisin), extrait de
-chaque panoramique équirectangulaire la fenêtre exacte de la façade (gisement
-converti en colonne de pixels, hauteur BD TOPO en fenêtre verticale) et en
-tire :
+Depuis août 2026, l'exploitation de Panoramax va bien au-delà de la teinte.
+`scripts/panoramax-inventaire.mjs` recense d'abord les **76 365 panoramiques**
+de la zone (balayage par cellules de l'API STAC). Cinq pipelines s'appuient
+ensuite sur la même géométrie : le gisement d'un point vers la caméra donne sa
+colonne dans le panoramique équirectangulaire, son site donne sa ligne.
 
-- la **teinte réelle du mur** (médiane robuste, ombres et végétation exclues),
-  pour 2 267 bâtiments
-- la **couleur des volets** quand ils sont détectés (349 bâtiments), qui
-  colore les volets 3D du jeu
-- un **indice de grain du parement** : les façades en pierre ou galets
-  apparents reçoivent une texture d'appareil de galets du gave au lieu de
-  l'enduit lisse
+**1. Caractérisation des façades** (`npm run fetch-panoramax`) choisit pour
+chaque bâtiment ses meilleurs points de vue (distance, écart de gisement,
+occultations vérifiées contre le bâti voisin) et en tire, pour **2 869
+bâtiments** : la teinte réelle du mur (médiane robuste, ombres et végétation
+exclues), la **couleur des volets** quand ils sont détectés (413 bâtiments) et
+un **indice de grain du parement** qui envoie les façades en pierre ou galets
+apparents vers une texture d'appareil du gave.
 
-Le tout tient dans `public/data/artix-panoramax.json` (110 Ko) ; seuls
-1 218 panoramiques ont dû être téléchargés, un même point de rue décrivant
-tous les bâtiments alentour.
+**2. Placage photographique** (`fetch-facades-photo`, `fetch-centre`) RECTIFIE
+la portion de panoramique couvrant une façade en vraie perspective : chaque
+pixel de sortie est un point 3D du mur re-projeté dans la photo. La fenêtre
+est bornée à la hauteur de gouttière LiDAR, les vues mangées par le ciel ou la
+végétation sont écartées automatiquement, le pied de façade est fondu (sinon
+les voitures garées se plaquent sur le mur) et l'exposition homogénéisée.
+**254 façades** couvrent la zone urbanisée, et **109 façades HD** (panoramiques
+5760×2880, plusieurs faces par bâtiment) le corridor commerçant : les
+enseignes y sont lisibles en roulant.
 
-Le **placage photographique** est fait pour le centre-bourg :
-`scripts/panoramax-facades-photo.mjs` choisit pour 80 bâtiments l'arête la
-mieux photographiée, RECTIFIE la portion du panoramique en vraie perspective
-(chaque pixel de sortie est un point 3D du mur re-projeté dans la photo par
-son gisement et son site), borne la fenêtre à la hauteur de gouttière LiDAR,
-écarte automatiquement les vues mangées par le ciel ou la végétation, fond le
-pied de façade (les voitures garées se plaqueraient sinon sur le mur) et range
-le tout dans trois atlas de 2048². En jeu, ces murs portent leur vraie
-devanture : Le Fournil, la Poste, les plaques de rue bilingues.
+**3. Mesure des sols** (`fetch-sols`) relève la teinte réelle de l'enrobé par
+type de voie, classe **78 aires de parking** (20 en stabilisé clair, une
+enherbée, le reste en enrobé) et mesure l'**usure de 140 passages piétons**,
+du blanc neuf au gris presque effacé.
 
-Les commerces sans photo reçoivent une **enseigne de façade** générée à leur
-nom. S'y ajoutent les jardinières fleuries de la place, les poteaux
-électriques des lotissements, et un stationnement recalé sur les
-panoramiques : sur la chaussée contre la rive, à cheval sur les voies
-moyennes, absent des rues trop étroites.
+**4. Triangulation des poteaux** (`fetch-poteaux`) détecte les bâtonnets
+verticaux sombres se découpant sur le ciel, écarte les arbres par leur
+silhouette, et croise les gisements de plusieurs prises de vue : **357
+supports** confirmés, à leur position réelle, portant 210 portées de câbles.
+
+**5. Implantation au sol** : pour les parkings et les places, les vues de rue
+ne suffisent pas. Les **orthophotos IGN** (WMS Géoplateforme, Licence Ouverte)
+donnent la vérité en plan : c'est ainsi que le parking du Leclerc a été
+reconstruit, et que la place du Général de Gaulle a été rendue aux piétons
+après avoir été prise à tort pour un parking.
+
+Le corridor commerçant, lui, est modélisé **à la main**, bâtiment par
+bâtiment, d'après ces mêmes photographies : voir « Le centre-bourg modélisé à
+la main » plus haut.
 
 ## Comment c'est fait
 
