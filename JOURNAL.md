@@ -2,6 +2,20 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 16) : les Pyrénées enfin visibles à l'horizon sud
+
+Question de Christophe : peut-on voir la chaîne au loin ? Découverte : les
+Pyrénées EXISTAIENT depuis le début (`createBackdrop`, ruban de crêtes
+bleutées plein sud à 1 380 m, la bonne direction) mais n'étaient JAMAIS
+visibles, pour deux raisons cumulées : le plan lointain de la caméra
+(`fogEnd + 250` : 1 230 m en Équilibré, 940 en Performance) les clippait,
+et le brouillard linéaire (fin à 980 m) les noyait de toute façon.
+Corrigé : `camera.maxZ` plancher à 1 600 m, `applyFog = false` sur le fond
+(montagnes et nuages sculptés). Bonus de fidélité : la silhouette à deux
+pointes du PIC DU MIDI D'OSSAU ajoutée au sud-sud-est (azimut réel ~160°
+depuis Artix), la dent qui signe l'horizon béarnais. L'effet rendu : la
+chaîne bleutée flotte au-dessus de la brume de plaine, comme en vrai.
+
 ## 2026-08-26 (suite 15) : McDo parfait, Leclerc Drive, station U colorée
 
 - **McDonald's refondu sur Street View mars 2026** : soubassement en

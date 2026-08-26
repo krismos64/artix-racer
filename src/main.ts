@@ -125,11 +125,16 @@ function createBackdrop(scene: Scene): Mesh[] {
   mountainMaterial.backFaceCulling = false;
   mountainMaterial.freeze();
   const lower: Vector3[] = [], ridge: Vector3[] = [];
-  const count = 44;
+  const count = 64;
   for (let i = 0; i < count; i++) {
     const t = i / (count - 1);
     const x = -1800 + t * 3600;
-    const peak = 80 + Math.abs(Math.sin(t * 13.2)) * 95 + Math.abs(Math.sin(t * 31.4 + .8)) * 42;
+    let peak = 80 + Math.abs(Math.sin(t * 13.2)) * 95 + Math.abs(Math.sin(t * 31.4 + .8)) * 42;
+    // Pic du Midi d'Ossau au sud-sud-est (azimut réel ~160° depuis Artix,
+    // soit x ≈ +500 pour un fond à 1 380 m) : la dent à deux pointes qui
+    // signe l'horizon béarnais, Grand Pic et son épaulement.
+    peak += 150 * Math.exp(-(((x - 500) / 85) ** 2));
+    peak += 60 * Math.exp(-(((x - 620) / 60) ** 2));
     lower.push(new Vector3(x, -24, 1380));
     ridge.push(new Vector3(x, peak, 1380 + Math.sin(t * 8) * 55));
   }
@@ -137,6 +142,10 @@ function createBackdrop(scene: Scene): Mesh[] {
   mountains.material = mountainMaterial;
   mountains.isPickable = false;
   mountains.infiniteDistance = true;
+  // Sans quoi le brouillard linéaire (fin à 980 m en Équilibré) noyait
+  // entièrement un fond situé à 1 380 m : les Pyrénées existaient dans la
+  // scène depuis le début mais ne se voyaient jamais.
+  mountains.applyFog = false;
 
   const cloudMaterial = new PBRMaterial('cloud-material', scene);
   cloudMaterial.albedoColor = Color3.FromHexString('#f0eee6');
@@ -155,6 +164,7 @@ function createBackdrop(scene: Scene): Mesh[] {
       cloud.material = cloudMaterial;
       cloud.isPickable = false;
       cloud.infiniteDistance = true;
+      cloud.applyFog = false;
     }
   });
   return [mountains];
@@ -536,7 +546,10 @@ async function start(): Promise<void> {
     engine.setHardwareScalingLevel(desiredScaling);
     scene.fogStart = profile.fogStart;
     scene.fogEnd = profile.fogEnd;
-    camera.maxZ = profile.fogEnd + 250;
+    // Jamais sous 1 600 m : le fond de chaîne pyrénéenne est à 1 380 m de la
+    // caméra (infiniteDistance) et le plan lointain le clippait en Équilibré
+    // et Performance : les montagnes n'étaient JAMAIS visibles.
+    camera.maxZ = Math.max(profile.fogEnd + 250, 1600);
     sun.shadowEnabled = profile.shadows;
     pipeline.bloomEnabled = next !== 'performance';
     if (next === 'quality') {
