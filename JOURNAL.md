@@ -77,6 +77,18 @@ Barrouilhet, captures de Christophe à l'appui.
   drapeau VERTICAL rouge à sigle, à la limite salon/banque (82,05, -49,15) ;
   croix verte de la pharmacie juste à côté (83,81, -50,19) : signalétique
   déportée qui capte la D32.
+- **Parc de véhicules garés refondu** : cinq silhouettes paramétriques au
+  lieu du gabarit unique étiré (compacte 26 %, berline 20 %, break/SUV
+  24 %, fourgonnette 15 %, fourgon 9 %) plus 6 % de scooters (corps caréné
+  coloré, selle et guidon sombres, deux roues du mesh commun en échelle
+  réduite, emplacements inutilisés masqués par matrice nulle). Plaques
+  avant/arrière (3e groupe de matériau), rétroviseurs instanciés, palette
+  pondérée du parc français (blanc et gris dominants, couleurs vives
+  rares), utilitaires blancs aux trois quarts, variation de clarté ±5 % et
+  d'échelle ±4 % par instance. Piège d'architecture : la grille spatiale
+  exige une instance par véhicule et par mesh : les caisses réparties par
+  silhouette en sortent (30 k triangles dessinés en permanence,
+  négligeable) ; roues, feux, rétros et ombres y restent (ratios 4,2,2,2,1).
 - **Plateau de basket et sens du stationnement** (10e capture) : le terrain
   face à l'avenue est tagué sport=TENNIS dans OSM alors que les photos
   montrent deux paniers de basket sur enrobé gris : correction de données

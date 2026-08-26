@@ -11,13 +11,46 @@ import * as THREE from 'three';
 
 // Teintes réellement dominantes du parc automobile français : le blanc et le
 // gris représentent plus de la moitié des immatriculations.
+// Palette du parc français, pondérée par fréquence réelle : le blanc et les
+// gris dominent, les couleurs vives restent rares mais présentes (c'est leur
+// rareté qui les rend crédibles).
 const COULEURS = [
-  0xe8e9ea, 0xe8e9ea, 0xe8e9ea,   // blanc, très majoritaire
-  0x9a9ea3, 0x9a9ea3, 0x7c8085,   // gris
-  0x2b2e33, 0x2b2e33,             // noir
-  0x8c9aa8, 0x3d5a7a,             // bleus
-  0x7a2f2f, 0x8a6a3a, 0x3f5f45,   // rouge, beige, vert
+  0xe8e9ea, 0xe8e9ea, 0xe8e9ea, 0xe8e9ea, 0xeceae2,   // blancs
+  0xb9bcc0, 0x9a9ea3, 0x9a9ea3, 0x7c8085, 0x63666b,   // argents et gris
+  0x2b2e33, 0x2b2e33, 0x1e2126,                        // noirs
+  0x3d5a7a, 0x28405c, 0x8c9aa8, 0x4a7a9a,             // bleus
+  0x7a2f2f, 0x9a3428, 0x5c2434,                        // rouges et bordeaux
+  0x8a6a3a, 0xb8a888, 0x3f5f45, 0x6b7a3a,             // beiges et verts
+  0xc27b2c, 0xc2a83a,                                  // orange et jaune, rares
 ];
+// Les utilitaires sont blancs aux trois quarts, gris ou bleu artisan sinon.
+const COULEURS_UTILITAIRE = [
+  0xe8e9ea, 0xe8e9ea, 0xe8e9ea, 0xe8e9ea, 0xe8e9ea, 0xe8e9ea,
+  0x9a9ea3, 0xb9bcc0, 0x3d5a7a,
+];
+// Deux-roues : noir dominant, quelques couleurs.
+const COULEURS_SCOOTER = [0x232529, 0x232529, 0x2b2e33, 0x7a2f2f, 0xe8e9ea, 0x3d5a7a];
+
+// Silhouettes du parc, choisies par tirage pondéré. Chaque type a sa
+// géométrie propre : l'ancien gabarit unique étiré donnait 880 fois la même
+// voiture à trois tailles.
+const GABARITS = {
+  //            demi-long  demi-larg  bas   ceinture  habitacle: L    l     haut  recul  hayon  parebrise  poids
+  compacte:     { L: 1.80, W: 0.84, H0: 0.28, H1: 0.76, CL: 1.00, CW: 0.78, CH: 1.38, dz: 0.05,  tArK: 0.80, tAvK: 0.55, poids: 0.26 },
+  berline:      { L: 2.25, W: 0.88, H0: 0.28, H1: 0.75, CL: 1.05, CW: 0.80, CH: 1.34, dz: -0.30, tArK: 0.72, tAvK: 0.62, poids: 0.20 },
+  break:        { L: 2.20, W: 0.89, H0: 0.32, H1: 0.85, CL: 1.35, CW: 0.82, CH: 1.52, dz: -0.42, tArK: 0.94, tAvK: 0.60, poids: 0.24 },
+  fourgonnette: { L: 2.05, W: 0.87, H0: 0.30, H1: 0.98, CL: 1.45, CW: 0.82, CH: 1.78, dz: -0.50, tArK: 0.97, tAvK: 0.66, poids: 0.15, utilitaire: true },
+  fourgon:      { L: 2.55, W: 0.97, H0: 0.30, H1: 1.05, CL: 1.90, CW: 0.92, CH: 2.05, dz: -0.60, tArK: 0.98, tAvK: 0.70, poids: 0.09, utilitaire: true },
+  scooter:      { poids: 0.06 },
+};
+function tirerType(graine) {
+  let t = hash(graine);
+  for (const [nom, g] of Object.entries(GABARITS)) {
+    if (t < g.poids) return nom;
+    t -= g.poids;
+  }
+  return 'berline';
+}
 
 // Demi-largeur d'un véhicule, en mètres. Une berline française fait 1,74 m
 // hors rétroviseurs, ce qui sert de référence à tout le placement.
@@ -257,10 +290,9 @@ function trouverPlaces(data, relief, roadY, passages = []) {
         // l'accotement terrassé, la voiture flotterait ou s'enterrerait.
         const sol = relief ? relief.hauteurRoute(px, pz) : 0;
         places.push({
+          // Type et couleur sont tirés au rendu, selon la distribution du
+          // parc (GABARITS).
           x: px, y: sol + roadY, z: pz, cap: capReel,
-          couleur: COULEURS[Math.floor(hash(graine + 13.1) * COULEURS.length)],
-          // Trois gabarits : citadine, berline, utilitaire.
-          gabarit: hash(graine + 19.3),
           graine,
           // Stationnement le long d'une voie, par opposition aux places
           // marquées d'un parking réel. C'est cette distinction que la passe
@@ -410,40 +442,30 @@ function eclaircir(places) {
 // Les vitres font partie du même maillage, réparties dans un second groupe de
 // matériaux : un vitrage rapporté sous forme de pavé droit percerait les
 // montants inclinés de l'habitacle et donnerait un aspect de bloc posé.
-function construireGeometrie() {
+// Construit la géométrie d'un type de véhicule à partir de ses cotes.
+// Groupe 0 : carrosserie (couleur instanciée), groupe 1 : vitrages,
+// groupe 2 : plaques d'immatriculation.
+function construireGeometrie(t) {
   const g = new THREE.BufferGeometry();
   const pos = [], nrm = [];
-  // Indices de début des faces vitrées, pour découper les groupes.
-  let debutVitres = 0;
-
-  // Quad orienté vers l'extérieur. Three.js n'affiche que les faces dont les
-  // sommets tournent dans le sens antihoraire vu depuis la normale : l'ordre
-  // est inversé ici pour que les quatre coins, écrits dans le sens naturel de
-  // lecture, produisent des faces visibles de l'extérieur.
   const quad = (a, b, c, d, n) => {
     pos.push(...a, ...c, ...b, ...a, ...d, ...c);
     for (let i = 0; i < 6; i++) nrm.push(...n);
   };
 
-  const L = 2.15, W = 0.87, H0 = 0.28, H1 = 0.78;   // demi-cotes caisse
-  const CL = 1.05, CW = 0.80, CH = 1.35;            // habitacle
-  const dz = -0.25;                                  // recul de l'habitacle
-  // Sommets du toit, plus courts que la base : c'est cette inclinaison qui
-  // donne au volume sa lecture de voiture plutôt que de caisse.
-  const tAr = dz - CL * 0.72, tAv = dz + CL * 0.62;
+  const { L, W, H0, H1, CL, CW, CH, dz } = t;
+  const tAr = dz - CL * t.tArK, tAv = dz + CL * t.tAvK;
 
   // --- Carrosserie (groupe 0) ---
   quad([-W, H0, -L], [W, H0, -L], [W, H1, -L], [-W, H1, -L], [0, 0, -1]);  // arrière
   quad([W, H0, L], [-W, H0, L], [-W, H1, L], [W, H1, L], [0, 0, 1]);       // avant
   quad([-W, H0, L], [-W, H0, -L], [-W, H1, -L], [-W, H1, L], [-1, 0, 0]);  // gauche
   quad([W, H0, -L], [W, H0, L], [W, H1, L], [W, H1, -L], [1, 0, 0]);       // droite
-  quad([-W, H1, L], [-W, H1, -L], [W, H1, -L], [W, H1, L], [0, 1, 0]);     // capot
-  // Pas de face inférieure : elle n'est jamais visible sur un véhicule posé
-  // au sol, et l'économiser allège le maillage de 900 instances.
+  quad([-W, H1, L], [-W, H1, -L], [W, H1, -L], [W, H1, L], [0, 1, 0]);     // capot et coffre
   // Pavillon, opaque comme la carrosserie.
   quad([-CW, CH, tAv], [-CW, CH, tAr], [CW, CH, tAr], [CW, CH, tAv], [0, 1, 0]);
 
-  debutVitres = pos.length / 3;
+  const debutVitres = pos.length / 3;
 
   // --- Surfaces vitrées (groupe 1) : lunette, pare-brise et custodes ---
   quad([-CW, H1, dz - CL], [CW, H1, dz - CL], [CW, CH, tAr], [-CW, CH, tAr], [0, 0.3, -1]);
@@ -451,10 +473,52 @@ function construireGeometrie() {
   quad([-CW, H1, dz + CL], [-CW, H1, dz - CL], [-CW, CH, tAr], [-CW, CH, tAv], [-1, 0, 0]);
   quad([CW, H1, dz - CL], [CW, H1, dz + CL], [CW, CH, tAv], [CW, CH, tAr], [1, 0, 0]);
 
+  const debutPlaques = pos.length / 3;
+
+  // --- Plaques d'immatriculation (groupe 2), avant et arrière ---
+  const hP = H0 + 0.16;
+  quad([-0.24, hP, L + 0.006], [0.24, hP, L + 0.006],
+    [0.24, hP + 0.13, L + 0.006], [-0.24, hP + 0.13, L + 0.006], [0, 0, 1]);
+  quad([0.24, hP, -L - 0.006], [-0.24, hP, -L - 0.006],
+    [-0.24, hP + 0.13, -L - 0.006], [0.24, hP + 0.13, -L - 0.006], [0, 0, -1]);
+
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.addGroup(0, debutVitres, 0);
-  g.addGroup(debutVitres, pos.length / 3 - debutVitres, 1);
+  g.addGroup(debutVitres, debutPlaques - debutVitres, 1);
+  g.addGroup(debutPlaques, pos.length / 3 - debutPlaques, 2);
+  g.computeBoundingSphere();
+  return g;
+}
+
+// Géométrie d'un scooter : corps caréné (couleur instanciée, groupe 0),
+// selle et colonne de guidon sombres (groupe 1). Les roues viennent du mesh
+// de roues commun, en échelle réduite.
+function construireScooter() {
+  const g = new THREE.BufferGeometry();
+  const pos = [], nrm = [];
+  const quad = (a, b, c, d, n) => {
+    pos.push(...a, ...c, ...b, ...a, ...d, ...c);
+    for (let i = 0; i < 6; i++) nrm.push(...n);
+  };
+  const boite = (x0, y0, z0, x1, y1, z1) => {
+    quad([x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [0, 0, -1]);
+    quad([x1, y0, z1], [x0, y0, z1], [x0, y1, z1], [x1, y1, z1], [0, 0, 1]);
+    quad([x0, y0, z1], [x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [-1, 0, 0]);
+    quad([x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0], [1, 0, 0]);
+    quad([x0, y1, z1], [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [0, 1, 0]);
+  };
+  // Plancher et carénage bas, puis tablier avant incliné.
+  boite(-0.14, 0.25, -0.45, 0.14, 0.48, 0.35);
+  boite(-0.13, 0.48, 0.28, 0.13, 1.02, 0.46);
+  const debutSombre = pos.length / 3;
+  // Selle et colonne de guidon (groupe 1, sombre).
+  boite(-0.13, 0.62, -0.55, 0.13, 0.78, -0.05);
+  boite(-0.24, 1.04, 0.30, 0.24, 1.10, 0.42);
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.addGroup(0, debutSombre, 0);
+  g.addGroup(debutSombre, pos.length / 3 - debutSombre, 1);
   g.computeBoundingSphere();
   return g;
 }
@@ -475,13 +539,9 @@ export class VoituresGarees {
   constructor(scene, data, relief, roadY, passages = [], spawn = null,
     supplement = [], maximum = 880) {
     this.group = new THREE.Group();
-    // Les places d'appoint n'apportent que leur position : teinte et gabarit
-    // sont tirés ici, avec la même distribution que le reste du parc.
-    const complet = supplement.map((p) => ({
-      ...p,
-      couleur: p.couleur ?? COULEURS[Math.floor(hash(p.graine ?? 0) * COULEURS.length)],
-      gabarit: p.gabarit ?? hash((p.graine ?? 0) + 23.9),
-    }));
+    // Les places d'appoint n'apportent que leur position : type et teinte
+    // sont tirés au rendu, avec la même distribution que le reste du parc.
+    const complet = supplement.map((p) => ({ ...p }));
     // Les places d'appoint priment sur celles générées le long de la voie :
     // là où un parking en épi existe, personne ne se gare en bataille sur
     // l'accotement juste à côté.
@@ -529,22 +589,28 @@ export class VoituresGarees {
     // solides, là où un maillage détaillé coûterait cher pour rien.
     this.obstacles = places;
 
-    const caisseGeo = construireGeometrie();
+    // Type et couleur de chaque véhicule, selon la distribution du parc.
+    for (const p of places) {
+      p.type = tirerType((p.graine ?? 0) + 31.7);
+      const gab = GABARITS[p.type];
+      const pal = p.type === 'scooter' ? COULEURS_SCOOTER
+        : gab.utilitaire ? COULEURS_UTILITAIRE : COULEURS;
+      p.couleur = pal[Math.floor(hash((p.graine ?? 0) + 47.3) * pal.length)];
+    }
+
     const caisseMat = new THREE.MeshStandardMaterial({
       roughness: 0.42, metalness: 0.32,
       // La caisse est un volume ouvert par le bas : sans DoubleSide, un
       // véhicule vu depuis une pente laisserait voir son intérieur.
       side: THREE.DoubleSide,
     });
-    // Vitrage : second groupe du même maillage, donc parfaitement raccordé aux
-    // montants. La teinte instanciée ne s'applique qu'à la carrosserie.
     const vitreMat = new THREE.MeshStandardMaterial({
       color: 0x1a2430, roughness: 0.15, metalness: 0.4, side: THREE.DoubleSide,
     });
+    const plaqueMat = new THREE.MeshStandardMaterial({ color: 0xdfe3e6, roughness: 0.35 });
+    const sombreMat = new THREE.MeshStandardMaterial({ color: 0x1c1e21, roughness: 0.7 });
     const roueGeo = new THREE.CylinderGeometry(0.31, 0.31, 0.22, 10);
     const roueMat = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.95 });
-    // Feux : ce sont eux qui font lire une silhouette comme une voiture à
-    // distance, bien plus que le détail de la carrosserie.
     const feuGeo = new THREE.BoxGeometry(0.42, 0.15, 0.08);
     const feuArMat = new THREE.MeshStandardMaterial({
       color: 0x8c1c1c, emissive: 0x4a0d0d, emissiveIntensity: 0.5, roughness: 0.4,
@@ -552,6 +618,7 @@ export class VoituresGarees {
     const feuAvMat = new THREE.MeshStandardMaterial({
       color: 0xd8dce0, roughness: 0.2, metalness: 0.3,
     });
+    const retroGeo = new THREE.BoxGeometry(0.09, 0.10, 0.16);
 
     // Ombre de contact instanciée : un dégradé radial couché sous chaque
     // véhicule. Sans elle, les centaines de voitures garées flottent sur la
@@ -567,108 +634,152 @@ export class VoituresGarees {
     octx.fillStyle = ograd;
     octx.fillRect(0, 0, 128, 128);
     const ombreGeo = new THREE.PlaneGeometry(2.4, 5.2);
-    // Couchée dans la géométrie : la matrice d'instance n'a plus que la
-    // rotation de cap à porter.
     ombreGeo.rotateX(-Math.PI / 2);
     const ombreMat = new THREE.MeshBasicMaterial({
       map: new THREE.CanvasTexture(ombreCanvas),
       transparent: true, depthWrite: false, opacity: 0.8,
     });
 
-    this.caisses = new THREE.InstancedMesh(
-      caisseGeo, [caisseMat, vitreMat], places.length,
-    );
-    this.ombres = new THREE.InstancedMesh(ombreGeo, ombreMat, places.length);
-    // Quatre roues par véhicule, dans un seul mesh instancié.
+    // Une silhouette par type de véhicule, chacune dans son InstancedMesh.
+    // Les caisses sont HORS de la grille spatiale (elle exige une instance
+    // par véhicule et par mesh) : 880 caisses d'une trentaine de triangles
+    // restent négligeables dessinées en permanence. Roues, feux, rétros et
+    // ombres, indexés par véhicule, restent dans la grille.
+    const parType = {};
+    for (const p of places) parType[p.type] = (parType[p.type] ?? 0) + 1;
+    this.caisses = {};
+    for (const [nom, n] of Object.entries(parType)) {
+      this.caisses[nom] = nom === 'scooter'
+        ? new THREE.InstancedMesh(construireScooter(), [caisseMat, sombreMat], n)
+        : new THREE.InstancedMesh(construireGeometrie(GABARITS[nom]),
+          [caisseMat, vitreMat, plaqueMat], n);
+    }
     this.roues = new THREE.InstancedMesh(roueGeo, roueMat, places.length * 4);
-    // Deux feux par extrémité.
     this.feuxAr = new THREE.InstancedMesh(feuGeo, feuArMat, places.length * 2);
     this.feuxAv = new THREE.InstancedMesh(feuGeo, feuAvMat, places.length * 2);
+    this.retros = new THREE.InstancedMesh(retroGeo, sombreMat, places.length * 2);
+    this.ombres = new THREE.InstancedMesh(ombreGeo, ombreMat, places.length);
 
     const m = new THREE.Matrix4();
+    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
     const q = new THREE.Quaternion();
     const axeY = new THREE.Vector3(0, 1, 0);
     const col = new THREE.Color();
     const pos = new THREE.Vector3();
     const ech = new THREE.Vector3();
+    const idx = {};
 
     places.forEach((p, i) => {
       q.setFromAxisAngle(axeY, p.cap);
-      // Gabarit : citadine courte, berline moyenne, utilitaire haut.
-      const court = p.gabarit < 0.34;
-      const haut = p.gabarit > 0.86;
-      const sx = court ? 0.94 : 1;
-      const sz = court ? 0.86 : haut ? 1.08 : 1;
-      const sy = haut ? 1.22 : 1;
-      ech.set(sx, sy, sz);
-      // Demi-dimensions du volume de collision, reprises telles quelles par la
-      // physique pour que l'obstacle coïncide avec ce qui est affiché.
-      p.demiL = 2.15 * sz;
-      p.demiW = 0.87 * sx;
-      // Du bas de caisse (0.28) au pavillon (1.35), soit une demi-hauteur de
-      // 0.535 pour un centre à 0.815. Aligné sur le rendu, pas approximé.
-      p.demiH = 0.535 * sy;
-      p.centreH = 0.815 * sy;
+      const type = p.type;
+      const gab = GABARITS[type];
+      const scooter = type === 'scooter';
+      // Variation d'échelle de ±4 % : deux breaks voisins ne sont jamais
+      // exactement identiques.
+      const e1 = 0.96 + hash((p.graine ?? 0) + 3.1) * 0.08;
+
+      // Demi-dimensions du volume de collision, reprises par la physique.
+      if (scooter) {
+        p.demiL = 0.95; p.demiW = 0.35; p.demiH = 0.55; p.centreH = 0.65;
+      } else {
+        p.demiL = gab.L * e1;
+        p.demiW = gab.W * e1;
+        p.demiH = (gab.CH - gab.H0) / 2 * e1;
+        p.centreH = (gab.H0 + gab.CH) / 2 * e1;
+      }
 
       pos.set(p.x, p.y, p.z);
+      ech.set(e1, e1, e1);
       m.compose(pos, q, ech);
-      this.caisses.setMatrixAt(i, m);
+      const j = idx[type] ?? 0;
+      idx[type] = j + 1;
+      this.caisses[type].setMatrixAt(j, m);
       col.setHex(p.couleur);
-      this.caisses.setColorAt(i, col);
+      // Légère variation de clarté : casse les doublons de teinte exacte.
+      col.multiplyScalar(0.94 + hash((p.graine ?? 0) + 9.4) * 0.1);
+      this.caisses[type].setColorAt(j, col);
 
-      // Roues aux quatre coins.
       const qr = new THREE.Quaternion().setFromEuler(
         new THREE.Euler(0, p.cap, Math.PI / 2, 'YXZ'),
       );
-      let n = 0;
+      if (scooter) {
+        // Deux roues dans l'axe, en échelle réduite ; les emplacements de
+        // roues et de feux inutilisés sont masqués par une matrice nulle.
+        let n2 = 0;
+        for (const szr of [-0.62, 0.62]) {
+          const dr = new THREE.Vector3(0, 0.2, szr).applyQuaternion(q);
+          m.compose(pos.clone().add(dr), qr, new THREE.Vector3(0.5, 0.68, 0.68));
+          this.roues.setMatrixAt(i * 4 + n2, m);
+          n2++;
+        }
+        this.roues.setMatrixAt(i * 4 + 2, zero);
+        this.roues.setMatrixAt(i * 4 + 3, zero);
+        for (let f = 0; f < 2; f++) {
+          this.feuxAr.setMatrixAt(i * 2 + f, zero);
+          this.feuxAv.setMatrixAt(i * 2 + f, zero);
+          this.retros.setMatrixAt(i * 2 + f, zero);
+        }
+        m.compose(pos, q, new THREE.Vector3(0.34, 1, 0.42));
+        this.ombres.setMatrixAt(i, m);
+        return;
+      }
+
+      // Roues aux quatre coins, cotes du type.
+      let n2 = 0;
       for (const sxr of [-1, 1]) {
         for (const szr of [-1, 1]) {
-          const dr = new THREE.Vector3(sxr * 0.83 * sx, 0.31, szr * 1.42 * sz)
+          const dr = new THREE.Vector3(sxr * (gab.W - 0.05) * e1, 0.31 * e1, szr * gab.L * 0.62 * e1)
             .applyQuaternion(q);
-          m.compose(pos.clone().add(dr), qr, new THREE.Vector3(1, 1, 1));
-          this.roues.setMatrixAt(i * 4 + n, m);
-          n++;
+          m.compose(pos.clone().add(dr), qr, ech);
+          this.roues.setMatrixAt(i * 4 + n2, m);
+          n2++;
         }
       }
 
-      // Feux, posés à hauteur de caisse aux deux extrémités.
-      const yFeu = 0.58 * sy;
+      // Feux et rétroviseurs aux cotes du type.
+      const yFeu = (gab.H0 + (gab.H1 - gab.H0) * 0.62) * e1;
+      const yRetro = (gab.H1 + 0.27) * e1;
+      const zRetro = (gab.dz + gab.CL * gab.tAvK * 0.8) * e1;
       let f = 0;
       for (const cote2 of [-1, 1]) {
-        const dAr = new THREE.Vector3(cote2 * 0.52 * sx, yFeu, -2.13 * sz)
+        const dAr = new THREE.Vector3(cote2 * 0.58 * gab.W * e1, yFeu, -(gab.L - 0.02) * e1)
           .applyQuaternion(q);
-        m.compose(pos.clone().add(dAr), q, new THREE.Vector3(1, 1, 1));
+        m.compose(pos.clone().add(dAr), q, ech);
         this.feuxAr.setMatrixAt(i * 2 + f, m);
-
-        const dAv = new THREE.Vector3(cote2 * 0.52 * sx, yFeu, 2.13 * sz)
+        const dAv = new THREE.Vector3(cote2 * 0.58 * gab.W * e1, yFeu, (gab.L - 0.02) * e1)
           .applyQuaternion(q);
-        m.compose(pos.clone().add(dAv), q, new THREE.Vector3(1, 1, 1));
+        m.compose(pos.clone().add(dAv), q, ech);
         this.feuxAv.setMatrixAt(i * 2 + f, m);
+        const dRe = new THREE.Vector3(cote2 * (gab.W + 0.06) * e1, yRetro, zRetro)
+          .applyQuaternion(q);
+        m.compose(pos.clone().add(dRe), q, ech);
+        this.retros.setMatrixAt(i * 2 + f, m);
         f++;
       }
 
-      // Ombre de contact, 3 cm au-dessus de la chaussée pour éviter le
-      // scintillement, à l'échelle du gabarit.
+      // Ombre de contact aux proportions du type.
       m.compose(new THREE.Vector3(p.x, p.y + 0.03, p.z), q,
-        new THREE.Vector3(sx, 1, sz));
+        new THREE.Vector3(gab.W / 0.87 * e1, 1, gab.L / 2.15 * e1));
       this.ombres.setMatrixAt(i, m);
     });
 
-    for (const mesh of [this.caisses, this.roues, this.feuxAr, this.feuxAv, this.ombres]) {
-      mesh.instanceMatrix.needsUpdate = true;
+    const tousLesMeshes = [
+      ...Object.values(this.caisses),
+      this.roues, this.feuxAr, this.feuxAv, this.retros, this.ombres,
+    ];
+    for (const mesh of tousLesMeshes) mesh.instanceMatrix.needsUpdate = true;
+    for (const c of Object.values(this.caisses)) {
+      if (c.instanceColor) c.instanceColor.needsUpdate = true;
     }
-    if (this.caisses.instanceColor) this.caisses.instanceColor.needsUpdate = true;
 
-    this.group.add(this.caisses, this.roues, this.feuxAr, this.feuxAv, this.ombres);
-    // Exposé pour le découpage spatial (`spatial.js`) : une instance de caisse
-    // par véhicule, mais quatre roues et deux feux par extrémité, d'où les
-    // ratios. Sans lui, les 880 véhicules garés au maximum sont dessinés en
-    // entier quelle que soit la distance, la sphère englobante d'un
-    // InstancedMesh ne pouvant être écartée qu'en bloc.
+    this.group.add(...tousLesMeshes);
+    // Exposé pour le découpage spatial (`spatial.js`) : uniquement les
+    // maillages indexés par véhicule (les caisses, réparties par silhouette,
+    // ne respectent pas ce contrat et restent dessinées en permanence).
     this.group.userData.instances = {
-      meshes: [this.caisses, this.roues, this.feuxAr, this.feuxAv, this.ombres],
+      meshes: [this.roues, this.feuxAr, this.feuxAv, this.retros, this.ombres],
       positions: places.map((p) => [p.x, p.z]),
-      ratios: [1, 4, 2, 2, 1],
+      ratios: [4, 2, 2, 2, 1],
     };
     scene.add(this.group);
   }
