@@ -23,10 +23,18 @@ export class Minimap {
     const ctx = this.ctx;
     const center = this.size * .5;
     const scale = center / this.radius;
-    const sin = Math.sin(-heading), cos = Math.cos(-heading);
+    // Rotation de la carte : l'avant du véhicule (sin h, cos h) doit se
+    // projeter vers le HAUT du disque, sa droite vers la droite. Composante
+    // avant a = dx·sin h + dz·cos h (→ -y écran), composante droite
+    // r = dz·sin h - dx·cos h (→ +x écran). L'ancienne formule en sin(-h)
+    // tournait la carte de 2h au lieu de l'annuler : juste à cap nul, fausse
+    // partout ailleurs (même piège déjà corrigé dans three-city/minimap.js
+    // le 19/08/2026 : deux conventions s'additionnent, +z vers le bas de
+    // l'écran et le canvas qui tourne en sens anti-trigonométrique).
+    const sin = Math.sin(heading), cos = Math.cos(heading);
     const project = (px: number, pz: number): Point2 => {
       const dx = px - x, dz = pz - z;
-      return [center + (dx * cos - dz * sin) * scale, center - (dx * sin + dz * cos) * scale];
+      return [center + (dz * sin - dx * cos) * scale, center - (dx * sin + dz * cos) * scale];
     };
 
     ctx.clearRect(0, 0, this.size, this.size);
