@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "fetch-panoramax": "node scripts/panoramax-inventaire.mjs && node scripts/panoramax-analyse.mjs"
+    "fetch-panoramax": "node scripts/panoramax-inventaire.mjs && node scripts/panoramax-analyse.mjs",
+    "fetch-facades-photo": "node scripts/panoramax-facades-photo.mjs",
+    "fetch-centre": "node scripts/panoramax-centre.mjs",
+    "fetch-sols": "node scripts/panoramax-sols.mjs",
+    "fetch-poteaux": "node scripts/panoramax-poteaux.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^9.22.2",
