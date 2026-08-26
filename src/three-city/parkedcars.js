@@ -14,7 +14,7 @@ import * as THREE from 'three';
 // Palette du parc français, pondérée par fréquence réelle : le blanc et les
 // gris dominent, les couleurs vives restent rares mais présentes (c'est leur
 // rareté qui les rend crédibles).
-const COULEURS = [
+export const COULEURS = [
   0xe8e9ea, 0xe8e9ea, 0xe8e9ea, 0xe8e9ea, 0xeceae2,   // blancs
   0xb9bcc0, 0x9a9ea3, 0x9a9ea3, 0x7c8085, 0x63666b,   // argents et gris
   0x2b2e33, 0x2b2e33, 0x1e2126,                        // noirs
@@ -34,7 +34,7 @@ const COULEURS_SCOOTER = [0x232529, 0x232529, 0x2b2e33, 0x7a2f2f, 0xe8e9ea, 0x3d
 // Silhouettes du parc, choisies par tirage pondéré. Chaque type a sa
 // géométrie propre : l'ancien gabarit unique étiré donnait 880 fois la même
 // voiture à trois tailles.
-const GABARITS = {
+export const GABARITS = {
   //            demi-long  demi-larg  bas   ceinture  habitacle: L    l     haut  recul  hayon  parebrise  poids
   compacte:     { L: 1.80, W: 0.84, H0: 0.28, H1: 0.76, CL: 1.00, CW: 0.78, CH: 1.38, dz: 0.05,  tArK: 0.80, tAvK: 0.55, poids: 0.26 },
   berline:      { L: 2.25, W: 0.88, H0: 0.28, H1: 0.75, CL: 1.05, CW: 0.80, CH: 1.34, dz: -0.30, tArK: 0.72, tAvK: 0.62, poids: 0.20 },
@@ -445,7 +445,7 @@ function eclaircir(places) {
 // Construit la géométrie d'un type de véhicule à partir de ses cotes.
 // Groupe 0 : carrosserie (couleur instanciée), groupe 1 : vitrages,
 // groupe 2 : plaques d'immatriculation.
-function construireGeometrie(t) {
+export function construireGeometrie(t) {
   const g = new THREE.BufferGeometry();
   const pos = [], nrm = [];
   const quad = (a, b, c, d, n) => {
@@ -559,10 +559,14 @@ export class VoituresGarees {
       }
       return true;
     };
-    let places = [
-      ...trouverPlaces(data, relief, roadY, passages).filter(libre),
-      ...complet,
-    ];
+    // Plus de stationnement improvisé le long des voies : les photos du
+    // bourg montrent des véhicules uniquement sur les emplacements dédiés
+    // (aires OSM et bandes marquées, fournis par `supplement`). La file de
+    // rue générée par `trouverPlaces` mettait des voitures sur tous les
+    // accotements ; la fonction est conservée mais débranchée.
+    void trouverPlaces;
+    void libre;
+    let places = [...complet];
 
     // Zone de départ dégagée : une voiture garée à cheval sur le point
     // d'apparition ferait naître le joueur à l'intérieur d'un obstacle.

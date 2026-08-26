@@ -77,6 +77,18 @@ Barrouilhet, captures de Christophe à l'appui.
   drapeau VERTICAL rouge à sigle, à la limite salon/banque (82,05, -49,15) ;
   croix verte de la pharmacie juste à côté (83,81, -50,19) : signalétique
   déportée qui capte la D32.
+- **Circulation légère et fin du stationnement d'accotement.** Nouveau
+  module traffic.js : douze véhicules sur le graphe des voies carrossables
+  (service et track exclus, rayon 1 200 m), conduite à droite (décalage
+  largeur/4 borné 1,1..2,1 m), sens uniques respectés (arêtes
+  directionnelles), vitesse par type de voie (25-45 km/h), freinage franc
+  derrière le joueur ou un congénère dans le cône avant, cap lissé aux
+  carrefours. Mêmes silhouettes et couleurs que les véhicules garés
+  (exports de parkedcars), adoptées par le LiveInstancedBridge comme les
+  passants. PAS d'obstacle physique (trafic léger qui freine : à revoir si
+  besoin). Et la file de rue de trouverPlaces est DÉBRANCHÉE : les photos
+  montrent des véhicules uniquement sur les emplacements dédiés ; ne
+  restent que les aires OSM et les bandes marquées.
 - **Voirie : deux corrections signalées en jeu.** (1) Garde-fou
   `ecarterDeChaussee` (osm.js, exporté) : tout point à moins de
   largeur/2 + marge de l'axe d'une voie carrossable est repoussé sur

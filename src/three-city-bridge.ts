@@ -23,6 +23,8 @@ import { VoituresGarees } from './three-city/parkedcars.js';
 import { parsePOI } from './three-city/poi.js';
 import { buildSignage } from './three-city/signage.js';
 import { Pietons } from './three-city/pedestrians.js';
+// @ts-ignore : module JS hérité, comme les autres imports three-city.
+import { Circulation } from './three-city/traffic.js';
 import { pointsAltitude, Terrain } from './three-city/terrain.js';
 import { Touffes } from './three-city/touffes.js';
 import { poserAnisotropie } from './three-city/textures.js';
@@ -559,6 +561,8 @@ export async function buildFaithfulArtix(
     const groupeFactice = new THREE.Group();
     const touffes = new (Touffes as any)(groupeFactice, terrain, ROAD_Y, { estPlantable: herbePlantable });
     const pietons = new (Pietons as any)(data, terrain, ROAD_Y, 110);
+    // Circulation légère : une douzaine de véhicules sur le graphe des voies.
+    const circulation = new (Circulation as any)(data, terrain, ROAD_Y, 12);
     const live = new LiveInstancedBridge(scene, converter);
     live.adopter(touffes.mesh, 'touffes-herbe');
     if (pietons.effectif) {
@@ -566,9 +570,15 @@ export async function buildFaithfulArtix(
         pietons.jambeG, pietons.jambeD, pietons.brasG, pietons.brasD];
       parties.forEach((im, i) => live.adopter(im, `pietons-${i}`));
     }
+    if (circulation.effectif) {
+      const partiesCirc = [...Object.values(circulation.caisses),
+        circulation.roues, circulation.feuxAr, circulation.feuxAv];
+      partiesCirc.forEach((im, i) => live.adopter(im as THREE.InstancedMesh, `circulation-${i}`));
+    }
     vivant = {
       update(dt: number, temps: number, x: number, z: number): void {
         if (pietons.effectif) pietons.update(Math.min(dt, .1), temps, { x, z });
+        if (circulation.effectif) circulation.update(Math.min(dt, .1), { x, z });
         touffes.maj(x, z, true);
         live.sync();
       },
