@@ -101,6 +101,10 @@ function trouverBandes(data) {
       bandes.push({
         x1, z1, x2, z2, ux, uz, nx: nx * cote, nz: nz * cote,
         len, largeurVoie: r.width,
+        // Photo avenue Edmond Rostand : les places des cités sont en ÉPI à
+        // 45°, pas en bataille. Les bandes en dur (18e RI, Leclerc, collège)
+        // restent perpendiculaires, conformes à leurs propres photos.
+        angle: 45,
       });
     }
   }
@@ -140,6 +144,23 @@ function trouverBandes(data) {
       nx: r.nx, nz: r.nz, len,
       // Dos à dos sur la ligne de fond commune : pas de retrait.
       largeurVoie: 0.2,
+    });
+  }
+
+  // Contre-allée du collège Jean Moulin, avenue de la 2ème Division Blindée,
+  // relevée sur photo : rangée de places en épi entre l'avenue et le front
+  // nord du bâtiment 1952, marquage présent mais places VIDES (c'est une
+  // dépose d'élèves : aucun véhicule sur la photo). Ligne de fond à 5,5 m du
+  // mur, places déployées vers le nord.
+  {
+    const A = [-46, -196.1], B = [-87, -202.6];
+    const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
+    bandes.push({
+      x1: A[0], z1: A[1], x2: B[0], z2: B[1],
+      ux: (B[0] - A[0]) / len, uz: (B[1] - A[1]) / len,
+      nx: 0.156, nz: -0.988, len,
+      largeurVoie: 0.2,
+      vide: true,
     });
   }
   return bandes;
@@ -192,6 +213,11 @@ export class ParkingsEpi {
       const d0 = b.largeurVoie / 2;
       const d1 = d0 + PLACE_LONGUEUR;
       const dMil = (d0 + d1) / 2;
+      // Épi à 45° : le fond de chaque place est décalé le long de la voie,
+      // et le pas longitudinal s'élargit d'un facteur racine de 2.
+      const epi = b.angle === 45;
+      const dec = epi ? -(d1 - d0) : 0;
+      const pasP = epi ? PLACE_LARGEUR * 1.414 : PLACE_LARGEUR;
 
       const p = (long, lat) => [
         b.x1 + b.ux * long + b.nx * lat,
@@ -200,32 +226,33 @@ export class ParkingsEpi {
 
       // Rognage des extrémités qui mordent une chaussée.
       let debut = 0, fin = b.len;
-      while (debut < fin && mordVoie(...p(debut + PLACE_LARGEUR / 2, dMil))) debut += PLACE_LARGEUR;
-      while (fin > debut && mordVoie(...p(fin - PLACE_LARGEUR / 2, dMil))) fin -= PLACE_LARGEUR;
+      while (debut < fin && mordVoie(...p(debut + pasP / 2, dMil))) debut += pasP;
+      while (fin > debut && mordVoie(...p(fin - pasP / 2, dMil))) fin -= pasP;
       const utile = fin - debut;
-      const n = Math.floor(utile / PLACE_LARGEUR);
+      const n = Math.floor(utile / pasP);
       if (n < 4) continue;
-      const marge = debut + (utile - n * PLACE_LARGEUR) / 2;
+      const marge = debut + (utile - n * pasP) / 2;
 
-      // Rectangle d'enrobé couvrant la partie conservée de la bande.
+      // Enrobé couvrant la partie conservée de la bande : rectangle en
+      // bataille, parallélogramme en épi (le fond suit le décalage).
       const [ax, az] = p(marge, d0);
-      const [bx, bz] = p(marge + n * PLACE_LARGEUR, d0);
-      const [cx2, cz2] = p(marge + n * PLACE_LARGEUR, d1);
-      const [dx2, dz2] = p(marge, d1);
+      const [bx, bz] = p(marge + n * pasP, d0);
+      const [cx2, cz2] = p(marge + n * pasP + dec, d1);
+      const [dx2, dz2] = p(marge + dec, d1);
       quad(enrobePos,
         ax, sol(ax, az) + Y_ENROBE, az,
         bx, sol(bx, bz) + Y_ENROBE, bz,
         cx2, sol(cx2, cz2) + Y_ENROBE, cz2,
         dx2, sol(dx2, dz2) + Y_ENROBE, dz2);
 
-      // Traits de séparation, perpendiculaires à la voie.
+      // Traits de séparation : perpendiculaires à la voie, ou obliques en épi.
       for (let k = 0; k <= n; k++) {
-        const long = marge + k * PLACE_LARGEUR;
+        const long = marge + k * pasP;
         const demi = 0.06;    // demi-largeur du trait
         const [t1x, t1z] = p(long - demi, d0);
         const [t2x, t2z] = p(long + demi, d0);
-        const [t3x, t3z] = p(long + demi, d1);
-        const [t4x, t4z] = p(long - demi, d1);
+        const [t3x, t3z] = p(long + dec + demi, d1);
+        const [t4x, t4z] = p(long + dec - demi, d1);
         quad(marquagePos,
           t1x, sol(t1x, t1z) + Y_TRAIT, t1z,
           t2x, sol(t2x, t2z) + Y_TRAIT, t2z,
@@ -233,16 +260,21 @@ export class ParkingsEpi {
           t4x, sol(t4x, t4z) + Y_TRAIT, t4z);
 
         // Une place sur deux environ est occupée : un parking plein comme un
-        // parking vide se remarquent tous les deux comme artificiels.
+        // parking vide se remarquent tous les deux comme artificiels. Sauf
+        // bande déclarée VIDE (dépose du collège : marquage sans véhicule).
         if (k === n) continue;
+        if (b.vide) continue;
         const graine = Math.abs(t1x * 13.7 + t1z * 29.3);
         if (hash(graine) > 0.55) continue;
-        const [px, pz] = p(long + PLACE_LARGEUR / 2, d0 + PLACE_LONGUEUR / 2 - 0.2);
+        const [px, pz] = p(long + pasP / 2 + dec / 2, d0 + PLACE_LONGUEUR / 2 - 0.2);
+        // Axe de la place : la normale en bataille, la bissectrice
+        // normale moins direction en épi (le fond est décalé vers -u).
+        const axeX = epi ? b.nx - b.ux : b.nx;
+        const axeZ = epi ? b.nz - b.uz : b.nz;
         this.places.push({
           x: px, z: pz, y: sol(px, pz) + roadY,
-          // Le véhicule est perpendiculaire à la voie, capot vers l'extérieur
-          // ou marche arrière selon les habitudes.
-          cap: Math.atan2(b.nx, b.nz) + (hash(graine + 7.7) > 0.45 ? 0 : Math.PI),
+          // Capot vers l'extérieur ou marche arrière selon les habitudes.
+          cap: Math.atan2(axeX, axeZ) + (hash(graine + 7.7) > 0.45 ? 0 : Math.PI),
           graine,
         });
       }

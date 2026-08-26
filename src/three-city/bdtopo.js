@@ -100,6 +100,8 @@ export const BATIMENTS_MODELISES = new Set([
   1075,   // auvent de la station-service du Leclerc : remplacé par la marquise
   1079,   // annexe masquant le parvis de la Poste : le vrai bureau donne sur rue
   1083,   // annexe attenante, même îlot : le parvis reste dégagé
+  2008,   // sas vitré de la salle polyvalente : le LiDAR lui prêtait 9 m (shed voisin)
+  2009,   // second sas vitré, même problème : reconstruits dans landmarks.js
 ]);
 
 export function parseBDTopo(raw, toitures = null, facades = null, panoramax = null) {
@@ -143,9 +145,18 @@ export function parseBDTopo(raw, toitures = null, facades = null, panoramax = nu
   // Teintes de façade relevées sur les photographies. En dessous de 0,35 de
   // confiance, la mesure repose sur une vue unique et rasante : la palette par
   // matériau reste plus sûre.
+  // Garde-fou physique : aucun enduit du bâti béarnais n'est à dominante
+  // bleue (seuls les volets le sont). Un relevé bleu vient du ciel entré dans
+  // la fenêtre de mesure (ex. bâtiment 1073 : mur « bleu ciel » 0x9EC5F0,
+  // pourtant q=1) ou d'une façade à l'ombre mesurée trop froide. Dans les
+  // deux cas la palette MAJIC est plus juste : 108 relevés sur 2 719 rejetés.
+  const teinteVraisemblable = (hex) => {
+    const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
+    return !(b > r + 12 && b > g + 6);
+  };
   const teintes = new Map();
   for (const f of facades?.facades ?? []) {
-    if ((f.q ?? 0) >= 0.35) teintes.set(f.i, f.c);
+    if ((f.q ?? 0) >= 0.35 && teinteVraisemblable(f.c)) teintes.set(f.i, f.c);
   }
 
   // Relevés Panoramax étendus : analyse systématique des panoramiques par
@@ -156,7 +167,11 @@ export function parseBDTopo(raw, toitures = null, facades = null, panoramax = nu
   // sur enduit lisse).
   const releves = new Map();
   for (const f of panoramax?.facades ?? []) {
-    if ((f.q ?? 0) >= 0.35) releves.set(f.i, f);
+    // Un mur invraisemblable n'invalide pas les volets ni le grain du même
+    // relevé : seul le mur est neutralisé.
+    if ((f.q ?? 0) >= 0.35) {
+      releves.set(f.i, f.mur != null && !teinteVraisemblable(f.mur) ? { ...f, mur: null } : f);
+    }
   }
 
   raw.batiments.forEach((b, i) => {

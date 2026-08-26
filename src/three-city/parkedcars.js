@@ -129,6 +129,15 @@ function trouverPlaces(data, relief, roadY, passages = []) {
   for (const [x, z] of carrefours) ajouterInterdit(x, z, 9);
   for (const p of passages) ajouterInterdit(p.x, p.z, 6);
 
+  // Zones SANS stationnement relevées sur photo : la dépose du collège Jean
+  // Moulin, avenue de la 2ème Division Blindée (bordure dégagée sur toute la
+  // longueur du préau, aucun véhicule au bord). Cercles le long de l'axe.
+  const ZONES_SANS_STATIONNEMENT = [
+    [-20, -202, 13], [-38, -204.5, 13], [-56, -207, 13],
+    [-74, -209.5, 13], [-91, -212, 13],
+  ];
+  for (const [x, z, r] of ZONES_SANS_STATIONNEMENT) ajouterInterdit(x, z, r);
+
   // Emprises de stationnement : là où une aire OSM borde la voie, les véhicules
   // se rangent sur ses places marquées, en épi, et non le long de la chaussée.
   // Poser les deux produisait une double file, celle de rue occupant le bord de
@@ -544,9 +553,32 @@ export class VoituresGarees {
       color: 0xd8dce0, roughness: 0.2, metalness: 0.3,
     });
 
+    // Ombre de contact instanciée : un dégradé radial couché sous chaque
+    // véhicule. Sans elle, les centaines de voitures garées flottent sur la
+    // chaussée dès que le soleil est bas : le CSM ne fournit plus d'ombre de
+    // pied nette. Même recette que le blob du véhicule joueur (main.js).
+    const ombreCanvas = document.createElement('canvas');
+    ombreCanvas.width = ombreCanvas.height = 128;
+    const octx = ombreCanvas.getContext('2d');
+    const ograd = octx.createRadialGradient(64, 64, 8, 64, 64, 62);
+    ograd.addColorStop(0, 'rgba(0,0,0,0.42)');
+    ograd.addColorStop(0.6, 'rgba(0,0,0,0.20)');
+    ograd.addColorStop(1, 'rgba(0,0,0,0)');
+    octx.fillStyle = ograd;
+    octx.fillRect(0, 0, 128, 128);
+    const ombreGeo = new THREE.PlaneGeometry(2.4, 5.2);
+    // Couchée dans la géométrie : la matrice d'instance n'a plus que la
+    // rotation de cap à porter.
+    ombreGeo.rotateX(-Math.PI / 2);
+    const ombreMat = new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(ombreCanvas),
+      transparent: true, depthWrite: false, opacity: 0.8,
+    });
+
     this.caisses = new THREE.InstancedMesh(
       caisseGeo, [caisseMat, vitreMat], places.length,
     );
+    this.ombres = new THREE.InstancedMesh(ombreGeo, ombreMat, places.length);
     // Quatre roues par véhicule, dans un seul mesh instancié.
     this.roues = new THREE.InstancedMesh(roueGeo, roueMat, places.length * 4);
     // Deux feux par extrémité.
@@ -614,23 +646,29 @@ export class VoituresGarees {
         this.feuxAv.setMatrixAt(i * 2 + f, m);
         f++;
       }
+
+      // Ombre de contact, 3 cm au-dessus de la chaussée pour éviter le
+      // scintillement, à l'échelle du gabarit.
+      m.compose(new THREE.Vector3(p.x, p.y + 0.03, p.z), q,
+        new THREE.Vector3(sx, 1, sz));
+      this.ombres.setMatrixAt(i, m);
     });
 
-    for (const mesh of [this.caisses, this.roues, this.feuxAr, this.feuxAv]) {
+    for (const mesh of [this.caisses, this.roues, this.feuxAr, this.feuxAv, this.ombres]) {
       mesh.instanceMatrix.needsUpdate = true;
     }
     if (this.caisses.instanceColor) this.caisses.instanceColor.needsUpdate = true;
 
-    this.group.add(this.caisses, this.roues, this.feuxAr, this.feuxAv);
+    this.group.add(this.caisses, this.roues, this.feuxAr, this.feuxAv, this.ombres);
     // Exposé pour le découpage spatial (`spatial.js`) : une instance de caisse
     // par véhicule, mais quatre roues et deux feux par extrémité, d'où les
     // ratios. Sans lui, les 880 véhicules garés au maximum sont dessinés en
     // entier quelle que soit la distance, la sphère englobante d'un
     // InstancedMesh ne pouvant être écartée qu'en bloc.
     this.group.userData.instances = {
-      meshes: [this.caisses, this.roues, this.feuxAr, this.feuxAv],
+      meshes: [this.caisses, this.roues, this.feuxAr, this.feuxAv, this.ombres],
       positions: places.map((p) => [p.x, p.z]),
-      ratios: [1, 4, 2, 2],
+      ratios: [1, 4, 2, 2, 1],
     };
     scene.add(this.group);
   }

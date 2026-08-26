@@ -458,23 +458,68 @@ export function buildWorld(scene, data) {
   // des couvertures de terrain, elles ne doivent jamais mordre sur la voie.
   const ZONE_Y = ROAD_Y - GARDE_SOL + 0.03;
   const zonePos = {}; // par type
+  const zoneUv = {};  // UV planaires monde, pour la texture de variation
   for (const z of data.areas) {
     const tris = triangulate(z.pts);
     const arr = (zonePos[z.kind] ??= []);
+    const uvs = (zoneUv[z.kind] ??= []);
     const altZ = (px, pz) => (relief ? relief.hauteurEn(px, pz) : 0) + ZONE_Y;
     for (const [a, b, c] of tris) {
-      arr.push(z.pts[a][0], altZ(z.pts[a][0], z.pts[a][1]), z.pts[a][1]);
-      arr.push(z.pts[b][0], altZ(z.pts[b][0], z.pts[b][1]), z.pts[b][1]);
-      arr.push(z.pts[c][0], altZ(z.pts[c][0], z.pts[c][1]), z.pts[c][1]);
+      for (const idx of [a, b, c]) {
+        const [px, pz] = z.pts[idx];
+        arr.push(px, altZ(px, pz), pz);
+        // Une tuile de 34 m : l'échelle d'une plaque d'herbe grillée, assez
+        // grande pour que la répétition ne se voie pas depuis la voiture.
+        uvs.push(px / 34, pz / 34);
+      }
     }
   }
+  // Texture de variation des surfaces VÉGÉTALES : multiplicateur autour du
+  // blanc, avec des plaques chaudes (herbe jaunie d'été) et quelques taches
+  // sombres (terre, usure). Les aplats verts uniformes faisaient maquette :
+  // ce sont eux qui trahissaient le procédural sur toutes les captures.
+  // Moyenne maintenue près du blanc : les teintes de base sont calées à
+  // l'écran sous ACES, il ne faut pas les assombrir.
+  const texVegetation = (() => {
+    const T = 256;
+    const c = document.createElement('canvas');
+    c.width = c.height = T;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = 'rgb(214,214,210)';
+    ctx.fillRect(0, 0, T, T);
+    let graine = 13;
+    const alea = () => { graine = (graine * 16807) % 2147483647; return graine / 2147483647; };
+    // Plaques jaunies, molles et larges, posées en tore (la texture répète).
+    for (let i = 0; i < 26; i++) {
+      const x = alea() * T, y = alea() * T, r = 14 + alea() * 34;
+      const chaud = alea() > 0.3;
+      for (const [ox, oy] of [[0, 0], [T, 0], [-T, 0], [0, T], [0, -T]]) {
+        const grad = ctx.createRadialGradient(x + ox, y + oy, 2, x + ox, y + oy, r);
+        grad.addColorStop(0, chaud ? 'rgba(238,224,166,0.5)' : 'rgba(150,152,138,0.4)');
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x + ox - r, y + oy - r, r * 2, r * 2);
+      }
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const VEGETAL = new Set(['forest', 'grass', 'meadow', 'farmland', 'residential',
+    'cemetery', 'vineyard', 'orchard', 'park', 'pitch', 'garden', 'sports_centre']);
   for (const [kind, pos] of Object.entries(zonePos)) {
     if (!pos.length) continue;
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    if (VEGETAL.has(kind)) {
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(zoneUv[kind], 2));
+    }
     g.computeVertexNormals();
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
       color: zoneColors[kind] ?? 0x6f8f4a, roughness: 1, side: THREE.DoubleSide,
+      map: VEGETAL.has(kind) ? texVegetation : null,
       polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 8,
     }));
     m.receiveShadow = true;
@@ -947,6 +992,26 @@ export function buildWorld(scene, data) {
       }
     }
   }
+  // Esplanade de pétanque de l'avenue Edmond Rostand, EN DUR : l'orthophoto
+  // montre une nappe de gravillons clairs bien plus large que le pitch
+  // sport=boules d'OSM (le surplus était rendu en herbe, faux). Polygone du
+  // pitch dilaté de 4,5 m, versé dans la grave compactée : posée au-dessus
+  // de la teinte plate du terrain, elle la recouvre avec le vrai grain.
+  {
+    const ESPLANADE = [
+      [-1.9, -636.9], [-10.3, -614.4], [26.5, -600.5], [34.9, -622.9],
+    ];
+    const altE = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + ROAD_Y - 0.02;
+    for (let i = 1; i < ESPLANADE.length - 1; i++) {
+      for (const k of [0, i, i + 1]) {
+        const [x, z] = ESPLANADE[k];
+        stabPos.push(x, altE(x, z), z);
+        stabUv.push(x / 4, z / 4);
+        stabNrm.push(0, 1, 0);
+      }
+    }
+  }
+
   // Marquage des places. Sans lui, un parking se lit comme une simple dalle
   // d'enrobé. On remplit chaque aire de bandes parallèles à son grand axe,
   // espacées de la largeur réglementaire d'une place.
@@ -2537,7 +2602,7 @@ export function buildWorld(scene, data) {
   const REVETEMENTS = {
     soccer:     0x4a7d3a,   // gazon de football, vert soutenu
     tennis:     0x9c5a3c,   // terre battue ocre
-    basketball: 0x7a5a48,   // enrobé teinté
+    basketball: 0x54575b,   // plateau d'enrobé gris usé (photo cité Rostand)
     handball:   0x5a6f8c,   // résine bleutée
     multi:      0x5a6f8c,   // plateau multisports
     athletics:  0xa8503c,   // piste en résine rouge

@@ -253,9 +253,20 @@ export function parseOSM(raw) {
     // boulodrome. Leur revêtement (gazon, stabilisé, béton, résine) est bien
     // plus caractéristique qu'une pelouse générique.
     if (tags.leisure === 'pitch' && isClosed(pts) && area(pts) > 60) {
+      let sport = tags.sport ?? null;
+      // Correction de données : le plateau de la cité Edmond Rostand est
+      // tagué sport=tennis dans OSM, mais les photos montrent deux paniers
+      // de basket sur un enrobé gris (les paniers sont posés en dur dans
+      // landmarks.js).
+      {
+        let cx = 0, cz = 0;
+        for (const [px2, pz2] of pts) { cx += px2; cz += pz2; }
+        cx /= pts.length; cz /= pts.length;
+        if (sport === 'tennis' && Math.hypot(cx - 24.9, cz + 655.6) < 8) sport = 'basketball';
+      }
       terrains.push({
         pts: pts.slice(0, -1),
-        sport: tags.sport ?? null,
+        sport,
         surface: tags.surface ?? null,
         nom: tags.name ?? null,
       });
