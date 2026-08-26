@@ -179,6 +179,20 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
   3D sur les bas-côtés.
 - **Lignes aériennes** : 357 poteaux triangulés depuis les panoramiques
   (+ 77 interpolés), reliés par 210 portées de caténaires paraboliques.
+- **Circulation légère** : une douzaine de véhicules parcourent les voies du
+  bourg, roulent à droite, respectent les sens uniques et freinent derrière
+  le joueur.
+- **Parc automobile varié** : cinq silhouettes (compacte, berline, break,
+  fourgonnette, fourgon) plus des scooters, plaques et rétroviseurs, palette
+  pondérée du parc français ; ombre de contact sous chaque véhicule garé.
+- **Trottoirs à bordures** dans le centre-bourg : plateau surélevé de 12 cm,
+  chant de bordure clair, interrompus aux carrefours et devant les parkings.
+- **Passages piétons à la française** : bandes parallèles à l'axe de la
+  circulation, usure mesurée passage par passage sur les panoramiques.
+- **Couronnement des toits** : chant de rive sous chaque égout, antennes
+  râteau sur un tiers des cheminées, toutes tournées vers le même émetteur.
+- **Surfaces végétales nuancées** : plaques d'herbe jaunie et taches de
+  terre, en tuile de 34 m, qui cassent les aplats verts uniformes.
 
 ### Le centre-bourg modélisé à la main
 
@@ -320,6 +334,16 @@ après avoir été prise à tort pour un parking.
 Le corridor commerçant, lui, est modélisé **à la main**, bâtiment par
 bâtiment, d'après ces mêmes photographies : voir « Le centre-bourg modélisé à
 la main » plus haut.
+
+### Outils d'inspection
+
+Deux commandes suppriment les scripts d'analyse jetables lors des séances de
+fidélité : `npm run vue -- --poi "Maison Chaudron"` extrait des panoramiques
+Panoramax un cadrage plat du lieu demandé (sélection des prises qui voient la
+façade de face, correction du contre-jour), et `npm run mesure -- --poi ...`
+sort la fiche mesurée prête à recopier : boîte orientée, gouttière LiDAR,
+arêtes et normales, façade sur rue choisie d'après le type de voie qui la
+longe.
 
 ## Comment c'est fait
 

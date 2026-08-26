@@ -25,7 +25,8 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 1. **`src/three-city/*.js`** (Three.js, hérité) : génère TOUT le visuel de la
    ville. `world.js` (bâti, routes, sols), `landmarks.js` (bâtiments
    modélisés à la main), `signage.js` (signalisation, enseignes, poteaux),
-   `parking.js`, `parkedcars.js`, `pedestrians.js`, `touffes.js`,
+   `parking.js`, `parkedcars.js` (parc garé : 5 silhouettes + scooters),
+   `traffic.js` (circulation légère), `pedestrians.js`, `touffes.js`,
    `textures.js` (textures canvas procédurales).
 2. **`src/three-city-bridge.ts`** : convertit meshes/matériaux Three → Babylon
    PBR. Contient aussi `LiveInstancedBridge` (contenu animé) et le calcul du
@@ -61,6 +62,14 @@ Objectif unique : le meilleur rendu visuel possible, vite.
   (pas `elements`).
 - Le SSL de python3 est cassé sur cette machine : utiliser `curl` pour les
   téléchargements WMS.
+- Conventions de rotation : `rotation.y = atan2(nx, nz)` oriente +Z local ;
+  pour étendre une boîte le long de (ux, uz) par son axe X, c'est
+  `atan2(-uz, ux)` (un préau posé avec la première a enjambé l'avenue).
+- La grille spatiale (`spatial.js`) exige une instance par véhicule et par
+  mesh : un maillage réparti par silhouette n'y entre pas.
+- `ecarterDeChaussee` (osm.js) : tout objet ponctuel posé près d'une voie
+  (lampadaire, poteau) doit y passer, les positions OSM et les
+  triangulations tombent parfois sur la chaussée.
 
 ## Sources de données (`public/data/`)
 

@@ -2,37 +2,51 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
-## État au 2026-08-26 (fin de session)
+## État au 2026-08-26 (fin de session du soir)
 
-Tout est commité, `npx tsc --noEmit` passe, le jeu tourne à 60 fps en profil
-Équilibré. Rien n'est en cours ni cassé.
+Tout est commité, `npx tsc --noEmit` passe. Rien n'est en cours ni cassé.
+La session du soir a livré l'outillage d'inspection, sept lieux modélisés
+en dur, et six chantiers de rendu.
 
-**Chantiers livrés** : ciel analytique + IBL + SSAO2, ambiances jour/soir/nuit
-(touche L) avec éclairage nocturne complet, volets et murets en galets,
-façades pierre, ripisylve, feuillage alpha, passants et touffes d'herbe,
-lignes aériennes (357 poteaux triangulés, 210 portées), placage photo (254
-façades + 109 HD), sols mesurés, musique en boucle, et le corridor commerçant
-du centre-bourg modélisé à la main commerce par commerce.
+**Outillage** : `npm run vue -- --poi "nom"` (photos Panoramax cadrées d'un
+lieu, lisibles avec Read) et `npm run mesure -- --poi "nom"` (fiche mesurée :
+façade sur rue par type de voie, boîte orientée, gouttière). Skills :
+`fidelite-artix` (corriger un écart signalé), `modeliser-artix` (construire
+un lieu). Plus aucun script d'analyse jetable.
 
-**Outillage** : `npm run vue -- --poi "nom"` (voir un lieu en photo réelle) et
-`npm run mesure -- --poi "nom"` (fiche mesurée prête à recopier) suppriment
-les scripts d'analyse jetables. Skills : `fidelite-artix` pour corriger un
-écart signalé, `modeliser-artix` pour construire un lieu.
+**Modélisé cette session** : carrefour CE/pharmacie complet (Atmosph'Air en
+devanture d'angle, CE façade rue avec ses trois enseignes, bandeau
+PHARMACIE anthracite, croix déportée), station Leclerc à auvent jaune et
+totem au bord de la D32, « Tendances du Moment », salle polyvalente
+(demi-lune, aileron, sheds), entrée du collège (auvent adossé, dépose sans
+voitures), citystade et fresque, cité Edmond Rostand (pétanque en
+gravillons, plateau de basket, enseignes des vallées, étendoirs).
 
-**Reprise conseillée** : lancer `npm run dev`, rouler dans le centre-bourg,
-signaler ce qui cloche par capture d'écran. La méthode qui marche est décrite
-dans CLAUDE.md (« Méthode de fidélité ») : mesurer dans les données avant de
-corriger, jamais deviner un cap ou une position.
+**Rendu** : variation des pelouses (texture de plaques), ombres de contact
+instanciées, parc garé refondu (5 silhouettes + scooters, palette pondérée),
+stationnement uniquement sur emplacements dédiés, circulation légère
+(12 véhicules, traffic.js), passages piétons à la française, aucun poteau
+sur la chaussée (ecarterDeChaussee), chants de rive et antennes râteau,
+trottoirs à bordures du centre-bourg. Minimap corrigée (rotation 2×cap).
+
+**Reprise conseillée** : `npm run dev`, rouler dans le bourg, vérifier à
+l'écran les chantiers du soir non validés visuellement : trottoirs
+(recouvrements éventuels : terrasse Au Comptoir noyée de 12 cm), trafic
+(fluidité, sens uniques), passages piétons, plaques CE/croix (hauteur vs mur
+rendu), citystade, salle polyvalente (bombé de la marquise).
 
 **Pistes ouvertes** (aucune urgente) :
-- Ajouter le salon « Atmosphear » à gauche de la Caisse d'Épargne (visible
-  sur la photo, même immeuble).
+- Plaques d'égout et avaloirs sur les chaussées du bourg ; vernis
+  (clearcoat) des carrosseries côté bridge.
+- Collision physique des trottoirs et du trafic (compromis actuels : la
+  voiture les traverse).
+- Sens d'inclinaison de l'épi 45° : dépend du sens OSM de la voie, forçage
+  par bande à prévoir si un contresens se voit.
 - Pizzeria de la place du Général de Gaulle (POI 21.8, 65.5) : encore en
-  devanture générique.
-- Touffes d'herbe du premier plan un peu sombres sur pelouse claire.
-- Placage photo : quelques cases restent à l'exposition perfectible.
-- Vérifier en roulant : côté de la croix de la pharmacie, sens de l'arrondi
-  de l'immeuble Vapozen, abri caddies du Leclerc.
+  devanture générique. Pignon à œil-de-bœuf entre station et Tendances du
+  Moment. « MATERIEL MEDICAL » vérifié ?
+- Touffes d'herbe du premier plan un peu sombres ; placage photo :
+  exposition de quelques cases.
 
 ## 2026-08-26 (suite 11) : carrefour CE/pharmacie, premier chantier des outils
 
