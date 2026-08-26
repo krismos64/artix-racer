@@ -1,12 +1,18 @@
 ---
 name: fidelite-artix
-description: Corriger ou enrichir la fidélité visuelle d'Artix (bâtiment mal placé, commerce à modéliser, parking, enseigne, sol). Utiliser dès que Christophe signale un écart avec la réalité, capture d'écran à l'appui, ou demande de modéliser un lieu en dur.
+description: Corriger un écart de fidélité visuelle d'Artix signalé depuis le jeu (bâtiment mal placé, débord sur la chaussée, enseigne en double, sol ou parking faux). Utiliser dès que Christophe signale que quelque chose cloche, capture d'écran à l'appui. Pour construire un lieu qui n'existe pas encore, voir modeliser-artix.
 ---
 
 # Fidélité visuelle d'Artix
 
 Méthode éprouvée sur des dizaines d'allers-retours. La règle d'or : **mesurer
 dans les données avant de corriger**, jamais deviner une position ou un cap.
+
+Deux outils évitent d'écrire un script d'analyse jetable :
+`node scripts/panoramax-vue.mjs --poi "nom"` (voir le lieu réel en photo) et
+`node scripts/artix-mesure.mjs --poi "nom"` (fiche mesurée : boîte orientée,
+arêtes, normales, façade sur rue). Pour CONSTRUIRE un lieu plutôt que corriger
+un écart, voir le skill `modeliser-artix`.
 
 ## 1. Diagnostiquer
 

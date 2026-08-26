@@ -12,6 +12,13 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 - Pipelines de données (voir « Sources » plus bas) :
   `fetch-panoramax`, `fetch-facades-photo`, `fetch-centre`, `fetch-sols`,
   `fetch-poteaux`
+- Outils d'inspection (aucun script jetable à écrire) :
+  - `npm run vue -- --poi "Maison Chaudron"` : cadrages plats des
+    panoramiques qui voient le lieu de face, lisibles avec Read.
+  - `npm run mesure -- --poi "Maison Chaudron"` : fiche mesurée (boîte
+    orientée, gouttière LiDAR, arêtes et normales, façade sur rue,
+    position et rotation d'une devanture). `--ortho` ajoute la commande
+    curl d'orthophoto cadrée.
 
 ## Architecture : hybride en deux couches
 
@@ -78,8 +85,11 @@ Caches locaux (gitignorés) : `.panoramax-cache/` (1 Go, photos SD),
 1. **Implanter au sol** (parkings, allées, places) : **orthophoto IGN**
    (`data.geopf.fr` WMS, Licence Ouverte) via curl. Les vues de rue ne
    suffisent pas.
-2. **Modéliser une façade** : panoramique HD → POI → arête la plus proche →
-   normale mesurée → position en dur dans `landmarks.js`.
+2. **Modéliser une façade** : `npm run mesure` donne la façade sur rue et sa
+   normale, `npm run vue` donne la photo. La façade la plus PROCHE du POI
+   n'est pas la bonne : les POI de commerce sont posés approximativement,
+   souvent dans le bâtiment. La bonne façade est celle que les prises
+   Panoramax voient de face.
 3. Un commerce modélisé à la main doit être ajouté à `dejaModelises`
    (landmarks.js) ET à la liste d'exclusion de `signage.js`, sinon enseignes
    en double.

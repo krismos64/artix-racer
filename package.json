@@ -11,7 +11,9 @@
     "fetch-facades-photo": "node scripts/panoramax-facades-photo.mjs",
     "fetch-centre": "node scripts/panoramax-centre.mjs",
     "fetch-sols": "node scripts/panoramax-sols.mjs",
-    "fetch-poteaux": "node scripts/panoramax-poteaux.mjs"
+    "fetch-poteaux": "node scripts/panoramax-poteaux.mjs",
+    "vue": "node scripts/panoramax-vue.mjs",
+    "mesure": "node scripts/artix-mesure.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^9.22.2",

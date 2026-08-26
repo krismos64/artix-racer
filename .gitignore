@@ -4,3 +4,4 @@ dist/
 npm-debug.log*
 .panoramax-cache/
 .panoramax-cache-hd/
+.vues-panoramax/
