@@ -538,7 +538,21 @@ export async function buildFaithfulArtix(
         }
       }
     }
+    // Les touffes ne poussent pas sur un terrain de sport : la pelouse d'un
+    // stade est tondue ras, et les plateaux d'enrobé encore moins. Boîtes
+    // englobantes des 27 emprises OSM, avec un mètre de marge.
+    const terrainsSport = ((data.terrains ?? []) as Array<{ pts: Array<[number, number]> }>).map((t) => {
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (const [px, pz] of t.pts) {
+        x0 = Math.min(x0, px); x1 = Math.max(x1, px);
+        z0 = Math.min(z0, pz); z1 = Math.max(z1, pz);
+      }
+      return { x0: x0 - 1, x1: x1 + 1, z0: z0 - 1, z1: z1 + 1 };
+    });
     const herbePlantable = (x: number, z: number): boolean => {
+      for (const t of terrainsSport) {
+        if (x > t.x0 && x < t.x1 && z > t.z0 && z < t.z1) return false;
+      }
       const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
       for (let ox = -1; ox <= 1; ox++) {
         for (let oz = -1; oz <= 1; oz++) {

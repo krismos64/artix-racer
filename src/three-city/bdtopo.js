@@ -102,6 +102,8 @@ export const BATIMENTS_MODELISES = new Set([
   1083,   // annexe attenante, même îlot : le parvis reste dégagé
   2008,   // sas vitré de la salle polyvalente : le LiDAR lui prêtait 9 m (shed voisin)
   2009,   // second sas vitré, même problème : reconstruits dans landmarks.js
+  1121,   // pizzeria Pronto Pizza : plain-pied à toit anthracite et pignon d'enseigne
+  1492,   // McDonald's de la zone est : pavillon à toit asymétrique, reconstruit à la main
 ]);
 
 export function parseBDTopo(raw, toitures = null, facades = null, panoramax = null) {

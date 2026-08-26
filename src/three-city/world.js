@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { couleurMur, couleurToit } from './bdtopo.js';
 import { ecarterDeChaussee } from './osm.js';
 import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce, texturerGalets, texturerFeuilles,
-  texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage,
+  texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage, texturerDamierPlace,
   texturerNormalesEau, bruit,
   relief as carteRelief, anisotropie } from './textures.js';
 import { TAILLE as TERRAIN_TAILLE, RESOLUTION as TERRAIN_RES } from './terrain.js';
@@ -34,7 +34,26 @@ function hash(n) {
 }
 
 // Triangule un polygone simple (oreilles). Suffisant pour des emprises OSM.
+// Earcut de Three d'abord : l'algorithme d'oreilles maison laisse des trous
+// sur les polygones concaves (mesuré : parking du Leclerc 482 m² couverts sur
+// 2 316, place du Général de Gaulle 1 340 sur 5 464 ; le commentaire des
+// parkings recensait déjà 52 aires en échec sur 127). L'implémentation maison
+// reste en repli pour les contours dégénérés qu'earcut refuse.
 function triangulate(pts) {
+  if (pts.length < 3) return [];
+  const tris = THREE.ShapeUtils.triangulateShape(
+    pts.map(([x, z]) => new THREE.Vector2(x, z)), []);
+  if (!tris.length) return triangulateOreilles(pts);
+  // Earcut suit le sens du contour d'entrée : chaque triangle est ramené au
+  // winding que l'algorithme maison garantissait (cross > 0 dans le plan
+  // x/z), pour que les mailles à face simple gardent leur face visible.
+  return tris.map(([a, b, c]) => {
+    const [ax, az] = pts[a], [bx, bz] = pts[b], [cx, cz] = pts[c];
+    return ((bx - ax) * (cz - az) - (bz - az) * (cx - ax)) > 0 ? [a, b, c] : [a, c, b];
+  });
+}
+
+function triangulateOreilles(pts) {
   const n = pts.length;
   if (n < 3) return [];
   const idx = [...Array(n).keys()];
@@ -1186,6 +1205,95 @@ export function buildWorld(scene, data) {
     }
   }
 
+  // ---- Esplanades piétonnes minérales -------------------------------------
+  // La place du Général de Gaulle (way pedestrian fermé, entre la mairie et
+  // les écoles Jean Moulin) était rendue en herbe : l'orthophoto IGN montre
+  // une esplanade entièrement minérale, quadrillée en diagonale de bandes
+  // pavées claires sur carrés d'enrobé (pas ~6,5 m), avec une rosace pavée.
+  // La dalle se glisse SOUS les voies (ROAD_Y) et sous les aires de
+  // stationnement (-0,02) : la circulation et les parkings restent lisibles.
+  const espPos = [], espUv = [], espNrm = [];
+  for (const e of data.esplanades ?? []) {
+    const tris = triangulate(e.pts);
+    const altEsp = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + ROAD_Y - 0.025;
+    for (const [a, b, c] of tris) {
+      for (const k of [a, b, c]) {
+        const [x, z] = e.pts[k];
+        espPos.push(x, altEsp(x, z), z);
+        // UV tournés de 45 degrés : le damier de la place est en diagonale
+        // par rapport au nord (mesuré sur l'orthophoto), une maille par tuile.
+        espUv.push((x + z) * 0.70711 / 6.5, (z - x) * 0.70711 / 6.5);
+        espNrm.push(0, 1, 0);
+      }
+    }
+  }
+
+  // ---- Piscine municipale René Pitteu -------------------------------------
+  // Les bassins ne sont ni dans OSM ni dans la BD TOPO : implantation mesurée
+  // sur l'orthophoto IGN. Grand bassin de 25 × 12,5 m à couloirs de nage,
+  // centre (397,6, 114,8), grand axe (0,48, 0,88) ; pataugeoire de 12 × 6 m
+  // dans le même axe au sud-est ; plage dallée claire autour (versée dans la
+  // grave claire, le grain convient au dallage).
+  {
+    const ux = 0.48, uz = 0.88, vx = -0.88, vz = 0.48;
+    const altPl = (px, pz) => (relief ? relief.hauteurRoute(px, pz) : 0) + ROAD_Y - 0.02;
+    const quadPlage = (cx, cz, demiU, demiV) => {
+      const coins = [
+        [cx - ux * demiU - vx * demiV, cz - uz * demiU - vz * demiV],
+        [cx + ux * demiU - vx * demiV, cz + uz * demiU - vz * demiV],
+        [cx + ux * demiU + vx * demiV, cz + uz * demiU + vz * demiV],
+        [cx - ux * demiU + vx * demiV, cz - uz * demiU + vz * demiV],
+      ];
+      for (const [a, b, c] of [[0, 1, 2], [0, 2, 3]]) {
+        for (const k of [a, b, c]) {
+          const [x, z] = coins[k];
+          stabPos.push(x, altPl(x, z), z);
+          stabUv.push(x / 4, z / 4);
+          stabNrm.push(0, 1, 0);
+        }
+      }
+    };
+    quadPlage(401, 117.5, 21, 12);
+
+    // Eau des bassins : bleu clair chloré, rugosité basse, carte de normales
+    // douce ; les couloirs du grand bassin sont peints dans la texture.
+    const texCouloirs = (() => {
+      const c = document.createElement('canvas');
+      c.width = 256; c.height = 256;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#a3d8e4';
+      ctx.fillRect(0, 0, 256, 256);
+      ctx.fillStyle = '#3f7e9c';
+      // Cinq lignes de fond régulièrement espacées, dans le sens du bassin.
+      for (let k = 1; k <= 5; k++) ctx.fillRect(0, Math.round(k * 256 / 6) - 3, 256, 6);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = anisotropie();
+      return t;
+    })();
+    const normalesPiscine = texturerNormalesEau(128);
+    normalesPiscine.repeat.set(4, 2);
+    const matGrandBassin = new THREE.MeshStandardMaterial({
+      map: texCouloirs, roughness: 0.14, metalness: 0,
+      normalMap: normalesPiscine, normalScale: new THREE.Vector2(0.25, 0.25),
+    });
+    const matPetitBassin = new THREE.MeshStandardMaterial({
+      color: 0xa9dce6, roughness: 0.14, metalness: 0,
+      normalMap: normalesPiscine, normalScale: new THREE.Vector2(0.25, 0.25),
+    });
+    const alpha = Math.atan2(uz, ux);
+    const poserBassin = (cx, cz, longU, largV, mat) => {
+      const bassin = new THREE.Mesh(new THREE.PlaneGeometry(longU, largV), mat);
+      bassin.rotation.set(-Math.PI / 2, 0, -alpha);
+      bassin.position.set(cx, altPl(cx, cz) + 0.006, cz);
+      bassin.renderOrder = 2;
+      bassin.receiveShadow = true;
+      group.add(bassin);
+    };
+    poserBassin(397.6, 114.8, 25, 12.5, matGrandBassin);
+    poserBassin(417.5, 137.5, 12, 6, matPetitBassin);
+  }
+
   // Marquage des places. Sans lui, un parking se lit comme une simple dalle
   // d'enrobé. On remplit chaque aire de bandes parallèles à son grand axe,
   // espacées de la largeur réglementaire d'une place.
@@ -1414,6 +1522,36 @@ export function buildWorld(scene, data) {
     parkMesh.renderOrder = 1;
     parkMesh.receiveShadow = true;
     group.add(parkMesh);
+  }
+
+  if (espPos.length) {
+    const damier = texturerDamierPlace(256);
+    const espMesh = meshFromArrays(espPos, espUv, espNrm,
+      new THREE.MeshStandardMaterial({
+        // La texture porte le contraste bande claire / carré d'enrobé ; la
+        // couleur reste chaude et haute pour survivre au tone mapping ACES.
+        map: damier, roughness: 0.96, color: 0x98948a, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
+      }));
+    espMesh.renderOrder = 1;
+    espMesh.receiveShadow = true;
+    group.add(espMesh);
+
+    // Rosace centrale de la place : cercle pavé mesuré sur l'orthophoto
+    // (centre (-1, -4), une dizaine de mètres), posé juste au-dessus de la
+    // dalle du damier.
+    const rosaceTex = texturerPave(256);
+    rosaceTex.repeat.set(8.3, 8.3);
+    const rosace = new THREE.Mesh(new THREE.CircleGeometry(5, 36),
+      new THREE.MeshStandardMaterial({
+        map: rosaceTex, roughness: 0.97, color: 0xa69a8f, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
+      }));
+    rosace.rotation.x = -Math.PI / 2;
+    rosace.position.set(-1, (relief ? relief.hauteurRoute(-1, -4) : 0) + ROAD_Y - 0.022, -4);
+    rosace.renderOrder = 1;
+    rosace.receiveShadow = true;
+    group.add(rosace);
   }
 
   if (stabPos.length) {
@@ -2933,6 +3071,46 @@ export function buildWorld(scene, data) {
             const a = i / 28 * Math.PI * 2, b = (i + 1) / 28 * Math.PI * 2;
             traitSol(p(Math.cos(a) * rayonC, Math.sin(a) * rayonC),
               p(Math.cos(b) * rayonC, Math.sin(b) * rayonC), largeurTrait, altTrait);
+          }
+          // Bandes de tonte : une bande transversale sur deux, un peu plus
+          // claire, posée juste au-dessus de la pelouse. C'est ce qui fait
+          // lire « stade entretenu » plutôt que « nappe verte ».
+          const teinteTonte = new THREE.Color(0x558d43);
+          const altBande = (px, pz) => altT(px, pz) + 0.012;
+          for (let u = u0; u < u1; u += 8) {
+            const uFin = Math.min(u + 4, u1);
+            const c1 = p(u, v0), c2 = p(uFin, v0), c3 = p(uFin, v1), c4 = p(u, v1);
+            for (const [ax, az, bx, bz, cx2, cz2] of [
+              [c1[0], c1[1], c2[0], c2[1], c3[0], c3[1]],
+              [c1[0], c1[1], c3[0], c3[1], c4[0], c4[1]],
+            ]) {
+              terrainPos.push(ax, altBande(ax, az), az, bx, altBande(bx, bz), bz,
+                cx2, altBande(cx2, cz2), cz2);
+              for (let k = 0; k < 3; k++) terrainCol.push(teinteTonte.r, teinteTonte.g, teinteTonte.b);
+            }
+          }
+          // Buts : montants et transversale en quads verticaux blancs, aux
+          // deux extrémités du grand axe (7,32 m d'ouverture, 2,44 m sous la
+          // barre, cotes réglementaires).
+          for (const uBut of [u0, u1]) {
+            const demiOuv = Math.min(3.66, (v1 - v0) * 0.2);
+            const gauche = p(uBut, -demiOuv), droite = p(uBut, demiOuv);
+            const yG = altTrait(gauche[0], gauche[1]), yD = altTrait(droite[0], droite[1]);
+            // Épaisseur des montants : le long de v.
+            const e = 0.06;
+            const [evx, evz] = [vx * e, vz * e];
+            for (const [px2, pz2, y] of [[gauche[0], gauche[1], yG], [droite[0], droite[1], yD]]) {
+              terrainMarkPos.push(
+                px2 - evx, y, pz2 - evz, px2 + evx, y, pz2 + evz, px2 + evx, y + 2.44, pz2 + evz,
+                px2 - evx, y, pz2 - evz, px2 + evx, y + 2.44, pz2 + evz, px2 - evx, y + 2.44, pz2 - evz,
+              );
+            }
+            terrainMarkPos.push(
+              gauche[0], yG + 2.44, gauche[1], droite[0], yD + 2.44, droite[1],
+              droite[0], yD + 2.56, droite[1],
+              gauche[0], yG + 2.44, gauche[1], droite[0], yD + 2.56, droite[1],
+              gauche[0], yG + 2.56, gauche[1],
+            );
           }
         } else if (t.sport === 'tennis') {
           const quart = (u1 - u0) * .25;

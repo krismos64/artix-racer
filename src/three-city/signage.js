@@ -711,7 +711,13 @@ export function buildSignage(data, relief, roadY) {
     for (const e of poi.equipements) {
       if (e.info?.icone !== 'commerce') continue;
       // Enseignes dédiées déjà modélisées dans landmarks.js.
-      if (['Maison Chaudron', 'CPC Invest', 'MMA', "Caisse d'Épargne", 'Pharmacie Barrouilhet', "Atmosph'Air"].includes(e.nom)) continue;
+      if (['Maison Chaudron', 'CPC Invest', 'MMA', "Caisse d'Épargne", 'Pharmacie Barrouilhet', "Atmosph'Air", 'Pizzeria',
+        'Stéphane Plaza Immobilier', 'Camguilhem', 'Human Immobilier', 'Fleur de Peau',
+        'Vins et Délices', 'Amandine Fleurs', 'Boulangerie Nola', 'C. Dolci',
+        'Pharmacie de la République', 'Média Immo', 'Centre de Beauté Fanny', 'Vapozen',
+        'Allianz', "K'Méléon", 'Hair Libre', 'Les Tontons',
+        'Guy Hoquet', 'D. Florès', 'Entendre',
+        'Super U', "Mc Donald's", 'Crédit Agricole'].includes(e.nom)) continue;
       // Bâtiment porteur : l'emprise dont une arête passe au plus près du
       // point OSM du commerce.
       let porteur = null, meilleure = 18;

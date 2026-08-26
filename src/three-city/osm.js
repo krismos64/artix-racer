@@ -160,6 +160,7 @@ function clipToRadius(pts) {
 
 export function parseOSM(raw) {
   const roads = [], buildings = [], areas = [], rails = [], water = [], barriers = [];
+  const esplanades = [];      // places piétonnes minérales (way fermé)
   const chateauxEau = [];
   const landmarkSources = [];
   const terrains = [];
@@ -175,6 +176,17 @@ export function parseOSM(raw) {
 
     if (tags.highway) {
       const kind = tags.highway;
+      // Esplanade piétonne : un `highway=pedestrian` FERMÉ décrit une place
+      // entière (place du Général de Gaulle : 61 sommets entre la mairie et
+      // les écoles Jean Moulin), pas un cheminement. Son seul ruban de 4 m
+      // dessinait un anneau et laissait l'intérieur en herbe ; la place
+      // réelle est entièrement minérale (ortho IGN : damier diagonal de
+      // dalles d'enrobé et de bandes pavées claires, rosace centrale). Le
+      // way file AUSSI en roads : son ruban disparaît sous la dalle, mais
+      // les passants (pedestrians.js) gardent leur circuit sur le pourtour.
+      if (kind === 'pedestrian' && isClosed(pts) && area(pts) > 400) {
+        esplanades.push({ pts: pts.slice(0, -1), nom: tags.name ?? null });
+      }
       const drivable = DRIVABLE.has(kind) && tags.access !== 'private' && tags.access !== 'no';
       const oneway = tags.oneway === 'yes';
       const rondPoint = tags.junction === 'roundabout' || tags.junction === 'circular';
@@ -337,7 +349,7 @@ export function parseOSM(raw) {
     }
   }
 
-  return { roads, buildings, areas, rails, water, barriers, chateauxEau, landmarkSources, terrains, parkings };
+  return { roads, buildings, areas, rails, water, barriers, chateauxEau, landmarkSources, terrains, parkings, esplanades };
 }
 
 // Cherche le point de départ : le centre du bourg, sur une vraie route

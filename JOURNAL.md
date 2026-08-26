@@ -2,6 +2,197 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 12) : pizzeria Pronto Pizza, la Poste remise dans l'axe
+
+**Pizzeria « Pronto Pizza », place du Général de Gaulle : modélisée en dur.**
+Bâtiment 1121 ajouté à `BATIMENTS_MODELISES`, pavillon de plain-pied posé sur
+le milieu de sa façade rue (arête de 12,2 m, milieu (17,42, 68,95), normale
+-1,93 rad vers l'avenue du 18e RI). Toit anthracite à deux pans, avant-corps
+sud à pignon de clins blancs portant l'enseigne noire à script doré
+(« Pronto Pizza », 05 59 53 91 31), grande baie sous store banne framboise
+délavé, entrée nord sous auvent anthracite avec panneau mural à pizza dorée
+(« COMMANDEZ AU »). « Pizzeria » ajoutée aux deux listes d'exclusion
+(devantures et enseignes génériques).
+
+- **Piège : les caps EXIF de la séquence GoPro 46fce73b sont faux de
+  plusieurs dizaines de degrés.** Les cadrages de `panoramax-vue` extrayaient
+  de mauvais secteurs (la fausse piste : un tabac du côté mairie pris pour la
+  pizzeria) et les photos ne sont pas des 360 mais des plates 4096×2160. Le
+  déblocage : filtrer l'inventaire par azimut aligné au cap caméra→cible,
+  puis lire la photo HD ENTIÈRE (`.panoramax-cache-hd/`). Les prises utiles :
+  90d6fc5d (à 16 m) et 55be8906.
+- **Piège confirmé : le POI est posé DANS le bâtiment**, et le bâtiment
+  d'à-côté (1121 visé par la première fiche) abritait en réalité Hair Libre
+  et la Poste dans les vues mal cadrées : toujours recouper avec les enseignes
+  lisibles sur les photos avant de coder.
+
+**La Poste remise dans l'axe.** L'îlot 1077 est quasi carré (23,2 × 23,4 m) :
+le PCA de `boiteOrientee` y est instable et son axe partait à l'est-ouest,
+d'où un bâtiment tourné de 90° (balcon filant et enseigne face aux voisins).
+La pose est maintenant calée sur l'arête mesurée de la façade avenue (16 m,
+milieu (28,03, 34,08), normale (-0,967, -0,256), 74 prises de face), grand
+axe `atan2(-uz, ux)`, entrée au coin nord côté carrefour comme en vrai.
+**Piège générique à retenir : sur une emprise quasi carrée, `boiteOrientee`
+ne fournit pas un cap fiable ; caler sur une arête mesurée.**
+
+**CPC Invest déplacé sur son vrai bâtiment.** Une fois la Poste dans l'axe,
+la devanture CPC (posée en dur au bout nord de l'arête de la Poste) se
+retrouvait plaquée SUR elle. La photo 5e2b9192 montre le front réel du sud
+au nord : Poste (fenêtre barreaudée, DAB au bout nord) puis, jointive au
+coin des deux îlots (30,08, 26,34), la façade anthracite CPC. Le POI CPC
+(34,1, 21,5) se projette sur l'îlot 1078, celui de la Maison Chaudron :
+devanture reposée à (31,41, 20,81), normale (-0,969, -0,246), sans toucher
+la boulangerie plus au nord. La Poste reprend ses 16 m d'arête complète.
+**Piège : deux commerces jointifs sur la photo peuvent être sur deux îlots
+BD TOPO différents ; projeter chaque POI sur SON emprise avant de partager
+une arête.**
+
+**Place du Général de Gaulle minéralisée.** Le way `highway=pedestrian`
+FERMÉ de la place (59 sommets entre la mairie et les écoles Jean Moulin)
+n'était rendu que comme un ruban de 4 m : l'intérieur restait en herbe.
+L'ortho IGN montre une esplanade entièrement minérale : damier DIAGONAL de
+carrés d'enrobé bordés de bandes pavées claires (pas ~6,5 m), rosace pavée
+vers (-1, -4), arc de platanes. Fait : `osm.js` exporte les ways pedestrian
+fermés (> 400 m²) dans `data.esplanades` (le ruban reste en roads pour le
+circuit des passants, caché sous la dalle) ; `texturerDamierPlace`
+(textures.js) porte une maille du damier, pivotée à 45° par les UV ;
+`world.js` triangule la dalle à ROAD_Y - 0,025 (sous les voies et sous les
+parkings) et pose la rosace en CircleGeometry pavée.
+
+- **Piège : l'algorithme d'oreilles maison ne couvrait que 1 340 m² des
+  5 464 m² du polygone concave.** `THREE.ShapeUtils.triangulateShape`
+  (earcut) couvre les 57/57 triangles : à préférer pour tout polygone
+  concave complexe.
+
+**Parking du Leclerc dépavé de son herbe, abri caddies remis à sa place.**
+L'herbe sur le parking venait du même bug de triangulation que la place :
+l'emprise OSM (way 34146558, 15 sommets, en L concave) ne se laissait
+couvrir qu'à 482 m² sur 2 316 par l'algorithme d'oreilles, l'herbe
+ressortait par les trous. `triangulate` est devenu un wrapper sur l'earcut
+de Three (repli maison pour les contours dégénérés, winding renormalisé
+cross > 0 pour les mailles à face simple) : le correctif profite d'un coup
+aux 52 aires sur 127 que le commentaire des parkings recensait en échec,
+plus zones, eau, terrains et dalles de toits. L'abri caddies était plaqué
+contre la façade (38, -72,5) : l'orthophoto montre son toit blanc au MILIEU
+du parking, à cheval entre deux rangées dos à dos : reposé à (43,4, -63,4),
+grand axe parallèle aux rangées (rotation -0,19 rad). À surveiller à
+l'écran : une voiture générée pourrait chevaucher l'abri (les bandes de
+stationnement ignorent son emprise).
+
+**Passe massive Panoramax : quatorze devantures relevées et posées.**
+Méthode industrialisée : inventaire croisé POI × couverture photo (32 lieux
+candidats à 10 prises ou plus), fiches `artix-mesure --json` en lot, puis
+lecture de photos HD ENTIÈRES le long des fronts (une photo montre 4 à 6
+devantures, bien plus efficace que les cadrages par POI, brouillés par les
+caps EXIF). Posé, rue commerçante ouest (avenue de la République, séquence
+fa492f76) : Stéphane Plaza, Camguilhem (BOUCHERIE, bandeau noir), HUMAN
+Immobilier (bleu roi), Fleur de Peau, Vins & Délices (vert sauge, maison en
+galets), Amandine Fleurs, Boulangerie Nola (angle anthracite à liserés
+ocre), C. Dolci (angle moderne, bandeau anthracite, logo doré). Front est
+et place : Pharmacie de la République (vert cursif), Média Immo, Centre de
+Beauté Fanny (rouge brique), Vapozen (noir, CBD/Vape), Allianz, K'Méléon
+(bandeau cintré, façade saumon).
+
+- **Piège récurrent confirmé trois fois : les POI de commerce accrochent la
+  mauvaise arête** (venelle, arrière-cour). Camguilhem et Human partagent le
+  front k6 de l'îlot 445 (24,5 m, normale (0,46, -0,89)) ; Allianz et
+  K'Méléon l'arête k5 de l'îlot 495 face à la place. Toujours recouper la
+  normale de l'arête retenue avec ce que montre la photo.
+
+**Reportés (données insuffisantes ou contradictoires)** : Les Tontons
+(façade sur place jamais vue de face par une GoPro ; enseigne ovale orange
+au coin de la rue du 45e RI), Guy Hoquet, D. Florès, Entendre, C'zen
+(fermé ?), Bibliothèque Pour Tous, Poissonnerie Borde (logo rond bleu à
+phare vu sur le flanc de l'immeuble Vapozen, POI incohérent), Hair Libre :
+sa fiche pointe le bâtiment 1079, déjà RETIRÉ du bâti comme « annexe de la
+Poste » : vérifier si 1079 est en réalité l'immeuble de Hair Libre supprimé
+à tort. Hors bourg : Auberge du Parc, Crèche, Calandreta, Gendarmerie,
+écoles Jean Sarrailh, L'Artisienne, Banque Pouyanne, Pharmacie du Plateau.
+
+**Suite de la passe : le café du centre, Hair Libre en dur, trois devantures
+de plus.** Le « café du centre » est le bistrot LES TONTONS, face à
+l'esplanade : modélisé en dur d'après le panoramique 360 cc2500e5 (la
+séquence 69c7a475 est en VRAIS équirectangulaires 5760×2880, précieux : pas
+de problème de cap) : véranda-terrasse vitrée à piliers maçonnés, bandeau
+vert « BISTROT LES TONTONS » à quilles, porche « BIENVENUE » à fronton,
+jardinières à haies taillées. Posé sur l'arête mesurée du bâtiment 498
+(normale (0,593, -0,803) vers l'esplanade), le corps 498 reste au bâti
+ordinaire comme fond. HAIR LIBRE modélisé en dur sur l'emprise 1079 :
+Christophe a confirmé que ce bâtiment (retiré à tort comme « annexe de la
+Poste ») est l'immeuble du salon, dans l'espace libre entre la Poste et
+Pronto Pizza : R+1 crème, pignon sur rue, bande de brique, bandeau
+anthracite à montant rouge-brun, médaillons cuivrés, portail garage au sud.
+Devantures ajoutées : Guy Hoquet (drapeau orange, rue au nord du carrefour
+mairie), D. Florès et Entendre (poses mesurées, teintes sobres faute de
+photo frontale).
+
+**Reportés après vérification photo** : Auberge du Parc (159 prises mais
+toutes sur le mur ARRIÈRE du chemin du Parc, l'entrée donne sur le parc :
+faible priorité), Bibliothèque Pour Tous (aucune façade lisible),
+Poissonnerie Borde, C'zen. Piège du jour : le POI « D&L Traiteur » vu en
+photo n'est PAS D. Florès, deux commerces distincts à 20 m.
+
+**Stade amélioré, piscine municipale mise en eau.** Demande de Christophe,
+avec repli assumé faute de photos exploitables du complexe : pelouse de
+stade rase et marquages, bassins en eau.
+- **Touffes bannies des terrains de sport** : `herbePlantable` (bridge ET
+  main legacy) refuse désormais les boîtes englobantes des 27 emprises
+  `data.terrains` (+1 m de marge). La pelouse d'un stade est tondue rase.
+- **Terrains de football** : bandes de tonte transversales (une bande sur
+  deux à +0,012, teinte 0x558d43 : c'est ce qui fait lire « stade entretenu »)
+  et BUTS réglementaires aux deux bouts du grand axe (7,32 m d'ouverture,
+  2,44 m sous la barre, quads verticaux dans le buffer des marquages blancs).
+  Le rectangle, la médiane et le rond central existaient déjà.
+- **Piscine René Pitteu** : les bassins ne sont ni dans OSM ni en BD TOPO :
+  implantation MESURÉE sur l'orthophoto IGN. Grand bassin 25 × 12,5 m à
+  couloirs peints dans la texture (centre (397,6, 114,8), grand axe
+  (0,48, 0,88)), pataugeoire 12 × 6 m au sud-est, plage dallée claire versée
+  dans le buffer de grave. Eau bleu clair chloré : roughness 0,14, carte de
+  normales douce (texturerNormalesEau), pas d'animation (eau calme).
+
+**Zone commerciale est : Super U, McDonald's, Crédit Agricole.** Christophe
+a fourni des captures Street View (bâtiments récents) : NON exploitées, la
+règle du projet l'interdit (sources Licence Ouverte seulement). Les sources
+licites ont suffi : Panoramax janv. 2025 montre le McDo et le CA terminés,
+et le Super U en chantier (bardage bois doré des pignons déjà posé).
+- **Super U : il manquait ENTIÈREMENT au jeu** : le bâtiment n'est pas dans
+  la BD TOPO (trop récent), seul OSM l'a (halle en L ~106 × 119 m). Construit
+  en dur sur le polygone OSM brut (murs par segments, flanc nord-est doré,
+  toit terrasse, façade d'entrée vitrée sous auvent, bandeau charte U
+  publique), plus la station-service à auvent blanc et chant rouge.
+- **McDonald's** : bâtiment 1492 retiré du bâti et reconstruit : attique
+  noir à lettres blanches et arches jaunes (deux faces), vitrage filant sur
+  soubassement latté brun, toit à deux pans asymétriques noirs à rives
+  blanches, tour de jeux rouge-orangé à toboggan, totem McDrive au
+  rond-point.
+- **Crédit Agricole** : devanture plaquée sur l'arête mesurée du bâtiment
+  tertiaire 1479 (partagé avec un cabinet comptable), bandeau anthracite.
+- Piège : le POI CA est posé sur un ÉDICULE de 4 × 1,4 m (bât 1477), pas sur
+  l'agence ; et l'ortho IGN du secteur est ANTÉRIEURE aux travaux (zone en
+  terrassement) : pour un quartier récent, croiser OSM (le plus frais),
+  Panoramax et la BD TOPO, aucune source ne suffit seule.
+- **Piège technique (capture de Christophe : Super U tout blanc)** : le pont
+  Three→Babylon convertit `instanceColor` mais IGNORE les `vertexColors` de
+  géométrie : tout mesh qui s'appuie dessus ressort blanc. Murs refaits en
+  matériau simple bardage brun-doré (0x9a7648), casquette blanche filante,
+  enseigne charte bicolore (« SUPER » bleu, carré U rouge, « Artix ») posée
+  sur la façade d'entrée ET sur le flanc nord-est visible de la route.
+
+**Changement de règle sur les sources (décision de Christophe)** : Street
+View et Google Maps ne sont plus interdits : admis en APPOINT visuel (usage
+strictement personnel, jeu jamais publié), surtout pour les bâtiments trop
+récents pour la campagne Panoramax de janv. 2025. La géométrie (positions,
+emprises, hauteurs) continue de venir des données IGN et OSM. CLAUDE.md,
+README et skill modeliser-artix mis à jour en conséquence ; les pièges de
+la session (vertexColors du pont, PCA sur emprise carrée, caps EXIF des
+séquences plates, earcut) sont remontés dans les « Pièges connus » du
+CLAUDE.md.
+
+Vérifié : `node --check` sur les JS touchés, `npx tsc --noEmit`. Validation
+visuelle : pizzeria et Super U validés/corrigés sur captures par Christophe ;
+Poste, CPC, place, parking Leclerc, dix-sept devantures, Les Tontons,
+Hair Libre, stade, piscine et zone commerciale est restent à revoir en jeu.
+
 ## État au 2026-08-26 (fin de session du soir)
 
 Tout est commité, `npx tsc --noEmit` passe. Rien n'est en cours ni cassé.

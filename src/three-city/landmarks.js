@@ -1382,7 +1382,13 @@ function construireDevanturesPOI(data, relief, roadY) {
   const commerces = (data.poi?.equipements ?? []).filter((e) =>
     e.info?.icone === 'commerce' || ['pharmacy', 'bank'].includes(e.categorie));
   const dejaModelises = new Set(['Au Comptoir', 'Maison de la Presse', 'Leclerc Express', 'Maison Chaudron',
-    'CPC Invest', 'MMA', "Caisse d'Épargne", 'Pharmacie Barrouilhet', "Atmosph'Air"]);
+    'CPC Invest', 'MMA', "Caisse d'Épargne", 'Pharmacie Barrouilhet', "Atmosph'Air", 'Pizzeria',
+    'Stéphane Plaza Immobilier', 'Camguilhem', 'Human Immobilier', 'Fleur de Peau',
+    'Vins et Délices', 'Amandine Fleurs', 'Boulangerie Nola', 'C. Dolci',
+    'Pharmacie de la République', 'Média Immo', 'Centre de Beauté Fanny', 'Vapozen',
+    'Allianz', "K'Méléon", 'Hair Libre', 'Les Tontons',
+    'Guy Hoquet', 'D. Florès', 'Entendre',
+    'Super U', "Mc Donald's", 'Crédit Agricole']);
   const palettes = ['#9b4934', '#315d68', '#4f704f', '#7d5935', '#68435f', '#285b86'];
 
   for (const e of commerces) {
@@ -2655,6 +2661,775 @@ function construireBoulangerie() {
   return g;
 }
 
+// Pizzeria « Pronto Pizza », place du Général de Gaulle. Bâtiment 1121 de la
+// BD TOPO, retiré du bâti ordinaire : pavillon de plain-pied (gouttière
+// LiDAR 2,8 m, faîtage 4,2 m) dont l'extrusion automatique aurait coiffé la
+// façade d'un toit de tuiles ; le vrai toit est gris anthracite et le pignon
+// d'enseigne à clins blancs dépasse la gouttière. Relevé Panoramax
+// (prises 90d6fc5d et 55be8906, janv. 2025) : grande baie sous store banne
+// framboise délavé, enseigne noire à lettrage doré dans le pignon, entrée au
+// nord sous auvent anthracite, panneau mural « COMMANDEZ AU 05 59 53 91 31 ».
+// Repère local : façade rue dans le plan z = 0 (face +Z), X+ vers le SUD.
+function construirePizzeria() {
+  const g = new THREE.Group();
+  const L = 12.2, PROF = 10, H_MUR = 2.8, H_FAITE = 4.2;
+
+  const blanc = new THREE.MeshStandardMaterial({ color: 0xf0eee8, roughness: 0.92 });
+  const toitMat = new THREE.MeshStandardMaterial({
+    color: 0x54565a, roughness: 0.9, side: THREE.DoubleSide,
+  });
+  const anthracite = new THREE.MeshStandardMaterial({ color: 0x3c3e42, roughness: 0.7 });
+  const noir = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.55 });
+  const vitre = new THREE.MeshStandardMaterial({ color: 0x232c31, roughness: 0.22, metalness: 0.1 });
+  // Framboise passé par des étés de plein ouest : tenu clair pour ACES.
+  const storeMat = new THREE.MeshStandardMaterial({ color: 0xc98a94, roughness: 0.85 });
+
+  // Clins horizontaux du pignon : lignes d'ombre discrètes sur blanc cassé,
+  // 1 m de bardage par tuile de texture (les UV de ShapeGeometry sont en mètres).
+  const clinsMat = (() => {
+    const T = 128;
+    const c = document.createElement('canvas');
+    c.width = c.height = T;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#f0eee8';
+    ctx.fillRect(0, 0, T, T);
+    ctx.fillStyle = '#d9d6cd';
+    for (let y = 0; y < T; y += 16) ctx.fillRect(0, y, T, 3);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = anisotropie();
+    return new THREE.MeshStandardMaterial({ map: t, roughness: 0.9, side: THREE.DoubleSide });
+  })();
+
+  // Corps principal : murs blancs sous toit à deux pans, faîte le long de la
+  // façade (LiDAR : azimut de faîtage ~30°, dans l'axe de l'arête sur rue).
+  const corps = new THREE.Mesh(new THREE.BoxGeometry(L, H_MUR, PROF), blanc);
+  corps.position.set(0, H_MUR / 2, -PROF / 2);
+  g.add(corps);
+  const pente = Math.atan2(H_FAITE - H_MUR, PROF / 2);
+  const versant = Math.hypot(H_FAITE - H_MUR, PROF / 2);
+  for (const cote of [-1, 1]) {
+    // cote -1 : pan côté rue (couvre z 0 → -PROF/2), cote 1 : pan arrière.
+    const pan = new THREE.Mesh(new THREE.PlaneGeometry(L + 0.6, versant + 0.6), toitMat);
+    pan.position.set(0, (H_MUR + H_FAITE) / 2 - 0.04, -PROF / 2 - cote * PROF / 4);
+    pan.rotation.x = -Math.PI / 2 - cote * pente;
+    g.add(pan);
+  }
+  for (const cote of [-1, 1]) {
+    const tri = new THREE.Shape();
+    tri.moveTo(-PROF / 2, 0);
+    tri.lineTo(PROF / 2, 0);
+    tri.lineTo(0, H_FAITE - H_MUR);
+    tri.closePath();
+    const pignon = new THREE.Mesh(new THREE.ShapeGeometry(tri),
+      new THREE.MeshStandardMaterial({ color: 0xf0eee8, roughness: 0.92, side: THREE.DoubleSide }));
+    pignon.position.set(cote * L / 2, H_MUR, -PROF / 2);
+    pignon.rotation.y = Math.PI / 2;
+    g.add(pignon);
+  }
+
+  // ---- Avant-corps commerçant, moitié SUD de la façade -------------------
+  // Saillie de 28 cm : soubassement et allège blancs, grande baie vitrée,
+  // store banne, pignon à clins portant l'enseigne, chapeau à deux pans qui
+  // meurt dans le pan ouest du toit principal.
+  const AC_X = 3.1, AC_L = 6.2, SAILLIE = 0.28;
+  const murBas = new THREE.Mesh(new THREE.BoxGeometry(AC_L, 2.9, SAILLIE), blanc);
+  murBas.position.set(AC_X, 1.45, SAILLIE / 2);
+  g.add(murBas);
+  const cadreBaie = new THREE.Mesh(new THREE.BoxGeometry(5.2, 1.8, 0.06), noir);
+  cadreBaie.position.set(AC_X, 1.7, SAILLIE - 0.02);
+  g.add(cadreBaie);
+  const baie = new THREE.Mesh(new THREE.PlaneGeometry(5.0, 1.6), vitre);
+  baie.position.set(AC_X, 1.7, SAILLIE + 0.02);
+  g.add(baie);
+  const tablette = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.07, 0.2), blanc);
+  tablette.position.set(AC_X, 0.78, SAILLIE + 0.04);
+  g.add(tablette);
+  const store = new THREE.Mesh(new THREE.BoxGeometry(5.3, 0.06, 0.8), storeMat);
+  store.position.set(AC_X, 2.72, SAILLIE + 0.38);
+  store.rotation.x = 0.5;
+  g.add(store);
+
+  const HAUT_PIGNON = 1.85;
+  const triAv = new THREE.Shape();
+  triAv.moveTo(-AC_L / 2, 0);
+  triAv.lineTo(AC_L / 2, 0);
+  triAv.lineTo(0, HAUT_PIGNON);
+  triAv.closePath();
+  const pignonAv = new THREE.Mesh(new THREE.ShapeGeometry(triAv), clinsMat);
+  pignonAv.position.set(AC_X, 2.9, SAILLIE);
+  g.add(pignonAv);
+  // Chapeau : faîte perpendiculaire à la rue, pans inclinés autour de Z,
+  // débordant devant le pignon pour masquer la tranche du triangle.
+  const penteAv = Math.atan2(HAUT_PIGNON, AC_L / 2);
+  const versantAv = Math.hypot(HAUT_PIGNON, AC_L / 2);
+  for (const cote of [-1, 1]) {
+    const pan = new THREE.Mesh(new THREE.BoxGeometry(versantAv + 0.55, 0.07, 3.0), toitMat);
+    pan.position.set(AC_X + cote * AC_L / 4, 2.9 + HAUT_PIGNON / 2 + 0.04, SAILLIE + 0.25 - 1.5);
+    pan.rotation.z = -cote * penteAv;
+    g.add(pan);
+  }
+
+  // Enseigne du pignon : « Pronto Pizza » en script doré, téléphone dessous.
+  const texEnseigne = (() => {
+    const Lc = 1024, Hc = 256;
+    const c = document.createElement('canvas');
+    c.width = Lc; c.height = Hc;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#191a1c';
+    ctx.fillRect(0, 0, Lc, Hc);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#d9b25c';
+    ctx.font = 'italic bold 118px "Snell Roundhand", "Brush Script MT", cursive';
+    ctx.fillText('Pronto Pizza', Lc / 2, 96);
+    ctx.fillStyle = '#efece4';
+    ctx.font = '600 52px Helvetica, Arial, sans-serif';
+    ctx.fillText('05 59 53 91 31', Lc / 2, 204);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const enseigne = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 1.1),
+    new THREE.MeshStandardMaterial({ map: texEnseigne, roughness: 0.5 }));
+  enseigne.position.set(AC_X, 3.5, SAILLIE + 0.02);
+  g.add(enseigne);
+
+  // ---- Entrée, moitié NORD de la façade ----------------------------------
+  // Le porche réel est rentrant ; plaqué à fleur comme les autres devantures,
+  // l'auvent en appentis anthracite suffit à donner la lecture.
+  const auvent = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.07, 1.0), anthracite);
+  auvent.position.set(-2.4, 2.5, 0.48);
+  auvent.rotation.x = 0.28;
+  g.add(auvent);
+  // Panneau mural : pizza dorée illustrée et numéro de commande.
+  const texPanneau = (() => {
+    const Lc = 256, Hc = 384;
+    const c = document.createElement('canvas');
+    c.width = Lc; c.height = Hc;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#191a1c';
+    ctx.fillRect(0, 0, Lc, Hc);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#d9b25c';
+    ctx.font = 'italic bold 44px "Snell Roundhand", "Brush Script MT", cursive';
+    ctx.fillText('Pronto', Lc / 2, 44);
+    ctx.fillText('Pizza', Lc / 2, 92);
+    // Pizza vue de dessus : disque doré, croûte plus claire, garnitures sombres.
+    ctx.fillStyle = '#c89a4e';
+    ctx.beginPath();
+    ctx.arc(Lc / 2, 208, 68, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#e0c07a';
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.arc(Lc / 2, 208, 63, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#5a3424';
+    for (const [dx, dy] of [[-30, -22], [18, -34], [34, 10], [-12, 26], [-38, 14], [8, -4], [24, 38]]) {
+      ctx.beginPath();
+      ctx.arc(Lc / 2 + dx, 208 + dy, 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#efece4';
+    ctx.font = '600 21px Helvetica, Arial, sans-serif';
+    ctx.fillText('COMMANDEZ AU', Lc / 2, 316);
+    ctx.fillStyle = '#d9b25c';
+    ctx.font = 'bold 27px Helvetica, Arial, sans-serif';
+    ctx.fillText('05 59 53 91 31', Lc / 2, 352);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const panneau = new THREE.Mesh(new THREE.PlaneGeometry(1.45, 2.15),
+    new THREE.MeshStandardMaterial({ map: texPanneau, roughness: 0.5 }));
+  panneau.position.set(-3.5, 1.32, 0.04);
+  g.add(panneau);
+  const cadrePorte = new THREE.Mesh(new THREE.BoxGeometry(1.3, 2.2, 0.05), blanc);
+  cadrePorte.position.set(-1.5, 1.1, 0.02);
+  g.add(cadrePorte);
+  const porte = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 2.0), vitre);
+  porte.position.set(-1.5, 1.05, 0.06);
+  g.add(porte);
+  // Petite vitrine à cadre noir près du coin nord (carte des pizzas).
+  const cadreVitrine = new THREE.Mesh(new THREE.BoxGeometry(1.35, 1.15, 0.05), noir);
+  cadreVitrine.position.set(-5.1, 1.55, 0.02);
+  g.add(cadreVitrine);
+  const vitrine = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.95), vitre);
+  vitrine.position.set(-5.1, 1.55, 0.06);
+  g.add(vitrine);
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Salon Hair Libre, entre la Poste et la pizzeria Pronto Pizza. Le bâtiment
+// 1079 avait été retiré du bâti comme « annexe de la Poste » : c'est en
+// réalité l'immeuble du salon, et le front restait TROUÉ entre la Poste et
+// la pizzeria. Relevé sur les photos (prises 55f1c083 et c6b6463c) : R+1
+// crème, toit en pignon vers la rue, bande de brique sous le toit à gauche,
+// bandeau anthracite à montant rouge-brun, « HAIR LIBRE » blanc et deux
+// médaillons cuivrés, vitrines à affiches roses, portail de garage au sud.
+// Repère local : façade rue dans le plan z = 0 (face +Z), X+ vers le SUD.
+function construireHairLibre() {
+  const g = new THREE.Group();
+  const L = 11.2, PROF = 8, H_MUR = 5.6, H_FAITE = 7.2;
+  const creme = new THREE.MeshStandardMaterial({ color: 0xf0ede4, roughness: 0.9 });
+  const anthracite = new THREE.MeshStandardMaterial({ color: 0x3a3d40, roughness: 0.6 });
+  const rougeBrun = new THREE.MeshStandardMaterial({ color: 0x8a3c2e, roughness: 0.7 });
+  const ardoise = new THREE.MeshStandardMaterial({
+    color: 0x4a4a50, roughness: 0.9, side: THREE.DoubleSide,
+  });
+  const vitre = new THREE.MeshStandardMaterial({ color: 0x24262b, roughness: 0.25, metalness: 0.1 });
+
+  const corps = new THREE.Mesh(new THREE.BoxGeometry(L, H_MUR, PROF), creme);
+  corps.position.set(0, H_MUR / 2, -PROF / 2);
+  g.add(corps);
+  // Bande de brique sous le toit, côté nord de la façade.
+  const brique = new THREE.Mesh(new THREE.BoxGeometry(3, 0.9, 0.08),
+    new THREE.MeshStandardMaterial({ color: 0x9c5a40, roughness: 0.85 }));
+  brique.position.set(-3.4, 4.9, 0.04);
+  g.add(brique);
+  // Fenêtre de l'étage et son volet roulant brun.
+  const fenetre = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.3), vitre);
+  fenetre.position.set(-0.6, 4.5, 0.03);
+  g.add(fenetre);
+  const volet = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.3, 0.05),
+    new THREE.MeshStandardMaterial({ color: 0x6a4a34, roughness: 0.8 }));
+  volet.position.set(1.6, 4.5, 0.03);
+  g.add(volet);
+
+  // Toit : pignon face à la rue (l'orthophoto montre le faîte perpendiculaire
+  // à l'avenue), deux pans qui descendent vers le nord et le sud.
+  const HAUT_PIGNON = H_FAITE - H_MUR;
+  const tri = new THREE.Shape();
+  tri.moveTo(-L / 2, 0);
+  tri.lineTo(L / 2, 0);
+  tri.lineTo(0, HAUT_PIGNON);
+  tri.closePath();
+  const pignon = new THREE.Mesh(new THREE.ShapeGeometry(tri),
+    new THREE.MeshStandardMaterial({ color: 0xf0ede4, roughness: 0.9, side: THREE.DoubleSide }));
+  pignon.position.set(0, H_MUR, 0);
+  g.add(pignon);
+  const penteT = Math.atan2(HAUT_PIGNON, L / 2);
+  const versantT = Math.hypot(HAUT_PIGNON, L / 2);
+  for (const cote of [-1, 1]) {
+    const pan = new THREE.Mesh(new THREE.BoxGeometry(versantT + 0.7, 0.09, PROF + 0.6), ardoise);
+    pan.position.set(cote * L / 4, H_MUR + HAUT_PIGNON / 2 + 0.05, -PROF / 2 + 0.15);
+    pan.rotation.z = -cote * penteT;
+    g.add(pan);
+  }
+
+  // Bandeau anthracite du RDC avec son montant vertical rouge-brun à droite,
+  // signature graphique du salon.
+  const bandeau = new THREE.Mesh(new THREE.BoxGeometry(8.6, 1.05, 0.12), anthracite);
+  bandeau.position.set(-0.9, 2.72, 0.06);
+  g.add(bandeau);
+  const montant = new THREE.Mesh(new THREE.BoxGeometry(0.5, 3.25, 0.14), rougeBrun);
+  montant.position.set(3.15, 1.63, 0.07);
+  g.add(montant);
+
+  // Enseigne : HAIR LIBRE entre deux médaillons ronds cuivrés.
+  const texEnseigne = (() => {
+    const Lc = 1024, Hc = 160;
+    const c = document.createElement('canvas');
+    c.width = Lc; c.height = Hc;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#33363a';
+    ctx.fillRect(0, 0, Lc, Hc);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#f2f2ee';
+    ctx.font = '600 66px Helvetica, Arial, sans-serif';
+    ctx.fillText('H A I R   L I B R E', Lc / 2, 62);
+    ctx.font = '600 30px Helvetica, Arial, sans-serif';
+    ctx.fillText('S A L O N   D E   C O I F F U R E', Lc / 2, 122);
+    for (const cx of [90, Lc - 90]) {
+      ctx.strokeStyle = '#b87748';
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.arc(cx, Hc / 2, 52, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = '#e8e2d6';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(cx, Hc / 2 - 34);
+      ctx.lineTo(cx, Hc / 2 + 30);
+      ctx.moveTo(cx - 20, Hc / 2 - 12);
+      ctx.lineTo(cx + 20, Hc / 2 - 12);
+      ctx.stroke();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const enseigne = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 0.95),
+    new THREE.MeshStandardMaterial({ map: texEnseigne, roughness: 0.5 }));
+  enseigne.position.set(-0.9, 2.72, 0.14);
+  g.add(enseigne);
+
+  // Vitrines sombres à affiches roses de part et d'autre de la porte.
+  const rose = new THREE.MeshStandardMaterial({ color: 0xc98a94, roughness: 0.7 });
+  for (const dx of [-3.6, -2.2, 0.6, 2.0]) {
+    const affiche = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 1.5), rose);
+    affiche.position.set(dx, 1.25, 0.09);
+    g.add(affiche);
+  }
+  const vitrineFond = new THREE.Mesh(new THREE.BoxGeometry(8.6, 2.2, 0.05), vitre);
+  vitrineFond.position.set(-0.9, 1.1, 0.02);
+  g.add(vitrineFond);
+  const porte = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 2.05), vitre);
+  porte.position.set(-0.8, 1.05, 0.1);
+  g.add(porte);
+
+  // Portail de garage au sud de la boutique.
+  const portail = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.4, 0.07),
+    new THREE.MeshStandardMaterial({ color: 0x3c3e42, roughness: 0.65 }));
+  portail.position.set(4.35, 1.2, 0.02);
+  g.add(portail);
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Bistrot « Les Tontons », le café du centre, face à l'esplanade de la place
+// du Général de Gaulle. Relevé sur le panoramique 360 cc2500e5 (janv. 2025) :
+// véranda-terrasse vitrée à structure claire et piliers maçonnés, bandeau
+// vert foncé « BISTROT LES TONTONS », porche d'entrée blanc à fronton
+// « BIENVENUE » au bout sud, jardinières basses à haies taillées devant.
+// L'ortho montre les toits blancs de la véranda à l'EST du corps du bâtiment
+// 498 (laissé au bâti ordinaire, il ferme le fond). Façade sur +Z local.
+function construireLesTontons() {
+  const g = new THREE.Group();
+  const L = 12, PROF = 3, H = 2.9;
+  const structure = new THREE.MeshStandardMaterial({ color: 0xb9c0ba, roughness: 0.6 });
+  const pilier = new THREE.MeshStandardMaterial({ color: 0x9a9a92, roughness: 0.85 });
+  const vitre = new THREE.MeshStandardMaterial({
+    color: 0x2c343a, roughness: 0.18, metalness: 0.1,
+  });
+  const vertFonce = new THREE.MeshStandardMaterial({ color: 0x2e4a34, roughness: 0.6 });
+  const blanc = new THREE.MeshStandardMaterial({ color: 0xf2f1ec, roughness: 0.7 });
+
+  // Toit plat blanc de la véranda, léger débord.
+  const toit = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, 0.14, PROF + 0.4), blanc);
+  toit.position.set(0, H + 0.07, -PROF / 2);
+  g.add(toit);
+  // Vitrage filant en façade, montants clairs, piliers maçonnés aux tiers.
+  const vitrage = new THREE.Mesh(new THREE.PlaneGeometry(L - 0.3, H - 1.0), vitre);
+  vitrage.position.set(0, 1.3, 0.01);
+  g.add(vitrage);
+  for (let k = 0; k <= 6; k++) {
+    const montant = new THREE.Mesh(new THREE.BoxGeometry(0.07, H - 0.9, 0.07), structure);
+    montant.position.set(-L / 2 + 0.15 + k * (L - 0.3) / 6, 1.32, 0.03);
+    g.add(montant);
+  }
+  for (const px of [-L / 2 + 0.3, L / 2 - 0.3]) {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.55, H, 0.55), pilier);
+    p.position.set(px, H / 2, -0.1);
+    g.add(p);
+  }
+  // Soubassement et bandeau d'enseigne vert foncé.
+  const soub = new THREE.Mesh(new THREE.BoxGeometry(L, 0.85, 0.1), structure);
+  soub.position.set(0, 0.42, 0);
+  g.add(soub);
+  const texEnseigne = (() => {
+    const Lc = 1024, Hc = 110;
+    const c = document.createElement('canvas');
+    c.width = Lc; c.height = Hc;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#2e4a34';
+    ctx.fillRect(0, 0, Lc, Hc);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#efe9d8';
+    ctx.font = 'bold 56px Georgia, serif';
+    ctx.fillText('BISTROT  LES  TONTONS', Lc / 2, Hc / 2 + 2);
+    // Silhouettes de quilles de part et d'autre, comme sur le bandeau réel.
+    ctx.fillStyle = '#e8e2d0';
+    for (const cx of [70, Lc - 70]) {
+      ctx.beginPath();
+      ctx.ellipse(cx, 72, 12, 26, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx, 34, 9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const bandeau = new THREE.Mesh(new THREE.PlaneGeometry(L - 1.2, 0.62),
+    new THREE.MeshStandardMaterial({ map: texEnseigne, roughness: 0.55 }));
+  bandeau.position.set(0, H - 0.38, 0.06);
+  g.add(bandeau);
+
+  // Porche d'entrée « BIENVENUE » au bout sud : petit volume vitré blanc à
+  // fronton triangulaire.
+  {
+    const porche = new THREE.Group();
+    const corps = new THREE.Mesh(new THREE.BoxGeometry(2.1, 2.5, 1.6), blanc);
+    corps.position.set(0, 1.25, 0);
+    porche.add(corps);
+    const porte = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 2.0), vitre);
+    porte.position.set(0, 1.05, 0.81);
+    porche.add(porte);
+    const triP = new THREE.Shape();
+    triP.moveTo(-1.15, 0);
+    triP.lineTo(1.15, 0);
+    triP.lineTo(0, 0.55);
+    triP.closePath();
+    const fronton = new THREE.Mesh(new THREE.ShapeGeometry(triP),
+      new THREE.MeshStandardMaterial({ color: 0xf2f1ec, roughness: 0.7, side: THREE.DoubleSide }));
+    fronton.position.set(0, 2.5, 0.82);
+    porche.add(fronton);
+    const texB = (() => {
+      const c = document.createElement('canvas');
+      c.width = 256; c.height = 40;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#f2f1ec';
+      ctx.fillRect(0, 0, 256, 40);
+      ctx.fillStyle = '#5a5a54';
+      ctx.font = '600 22px Helvetica, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('BIENVENUE', 128, 21);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    const mention = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.25),
+      new THREE.MeshStandardMaterial({ map: texB, roughness: 0.6 }));
+    mention.position.set(0, 2.62, 0.83);
+    porche.add(mention);
+    porche.position.set(L / 2 + 1.15, 0, 0.2);
+    g.add(porche);
+  }
+
+  // Jardinières maçonnées basses à haies taillées, en avant de la terrasse.
+  for (const dx of [-4.2, 0, 4.2]) {
+    const bac = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.55, 0.6),
+      new THREE.MeshStandardMaterial({ color: 0x8a8a82, roughness: 0.9 }));
+    bac.position.set(dx, 0.27, 4.4);
+    g.add(bac);
+    const haie = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.7, 0.5),
+      new THREE.MeshStandardMaterial({ color: 0x3f5a3a, roughness: 0.95 }));
+    haie.position.set(dx, 0.9, 4.4);
+    g.add(haie);
+  }
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Super U de la zone commerciale est. Le magasin est ABSENT de la BD TOPO
+// (bâtiment trop récent) : l'emprise vient d'OSM (halle en L de ~106 × 119 m,
+// way nommé Super U) et il manquait donc entièrement au jeu. Les prises
+// Panoramax de janv. 2025 le montrent en chantier mais confirment le bardage
+// bois doré des pignons ; l'habillage reprend la charte publique de
+// l'enseigne (carré rouge au U blanc, lettres rouges sur bandeau blanc).
+// Construit en coordonnées MONDE (polygone OSM brut), à poser en (0, 0, 0).
+function construireSuperU(sol) {
+  const g = new THREE.Group();
+  const H = 7.5;
+  const PTS = [
+    [1326, 370], [1337, 384], [1330, 390], [1365, 435], [1347, 459],
+    [1326, 474], [1323, 488], [1304, 483], [1288, 462], [1280, 468],
+    [1259, 442], [1288, 419], [1278, 407],
+  ];
+  const yBase = Math.min(...PTS.map(([x, z]) => sol(x, z))) - 0.25;
+
+  // Murs par segments : bardage bois brun-doré sur tout le tour (relevé
+  // Panoramax : la halle est entièrement bardée, teinte tenue claire pour
+  // ACES). PAS de couleurs de sommets : le pont Three vers Babylon convertit
+  // `instanceColor` mais ignore `vertexColors`, un premier jet en était
+  // ressorti tout blanc.
+  const murPos = [];
+  for (let i = 0; i < PTS.length; i++) {
+    const [x1, z1] = PTS[i], [x2, z2] = PTS[(i + 1) % PTS.length];
+    murPos.push(x1, yBase, z1, x2, yBase, z2, x2, yBase + H, z2);
+    murPos.push(x1, yBase, z1, x2, yBase + H, z2, x1, yBase + H, z1);
+  }
+  const gm = new THREE.BufferGeometry();
+  gm.setAttribute('position', new THREE.Float32BufferAttribute(murPos, 3));
+  gm.computeVertexNormals();
+  gm.computeBoundingSphere();
+  g.add(new THREE.Mesh(gm, new THREE.MeshStandardMaterial({
+    color: 0x9a7648, roughness: 0.88, side: THREE.DoubleSide,
+  })));
+
+  // Toit terrasse : le polygone triangulé à plat, gris moyen clair (ACES).
+  {
+    const forme = new THREE.Shape();
+    forme.moveTo(PTS[0][0], PTS[0][1]);
+    for (let i = 1; i < PTS.length; i++) forme.lineTo(PTS[i][0], PTS[i][1]);
+    forme.closePath();
+    const toit = new THREE.Mesh(new THREE.ShapeGeometry(forme),
+      new THREE.MeshStandardMaterial({ color: 0x9a9a96, roughness: 0.95, side: THREE.DoubleSide }));
+    toit.rotation.x = Math.PI / 2;
+    toit.position.y = yBase + H;
+    // ShapeGeometry est construit dans le plan XY : après la rotation, son Y
+    // devient -Z monde, d'où le miroir pour retomber sur les Z du polygone.
+    toit.scale.z = -1;
+    g.add(toit);
+  }
+
+  // Façade d'entrée, côté parking (segment (1365,435)→(1347,459)) : vitrage
+  // bas, auvent, et bandeau blanc au logo U.
+  {
+    const ax = 1365, az = 435, bx = 1347, bz = 459;
+    const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+    const len = Math.hypot(bx - ax, bz - az);
+    const [ux2, uz2] = [(bx - ax) / len, (bz - az) / len];
+    const [nx2, nz2] = [-uz2, ux2];  // vers le sud-est (parking)
+    const rot = Math.atan2(nx2, nz2);
+    const ySol = sol(mx, mz);
+    const vitrine = new THREE.Mesh(new THREE.PlaneGeometry(len - 6, 3),
+      new THREE.MeshStandardMaterial({ color: 0x232a30, roughness: 0.2, metalness: 0.1 }));
+    vitrine.position.set(mx + nx2 * 0.15, ySol + 1.6, mz + nz2 * 0.15);
+    vitrine.rotation.y = rot;
+    g.add(vitrine);
+    const auvent = new THREE.Mesh(new THREE.BoxGeometry(len - 4, 0.25, 4),
+      new THREE.MeshStandardMaterial({ color: 0xe8e6e0, roughness: 0.7 }));
+    auvent.position.set(mx + nx2 * 2.1, ySol + 3.6, mz + nz2 * 2.1);
+    auvent.rotation.y = Math.atan2(-uz2, ux2);
+    g.add(auvent);
+    // Casquette blanche filante en tête de façade, comme sur la halle réelle.
+    const casquette = new THREE.Mesh(new THREE.BoxGeometry(len + 1, 1.5, 0.5),
+      new THREE.MeshStandardMaterial({ color: 0xf0efe8, roughness: 0.65 }));
+    casquette.position.set(mx + nx2 * 0.3, yBase + H - 0.75, mz + nz2 * 0.3);
+    casquette.rotation.y = Math.atan2(-uz2, ux2);
+    g.add(casquette);
+    // Enseigne charte : « SUPER » en bleu, carré rouge au U blanc, « Artix »
+    // en rouge, sur fond blanc.
+    const texU = (() => {
+      const c = document.createElement('canvas');
+      c.width = 1024; c.height = 160;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#f4f3f0';
+      ctx.fillRect(0, 0, 1024, 160);
+      ctx.fillStyle = '#1a4fa0';
+      ctx.font = 'bold 104px Helvetica, Arial, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('SUPER', 90, 86);
+      ctx.fillStyle = '#d63b2f';
+      ctx.fillRect(478, 20, 120, 120);
+      ctx.fillStyle = '#f4f3f0';
+      ctx.font = 'bold 96px Helvetica, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('U', 538, 84);
+      ctx.fillStyle = '#d63b2f';
+      ctx.font = 'italic bold 60px Georgia, serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('Artix', 640, 90);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = anisotropie();
+      return t;
+    })();
+    const matEnseigneU = new THREE.MeshStandardMaterial({ map: texU, roughness: 0.55 });
+    const bandeau = new THREE.Mesh(new THREE.PlaneGeometry(14, 2.2), matEnseigneU);
+    bandeau.position.set(mx + nx2 * 0.62, yBase + H - 0.75, mz + nz2 * 0.62);
+    bandeau.rotation.y = rot;
+    g.add(bandeau);
+    // Enseigne répétée sur TOUTES les façades assez longues (16 m et plus) :
+    // le magasin se signale quel que soit le sens d'arrivée. La façade
+    // d'entrée (segment 3) garde son bandeau sur casquette, on la saute.
+    {
+      let ccx = 0, ccz = 0;
+      for (const [px, pz] of PTS) { ccx += px; ccz += pz; }
+      ccx /= PTS.length; ccz /= PTS.length;
+      for (let i = 0; i < PTS.length; i++) {
+        if (i === 3) continue;
+        const [x1, z1] = PTS[i], [x2, z2] = PTS[(i + 1) % PTS.length];
+        const dl = Math.hypot(x2 - x1, z2 - z1);
+        if (dl < 16) continue;
+        const fx = (x1 + x2) / 2, fz = (z1 + z2) / 2;
+        let qnx = (z2 - z1) / dl, qnz = -(x2 - x1) / dl;
+        if ((ccx - fx) * qnx + (ccz - fz) * qnz > 0) { qnx = -qnx; qnz = -qnz; }
+        const ens = new THREE.Mesh(new THREE.PlaneGeometry(14, 2.2), matEnseigneU);
+        ens.position.set(fx + qnx * 0.15, yBase + H - 1.3, fz + qnz * 0.15);
+        ens.rotation.y = Math.atan2(qnx, qnz);
+        g.add(ens);
+      }
+    }
+  }
+
+  // Station-service Super U au bord de la voie : auvent blanc à chant rouge
+  // sur quatre fûts (POI fuel (1402, 559)).
+  {
+    const sx = 1402.2, sz = 559.2;
+    const ySt = sol(sx, sz);
+    const auventS = new THREE.Mesh(new THREE.BoxGeometry(13, 0.5, 7),
+      new THREE.MeshStandardMaterial({ color: 0xf0efe8, roughness: 0.6 }));
+    auventS.position.set(sx, ySt + 4.6, sz);
+    g.add(auventS);
+    const chant = new THREE.Mesh(new THREE.BoxGeometry(13.1, 0.5, 0.2),
+      new THREE.MeshStandardMaterial({ color: 0xcc0f2f, roughness: 0.5 }));
+    chant.position.set(sx, ySt + 4.6, sz - 3.55);
+    g.add(chant);
+    for (const [dx, dz] of [[-5, -2.4], [5, -2.4], [-5, 2.4], [5, 2.4]]) {
+      const fut = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 4.4, 10),
+        new THREE.MeshStandardMaterial({ color: 0x9a9a96, roughness: 0.5, metalness: 0.4 }));
+      fut.position.set(sx + dx, ySt + 2.2, sz + dz);
+      g.add(fut);
+    }
+  }
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// McDonald's de la zone commerciale (bâtiment BD TOPO 1492, retiré du bâti
+// ordinaire). Relevé Panoramax 82c6553a : toit en pente asymétrique noir à
+// rives blanches, attique noir portant « McDonald's » en blanc et les arches
+// jaunes, vitrage filant sur soubassement latté brun, tour de jeux
+// rouge-orangé à toboggan au nord-est. Façade principale au NORD (-Z local),
+// vers le parking et le rond-point.
+function construireMcDo() {
+  const g = new THREE.Group();
+  const L = 27.4, PROF = 19.1, H_SOUB = 1.0, H_VITRE = 1.7, H_ATTIQUE = 1.5;
+  const latte = new THREE.MeshStandardMaterial({ color: 0x6a5644, roughness: 0.85 });
+  const noir = new THREE.MeshStandardMaterial({ color: 0x2b2b2e, roughness: 0.7 });
+  const vitre = new THREE.MeshStandardMaterial({ color: 0x262c31, roughness: 0.2, metalness: 0.1 });
+  const blanc = new THREE.MeshStandardMaterial({ color: 0xf0efe8, roughness: 0.6 });
+
+  // Corps : soubassement latté, bande vitrée filante, attique noir.
+  const soub = new THREE.Mesh(new THREE.BoxGeometry(L, H_SOUB, PROF), latte);
+  soub.position.y = H_SOUB / 2;
+  g.add(soub);
+  const cVitre = new THREE.Mesh(new THREE.BoxGeometry(L - 0.2, H_VITRE, PROF - 0.2), vitre);
+  cVitre.position.y = H_SOUB + H_VITRE / 2;
+  g.add(cVitre);
+  const attique = new THREE.Mesh(new THREE.BoxGeometry(L, H_ATTIQUE, PROF), noir);
+  attique.position.y = H_SOUB + H_VITRE + H_ATTIQUE / 2;
+  g.add(attique);
+
+  // Toit : deux pans asymétriques décalés, noirs, soulignés d'une rive
+  // blanche, la silhouette signature du pavillon.
+  const yToit = H_SOUB + H_VITRE + H_ATTIQUE;
+  for (const [dz, larg, dy, pente] of [[-PROF / 4, PROF / 2 + 2, 1.1, 0.16], [PROF / 4, PROF / 2 + 2, 1.7, -0.16]]) {
+    const pan = new THREE.Mesh(new THREE.BoxGeometry(L + 1.6, 0.18, larg), noir);
+    pan.position.set(0, yToit + dy, dz);
+    pan.rotation.x = pente;
+    g.add(pan);
+    const rive = new THREE.Mesh(new THREE.BoxGeometry(L + 1.7, 0.1, 0.5), blanc);
+    rive.position.set(0, yToit + dy + (dz < 0 ? 0.09 : 0.09), dz + (dz < 0 ? -larg / 2 + 0.2 : larg / 2 - 0.2));
+    rive.rotation.x = pente;
+    g.add(rive);
+  }
+
+  // Enseignes de l'attique : lettres blanches et arches jaunes, côté parking
+  // (nord, -Z local) et côté route (est, +X local).
+  const texMcDo = (() => {
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#2b2b2e';
+    ctx.fillRect(0, 0, 1024, 128);
+    // Arches : deux arcs de parabole pleins.
+    ctx.fillStyle = '#f2c200';
+    ctx.font = 'bold 150px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('m', 140, 52);
+    ctx.fillStyle = '#f2efe8';
+    ctx.font = 'bold 74px Helvetica, Arial, sans-serif';
+    ctx.fillText("McDonald's", 560, 66);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const yEns = H_SOUB + H_VITRE + H_ATTIQUE / 2;
+  const ensN = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.15),
+    new THREE.MeshStandardMaterial({ map: texMcDo, roughness: 0.5 }));
+  ensN.position.set(0, yEns, -PROF / 2 - 0.02);
+  ensN.rotation.y = Math.PI;
+  g.add(ensN);
+  const ensE = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.15),
+    new THREE.MeshStandardMaterial({ map: texMcDo, roughness: 0.5 }));
+  ensE.position.set(L / 2 + 0.02, yEns, 0);
+  ensE.rotation.y = Math.PI / 2;
+  g.add(ensE);
+
+  // Tour de jeux : volume rouge-orangé à panneaux, toit cintré gris, hublot
+  // et toboggan sombre : le repère des enfants, très visible de la route.
+  {
+    const tour = new THREE.Group();
+    const corps = new THREE.Mesh(new THREE.BoxGeometry(4.2, 6.2, 4.2),
+      new THREE.MeshStandardMaterial({ color: 0xb8402e, roughness: 0.6 }));
+    corps.position.y = 3.1;
+    tour.add(corps);
+    for (const [px, pz, ry] of [[0, 2.12, 0], [2.12, 0, Math.PI / 2]]) {
+      const panneau = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.6),
+        new THREE.MeshStandardMaterial({ color: 0xe8e4dc, roughness: 0.5 }));
+      panneau.position.set(px, 2.4, pz + (pz ? 0.01 : 0));
+      panneau.rotation.y = ry;
+      tour.add(panneau);
+    }
+    const hublot = new THREE.Mesh(new THREE.CircleGeometry(0.85, 20),
+      new THREE.MeshStandardMaterial({ color: 0x1e2226, roughness: 0.15, metalness: 0.1 }));
+    hublot.position.set(0, 4.9, 2.13);
+    tour.add(hublot);
+    const toitT = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 4.6, 16, 1, false, 0, Math.PI),
+      new THREE.MeshStandardMaterial({ color: 0x9a9a96, roughness: 0.7, side: THREE.DoubleSide }));
+    toitT.rotation.z = Math.PI / 2;
+    toitT.rotation.y = Math.PI / 2;
+    toitT.position.y = 6.2;
+    tour.add(toitT);
+    const toboggan = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 5.6, 12),
+      new THREE.MeshStandardMaterial({ color: 0x1f3a2c, roughness: 0.5 }));
+    toboggan.position.set(1.6, 2.6, -1.4);
+    toboggan.rotation.z = 0.7;
+    tour.add(toboggan);
+    tour.position.set(L / 2 - 2.5, 0, -PROF / 2 - 5.2);
+    g.add(tour);
+  }
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Totem McDrive au bord du rond-point d'accès : mât noir aux arches jaunes.
+function construireTotemMcDo() {
+  const g = new THREE.Group();
+  const mat = new THREE.Mesh(new THREE.BoxGeometry(1.5, 7.2, 0.5),
+    new THREE.MeshStandardMaterial({ color: 0x2b2b2e, roughness: 0.6 }));
+  mat.position.y = 3.6;
+  g.add(mat);
+  const texM = (() => {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#2b2b2e';
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillStyle = '#f2c200';
+    ctx.font = 'bold 130px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('m', 64, 58);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  for (const ry of [0, Math.PI]) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 1.35),
+      new THREE.MeshStandardMaterial({ map: texM, roughness: 0.5 }));
+    m.position.set(0, 6.2, ry ? -0.26 : 0.26);
+    m.rotation.y = ry;
+    g.add(m);
+  }
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; } });
+  return g;
+}
+
 // Devanture de commerce paramétrée, posée en absolu sur une arête mesurée :
 // bandeau à enseigne dessinée, vitrines en retrait, porte vitrée, casquette.
 function construireDevantureCommerce({ nom, sous, fond, encre, largeur }) {
@@ -3009,6 +3784,66 @@ export function buildLandmarks(data, relief, roadY) {
     tdmOuest.rotation.y = 172 * Math.PI / 180;
     group.add(tdmOuest);
 
+    // ---- Zone commerciale est (Super U, McDonald's, Crédit Agricole) -----
+    {
+      const solZC = (x, z) => (relief ? relief.hauteurRoute(x, z) : 0) + roadY;
+      // Super U : construit en coordonnées monde sur son emprise OSM.
+      group.add(construireSuperU(solZC));
+      // McDonald's : boîte orientée du bâtiment 1492 (27,4 × 19,1 m,
+      // cap 1,68 rad), façade principale vers le parking au nord.
+      const mcdo = construireMcDo();
+      mcdo.position.set(1434.04, solZC(1434.04, 531.55) - 0.15, 531.55);
+      mcdo.rotation.y = 0.109;
+      group.add(mcdo);
+      const totemM = construireTotemMcDo();
+      totemM.position.set(1412, solZC(1412, 507), 507);
+      totemM.rotation.y = Math.atan2(-0.97, -0.26);
+      group.add(totemM);
+      // Crédit Agricole : devanture sur l'arête mesurée du bâtiment
+      // tertiaire 1479 (8 m, milieu (1262,84, 543,11), normale 2,48 rad),
+      // bandeau anthracite à lettres vert enseigne.
+      const ca = construireDevantureCommerce({
+        nom: 'CRÉDIT AGRICOLE', sous: null,
+        fond: '#2e3134', encre: '#5abf8e', largeur: 7,
+      });
+      ca.position.set(1262.84, solZC(1262.84, 543.11), 543.11);
+      ca.rotation.y = 2.48;
+      group.add(ca);
+    }
+
+    // Bistrot Les Tontons, le café du centre : véranda accolée au flanc EST
+    // du bâtiment 498 (laissé au bâti ordinaire), sur l'arête mesurée
+    // (-48,69, 31,65)→(-36,81, 40,43), normale (0,593, -0,803) vers
+    // l'esplanade. La terrasse (jardinières) s'avance vers la place.
+    {
+      const tontons = construireLesTontons();
+      tontons.position.set(-41.86,
+        (relief ? relief.hauteurRoute(-41.86, 34.84) : 0) + roadY - 0.1, 34.84);
+      tontons.rotation.y = Math.atan2(0.593, -0.803);
+      group.add(tontons);
+    }
+
+    // Hair Libre : sur la façade ouest de SON emprise 1079 (11,2 m, de
+    // (24,6, 48,2) à (21,1, 58,8), normale (-0,95, -0,31) vers l'avenue),
+    // dans l'espace resté libre entre la Poste et Pronto Pizza.
+    {
+      const hairLibre = construireHairLibre();
+      hairLibre.position.set(22.85,
+        (relief ? relief.hauteurRoute(22.85, 53.5) : 0) + roadY - 0.12, 53.5);
+      hairLibre.rotation.y = Math.atan2(-0.95, -0.31);
+      group.add(hairLibre);
+    }
+
+    // Pizzeria « Pronto Pizza » : posée sur le milieu de la façade rue du
+    // bâtiment 1121 (arête de 12,2 m, milieu (17,42, 68,95), normale
+    // mesurée -1,93 rad vers l'avenue du 18e RI). Le POI fast_food
+    // (21,8, 65,5) est posé DANS le bâtiment : ne pas s'en servir.
+    const pizzeria = construirePizzeria();
+    pizzeria.position.set(17.42,
+      (relief ? relief.hauteurRoute(17.42, 68.95) : 0) + roadY - 0.12, 68.95);
+    pizzeria.rotation.y = -1.93;
+    group.add(pizzeria);
+
     // Complexe sportif de la salle polyvalente : éléments signature plaqués
     // sur la façade sud du bâtiment 1675 (voir construireComplexeSportif).
     const complexe = construireComplexeSportif(
@@ -3108,17 +3943,29 @@ export function buildLandmarks(data, relief, roadY) {
         if (d < (choix?.d ?? 16)) choix = { b, d };
       }
       if (choix) {
-        const boite = boiteOrientee(choix.b.pts);
         let sol = Infinity;
         for (const [px, pz] of choix.b.pts) {
           const h = (relief ? relief.hauteurRoute(px, pz) : 0) + roadY;
           if (h < sol) sol = h;
         }
-        const poste = construirePoste(boite);
-        poste.position.set(boite.cx, sol, boite.cz);
-        poste.rotation.y = -boite.cap;
+        // L'îlot 1077 est quasi carré (23,2 × 23,4 m) : le PCA de la boîte
+        // orientée y est instable et partait à l'est-ouest, bâtiment tourné
+        // de 90° (balcon et enseigne face aux voisins). L'aile sur rue est
+        // donc calée sur l'ARÊTE MESURÉE de la façade avenue : 16 m, du bout
+        // sud (25,98, 41,82) au bout nord (30,08, 26,34), normale extérieure
+        // (-0,967, -0,256) vers l'avenue du 18e RI (74 prises Panoramax de
+        // face). La Poste occupe TOUTE cette arête : CPC Invest, son voisin
+        // immédiat au nord sur la photo 5e2b9192, est en réalité sur l'îlot
+        // 1078, jointif au coin (30,08, 26,34). Grand axe le long de l'arête
+        // (ux, uz) = (0,256, -0,967) : rotation atan2(-uz, ux).
+        const L_POSTE = 16, W_POSTE = 11.5;
+        const cxP = 28.03 + 0.967 * (W_POSTE / 2);
+        const czP = 34.08 + 0.256 * (W_POSTE / 2);
+        const poste = construirePoste({ longueur: L_POSTE, largeur: W_POSTE });
+        poste.position.set(cxP, sol, czP);
+        poste.rotation.y = Math.atan2(0.967, 0.256);
         group.add(poste);
-        traites.push({ x: boite.cx, z: boite.cz, rayon: Math.max(boite.longueur, boite.largeur) / 2 + 3 });
+        traites.push({ x: cxP, z: czP, rayon: Math.max(L_POSTE, W_POSTE) / 2 + 3 });
       }
     }
 
@@ -3133,15 +3980,18 @@ export function buildLandmarks(data, relief, roadY) {
       group.add(boulangerie);
     }
 
-    // CPC Invest : bout sud de la façade avenue de l'îlot de la Poste
-    // (arête mesurée, normale (-0.97, -0.26)).
+    // CPC Invest : il jouxte la Poste au nord (photo 5e2b9192, la façade
+    // anthracite touche le DAB), mais sur l'îlot 1078, PAS sur celui de la
+    // Poste : POI projeté sur l'arête avenue de 1078 (17,4 m, normale
+    // (-0,969, -0,246)), à 6 m du coin commun (30,08, 26,34). La Maison
+    // Chaudron occupe la même arête plus au nord, les deux ne se touchent pas.
     {
       const cpc = construireDevantureCommerce({
         nom: 'CPC Invest', sous: 'AGENCES IMMOBILIÈRES',
         fond: '#2b2d30', encre: '#c98a4b', largeur: 6.5,
       });
-      cpc.position.set(29.4, (relief ? relief.hauteurRoute(29.4, 28.8) : 0) + roadY, 28.8);
-      cpc.rotation.y = Math.atan2(-0.97, -0.26);
+      cpc.position.set(31.41, (relief ? relief.hauteurRoute(31.41, 20.81) : 0) + roadY, 20.81);
+      cpc.rotation.y = Math.atan2(-0.969, -0.246);
       group.add(cpc);
     }
 
@@ -3192,9 +4042,108 @@ export function buildLandmarks(data, relief, roadY) {
         caddie.position.set(-1.7 + k * 0.62, 0.62, 0);
         abri.add(caddie);
       }
-      const solA = (relief ? relief.hauteurRoute(38, -72.5) : 0) + roadY;
-      abri.position.set(38, solA, -72.5);
+      // Position mesurée sur l'orthophoto IGN : le toit blanc de l'abri est
+      // au MILIEU du parking, à cheval entre deux rangées dos à dos, vers
+      // (43,4, -63,4), pas contre la façade. Grand axe parallèle aux rangées
+      // (façade sud du magasin, direction (0,982, 0,19)).
+      const solA = (relief ? relief.hauteurRoute(43.4, -63.4) : 0) + roadY;
+      abri.position.set(43.4, solA, -63.4);
+      abri.rotation.y = Math.atan2(-0.19, 0.982);
       group.add(abri);
+    }
+
+    // ---- Rue commerçante ouest (avenue de la République) -----------------
+    // Huit devantures relevées sur les prises Panoramax de la séquence
+    // fa492f76 (photos HD entières, janv. 2025) et posées sur les arêtes
+    // mesurées de leurs bâtiments. Deux pièges recoupés à la photo :
+    // Camguilhem et Human Immobilier partagent l'îlot 445, leur front commun
+    // est l'arête k6 (24,5 m, normale (0,46, -0,89) vers l'avenue), les POI
+    // mal posés faisaient retenir la venelle et l'arrière.
+    {
+      const DEVANTURES_OUEST = [
+        // Maison béarnaise d'angle au toit d'ardoise, RDC anthracite,
+        // enseigne blanche et rond rose (rendu : lettres blanches sur gris).
+        { nom: 'Stéphane Plaza', sous: 'IMMOBILIER', fond: '#3a3d40', encre: '#f2f2ee',
+          largeur: 6.5, x: -76.24, z: 49.02, rot: -0.468 },
+        // Bandeau et drapeau noirs « BOUCHERIE », portail bois à droite.
+        { nom: 'Camguilhem', sous: 'BOUCHERIE  CHARCUTERIE', fond: '#17181a', encre: '#f2efe6',
+          largeur: 6.5, x: -99.8, z: 48.1, rot: Math.atan2(0.46, -0.89) },
+        // Bandeau bleu roi HUMAN Immobilier, lettres blanches.
+        { nom: 'HUMAN', sous: 'IMMOBILIER', fond: '#1d3f8f', encre: '#f2f2ee',
+          largeur: 6.5, x: -114.8, z: 40.3, rot: Math.atan2(0.46, -0.89) },
+        // Boutique de vêtements sous linteau bois d'une maison en galets.
+        { nom: 'Fleur de Peau', sous: null, fond: '#8a6a4a', encre: '#f4efe6',
+          largeur: 4, x: -112.95, z: 30.28, rot: -0.473 },
+        // Devanture vert sauge sur maison en galets, lettrage doré.
+        { nom: 'Vins & Délices', sous: 'ÉPICERIE FINE', fond: '#6b7d5a', encre: '#d9c07a',
+          largeur: 5, x: -130.26, z: 21.4, rot: -0.471 },
+        // Potence « Fleuriste » vert sur blanc, petite façade en retrait.
+        { nom: 'Amandine Fleurs', sous: 'FLEURISTE', fond: '#eef0e8', encre: '#3f6d3f',
+          largeur: 3, x: -138.57, z: 17.84, rot: -0.431 },
+        // Devanture d'angle anthracite à encadrements jaune ocre, fermée
+        // mais l'enseigne reste (rendu : lettres crème ocré sur anthracite).
+        { nom: 'BOULANGERIE NOLA', sous: 'PÂTISSERIE', fond: '#3c3e42', encre: '#f0e8ce',
+          largeur: 5, x: -179.22, z: 7.11, rot: 2.698 },
+        // Angle moderne blanc, bandeau anthracite, logo doré cursif.
+        { nom: 'C. Dolci', sous: 'PÂTISSERIE', fond: '#33363a', encre: '#d9b25c',
+          largeur: 5, x: -66.79, z: 29.89, rot: 2.477 },
+        // Façade blanche, enseigne drapeau orange (zoom photo 613365f4),
+        // dans la rue qui monte au nord du carrefour de la mairie.
+        { nom: 'Guy Hoquet', sous: "L'IMMOBILIER", fond: '#f2f1ec', encre: '#e8730a',
+          largeur: 3.6, x: -52.44, z: 52.31, rot: -2.182 },
+        // Salon de coiffure, pose mesurée (12 prises), teintes sobres faute
+        // de photo frontale exploitable.
+        { nom: 'D. Florès', sous: 'COIFFURE', fond: '#4a4440', encre: '#e8e2d4',
+          largeur: 4, x: -149.87, z: 21.91, rot: 2.67 },
+        // Audioprothésiste : charte nationale bleu sur blanc.
+        { nom: 'Entendre', sous: 'AUDIOPROTHÉSISTE', fond: '#f2f2f0', encre: '#0a5a96',
+          largeur: 4, x: -182.32, z: 28.9, rot: -1.84 },
+      ];
+      for (const d of DEVANTURES_OUEST) {
+        const dev = construireDevantureCommerce({
+          nom: d.nom, sous: d.sous, fond: d.fond, encre: d.encre, largeur: d.largeur,
+        });
+        dev.position.set(d.x, (relief ? relief.hauteurRoute(d.x, d.z) : 0) + roadY, d.z);
+        dev.rotation.y = d.rot;
+        group.add(dev);
+      }
+    }
+
+    // ---- Front est de l'avenue et pourtour de la place -------------------
+    // Six devantures relevées sur photos HD (carrefour de la pharmacie,
+    // séquence fa492f76 et vues ciblées). Allianz et K'Méléon partagent
+    // l'arête est de l'îlot 495 face à la place (14,8 m, normale (0,87,
+    // 0,50)) : leurs POI décalés faisaient croiser les cadrages.
+    {
+      const DEVANTURES_EST = [
+        // Bandeau vert foncé à cursive blanche, croix verte, soubassement
+        // brun cuivré (rendu : bandeau vert, lettres blanches).
+        { nom: 'Pharmacie', sous: 'DE LA RÉPUBLIQUE', fond: '#1e5c38', encre: '#f2efe6',
+          largeur: 4.5, x: 9.84, z: 110.6, rot: 2.857 },
+        // Bandeau blanc, lettres bleu roi « LOCATIONS GESTION ».
+        { nom: 'MÉDIA IMMO', sous: 'LOCATIONS  GESTION', fond: '#f2f2f0', encre: '#1d50a8',
+          largeur: 6, x: 25, z: 96.4, rot: -2.019 },
+        // Bandeau rouge brique, lettres blanches, vitrine cintrée.
+        { nom: 'CENTRE DE BEAUTÉ', sous: 'Fanny', fond: '#a33f2a', encre: '#f2efe6',
+          largeur: 6, x: 12.33, z: 90.55, rot: -1.131 },
+        // Bandeau noir, lettres blanches espacées, casquette CBD/Vape.
+        { nom: 'VAPOZEN', sous: 'CBD SHOP  VAPESHOP', fond: '#141516', encre: '#f2f2ee',
+          largeur: 3.2, x: 14.03, z: 77.79, rot: -1.922 },
+        // Vitrine sous casquette grise, panonceaux bleu marine.
+        { nom: 'Allianz', sous: 'ASSURANCES', fond: '#f2f2f0', encre: '#1a3d6e',
+          largeur: 4.5, x: -23.89, z: 62.04, rot: 1.048 },
+        // Bandeau cintré blanc à lettres grises sur façade saumon.
+        { nom: "K'Méléon", sous: 'COIFFEUR · VISAGISTE', fond: '#f4f2ee', encre: '#4a4a4a',
+          largeur: 4.5, x: -28.27, z: 69.63, rot: 1.048 },
+      ];
+      for (const d of DEVANTURES_EST) {
+        const dev = construireDevantureCommerce({
+          nom: d.nom, sous: d.sous, fond: d.fond, encre: d.encre, largeur: d.largeur,
+        });
+        dev.position.set(d.x, (relief ? relief.hauteurRoute(d.x, d.z) : 0) + roadY, d.z);
+        dev.rotation.y = d.rot;
+        group.add(dev);
+      }
     }
 
     // Caisse d'Épargne : devanture RELEVÉE SUR PHOTO : lettres bleu foncé sur

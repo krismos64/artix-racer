@@ -363,6 +363,50 @@ export function texturerPave(taille = 256) {
   return tex;
 }
 
+// Damier de la place du Général de Gaulle. L'orthophoto IGN montre un
+// quadrillage diagonal : carrés d'enrobé bordés de bandes pavées claires
+// d'environ 1 m, sur un pas de 6,5 m. La tuile représente UNE maille (le
+// pivotement à 45 degrés se fait dans les UV, pas dans la texture) ; les
+// bandes portent des joints de pavés perpendiculaires pour ne pas se lire
+// comme de la peinture. Multipliée par la couleur du matériau : rester clair.
+export function texturerDamierPlace(taille = 256) {
+  const c = canvas(taille);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(taille, taille);
+  const d = img.data;
+  const grain = bruit(taille, taille, 48, 57);
+  // 1 m de bande sur une maille de 6,5 m : demi-bande de chaque côté.
+  const DEMI_BANDE = Math.round(taille * 0.5 / 6.5);
+  const JOINT = Math.max(1.5, taille / 128);
+  for (let y = 0; y < taille; y++) {
+    for (let x = 0; x < taille; x++) {
+      const i = (y * taille + x) * 4;
+      const dBordX = Math.min(x, taille - 1 - x);
+      const dBordY = Math.min(y, taille - 1 - y);
+      const surBande = dBordX < DEMI_BANDE || dBordY < DEMI_BANDE;
+      let v;
+      if (surBande) {
+        // Bande pavée claire, joints tous les ~20 cm dans le sens travers.
+        const long = dBordX < DEMI_BANDE ? y : x;
+        const pas = taille / 32;
+        v = (long % pas) < JOINT ? 168 : 226;
+      } else {
+        // Carré d'enrobé, plus sombre et plus granuleux que la bande.
+        v = 172;
+      }
+      v += (grain(x, y) - 0.5) * (surBande ? 16 : 26);
+      d[i] = d[i + 1] = d[i + 2] = Math.max(0, Math.min(255, v));
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = anisotropie();
+  return tex;
+}
+
 // Galets du gave de Pau : les murets anciens d'Artix, comme partout dans la
 // plaine du gave, sont montés en galets roulés pris dans un mortier clair.
 // C'est un motif immédiatement reconnaissable sur les photos du bourg, très
