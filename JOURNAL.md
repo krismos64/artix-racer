@@ -2,6 +2,33 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 13) : les lieux restants, relevés sur Street View
+
+Première utilisation de Street View (via Chrome piloté, imagerie mai 2026,
+bien plus fraîche que Panoramax janv. 2025) pour les lieux que Panoramax ne
+couvrait pas de face. Modélisé en dur :
+- **Gendarmerie** (bât 979 retiré du bâti) : pavillon blanc bas sous grand
+  toit à croupes débordant, bande vitrée, bandeau « GENDARMERIE NATIONALE »,
+  drapeau tricolore, clôture blanche.
+- **Banque Pouyanne** : façade-décor bardage bois sombre, trame de vitrages,
+  portiques rouge brique, casquette de monopente, deux mâts à fanions.
+- **L'Artisienne** : façade-décor à fronton à REDANS étagés, caisson noir à
+  épis dorés. Piège : la fiche retenait l'arête sud-est, la photo montre
+  l'entrée côté avenue de Castille au nord-ouest.
+- **Auberge du Parc** : décor plaqué sur le bâti (panneau peint au sapin sur
+  le pignon ouest, galerie-balcon à colombages sur l'aile, piscine bâchée
+  bleu délavé : l'auberge est À VENDRE et enherbée, état conservé).
+- **C'zen** et **Pharmacie du Plateau** : devantures (bandeau noir à
+  cursive blanche ; bandeau anthracite et mention MATÉRIEL MÉDICAL, ce qui
+  clôt la question « MATERIEL MEDICAL » des pistes ouvertes).
+
+Vu en passant : Pronto Pizza en mai 2026 confirme le modèle posé (pignon à
+enseigne noire, panneau à pizza, clins). Abandonnés après vérification :
+Poissonnerie Borde (plus de devanture visible en 2026, sans doute fermée),
+Bibliothèque Pour Tous (local sans enseigne dans le bâtiment mairie),
+école Jean Sarrailh (bâti auto correct, cour déjà équipée de ses terrains
+marqués). `node --check` et `npx tsc --noEmit` passent.
+
 ## 2026-08-26 (suite 12) : pizzeria Pronto Pizza, la Poste remise dans l'axe
 
 **Pizzeria « Pronto Pizza », place du Général de Gaulle : modélisée en dur.**

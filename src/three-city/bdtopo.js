@@ -104,6 +104,7 @@ export const BATIMENTS_MODELISES = new Set([
   2009,   // second sas vitré, même problème : reconstruits dans landmarks.js
   1121,   // pizzeria Pronto Pizza : plain-pied à toit anthracite et pignon d'enseigne
   1492,   // McDonald's de la zone est : pavillon à toit asymétrique, reconstruit à la main
+  979,    // gendarmerie : pavillon bas au grand toit à croupes, reconstruit à la main
 ]);
 
 export function parseBDTopo(raw, toitures = null, facades = null, panoramax = null) {

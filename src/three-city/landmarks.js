@@ -1388,7 +1388,9 @@ function construireDevanturesPOI(data, relief, roadY) {
     'Pharmacie de la République', 'Média Immo', 'Centre de Beauté Fanny', 'Vapozen',
     'Allianz', "K'Méléon", 'Hair Libre', 'Les Tontons',
     'Guy Hoquet', 'D. Florès', 'Entendre',
-    'Super U', "Mc Donald's", 'Crédit Agricole']);
+    'Super U', "Mc Donald's", 'Crédit Agricole',
+    "C'zen", 'Pharmacie du Plateau', "L'Artisienne", 'Banque Pouyanne',
+    'Auberge du Parc', 'Gendarmerie nationale']);
   const palettes = ['#9b4934', '#315d68', '#4f704f', '#7d5935', '#68435f', '#285b86'];
 
   for (const e of commerces) {
@@ -3430,6 +3432,321 @@ function construireTotemMcDo() {
   return g;
 }
 
+// Gendarmerie d'Artix, avenue de la Gare (bâtiment 979, retiré du bâti
+// ordinaire). Relevé Street View mai 2026 : pavillon administratif bas et
+// blanc sous un GRAND toit à croupes débordant gris-brun, bande vitrée
+// filante, bandeau « GENDARMERIE NATIONALE », drapeau, clôture blanche.
+// Façade d'accueil sur +Z local (face ouest en monde).
+function construireGendarmerie() {
+  const g = new THREE.Group();
+  const L = 27.1, PROF = 18.4, H_MUR = 3.2;
+  const blanc = new THREE.MeshStandardMaterial({ color: 0xf0efe8, roughness: 0.85 });
+  const vitre = new THREE.MeshStandardMaterial({ color: 0x262c31, roughness: 0.2, metalness: 0.1 });
+  const toitMat = new THREE.MeshStandardMaterial({
+    color: 0x55504a, roughness: 0.9, side: THREE.DoubleSide,
+  });
+
+  const corps = new THREE.Mesh(new THREE.BoxGeometry(L, H_MUR, PROF), blanc);
+  corps.position.set(0, H_MUR / 2, -PROF / 2);
+  g.add(corps);
+  const bandeVitree = new THREE.Mesh(new THREE.PlaneGeometry(L - 4, 1.3), vitre);
+  bandeVitree.position.set(0, 1.9, 0.01);
+  g.add(bandeVitree);
+
+  // Toit à croupes très débordant : pyramide tronquée aplatie, en quatre pans.
+  const DEB = 1.6, H_TOIT = 2.6;
+  const pans = new THREE.Mesh(new THREE.CylinderGeometry(
+    Math.hypot(L * 0.22, PROF * 0.22), Math.hypot(L / 2 + DEB, PROF / 2 + DEB), H_TOIT, 4),
+  toitMat);
+  pans.rotation.y = Math.PI / 4;
+  pans.scale.set(1, 1, (PROF + DEB * 2) / (L + DEB * 2));
+  pans.position.set(0, H_MUR + H_TOIT / 2, -PROF / 2);
+  g.add(pans);
+
+  // Bandeau GENDARMERIE NATIONALE au-dessus de la bande vitrée.
+  const texG = (() => {
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 96;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#1a3a7c';
+    ctx.fillRect(0, 0, 1024, 96);
+    ctx.fillStyle = '#f2f2ee';
+    ctx.font = '600 52px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('GENDARMERIE NATIONALE', 512, 50);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const bandeau = new THREE.Mesh(new THREE.PlaneGeometry(10, 0.85),
+    new THREE.MeshStandardMaterial({ map: texG, roughness: 0.55 }));
+  bandeau.position.set(0, 2.75, 0.06);
+  g.add(bandeau);
+
+  // Mât et drapeau tricolore devant l'entrée.
+  const mat = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 6.5, 8),
+    new THREE.MeshStandardMaterial({ color: 0xd8d8d4, roughness: 0.4, metalness: 0.5 }));
+  mat.position.set(-6, 3.25, 4);
+  g.add(mat);
+  const texDrapeau = (() => {
+    const c = document.createElement('canvas');
+    c.width = 96; c.height = 64;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#26437c';
+    ctx.fillRect(0, 0, 32, 64);
+    ctx.fillStyle = '#f2f2ee';
+    ctx.fillRect(32, 0, 32, 64);
+    ctx.fillStyle = '#c5334a';
+    ctx.fillRect(64, 0, 32, 64);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const drapeau = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.6),
+    new THREE.MeshStandardMaterial({ map: texDrapeau, roughness: 0.7, side: THREE.DoubleSide }));
+  drapeau.position.set(-5.5, 6, 4);
+  g.add(drapeau);
+
+  // Clôture grillagée blanche le long de la façade.
+  for (const dx of [-12, -8, -4, 0, 4, 8, 12]) {
+    const poteau = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.5, 0.07),
+      new THREE.MeshStandardMaterial({ color: 0xeceae4, roughness: 0.6 }));
+    poteau.position.set(dx, 0.75, 6.5);
+    g.add(poteau);
+  }
+  const grille = new THREE.Mesh(new THREE.PlaneGeometry(25, 1.4),
+    new THREE.MeshStandardMaterial({
+      color: 0xeceae4, roughness: 0.7, transparent: true, opacity: 0.35, side: THREE.DoubleSide,
+    }));
+  grille.position.set(0, 0.72, 6.5);
+  g.add(grille);
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Façade-décor de la Banque Pouyanne, zone est (relevé Street View mai
+// 2026) : long plain-pied contemporain, bardage bois sombre à claire-voie,
+// trame de vitrages verticaux, portiques rouge brique, monopente claire
+// débordante et deux mâts à fanions rouges. Plaquée sur le bâti ordinaire.
+function construireFacadePouyanne() {
+  const g = new THREE.Group();
+  const L = 30;
+  const bardage = new THREE.MeshStandardMaterial({ color: 0x5a4c40, roughness: 0.85 });
+  const vitre = new THREE.MeshStandardMaterial({ color: 0x2a3238, roughness: 0.2, metalness: 0.1 });
+  const rouge = new THREE.MeshStandardMaterial({ color: 0x9c3a2c, roughness: 0.7 });
+  const clair = new THREE.MeshStandardMaterial({ color: 0xd8d6d0, roughness: 0.6 });
+
+  const fond = new THREE.Mesh(new THREE.BoxGeometry(L, 3.2, 0.15), bardage);
+  fond.position.set(0, 1.6, 0);
+  g.add(fond);
+  for (let k = 0; k < 9; k++) {
+    const v = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.5), vitre);
+    v.position.set(-L / 2 + 2.5 + k * 3.1, 1.55, 0.09);
+    g.add(v);
+  }
+  for (const dx of [-L / 2 + 0.6, -L / 6, L / 6, L / 2 - 0.6]) {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.45, 3.4, 0.45), rouge);
+    p.position.set(dx, 1.7, 0.12);
+    g.add(p);
+  }
+  // Débord de la monopente au-dessus de la façade.
+  const casquette = new THREE.Mesh(new THREE.BoxGeometry(L + 1, 0.16, 1.6), clair);
+  casquette.position.set(0, 3.5, 0.55);
+  g.add(casquette);
+  // Mâts haubanés à fanions triangulaires rouges.
+  for (const dx of [-L / 4, L / 4]) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 3.4, 8),
+      new THREE.MeshStandardMaterial({ color: 0x9a9a96, roughness: 0.4, metalness: 0.5 }));
+    m.position.set(dx, 5.1, 0.2);
+    g.add(m);
+    const triF = new THREE.Shape();
+    triF.moveTo(0, 0);
+    triF.lineTo(1.1, -0.35);
+    triF.lineTo(0, -0.7);
+    triF.closePath();
+    const fanion = new THREE.Mesh(new THREE.ShapeGeometry(triF),
+      new THREE.MeshStandardMaterial({ color: 0xb8402e, roughness: 0.7, side: THREE.DoubleSide }));
+    fanion.position.set(dx + 0.05, 6.6, 0.2);
+    g.add(fanion);
+  }
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Façade-décor de L'Artisienne, avenue de Castille (relevé Street View) :
+// fronton à redans étagés gris clair, enseigne caisson noire à épis dorés,
+// entrée vitrée centrale et panneaux menu. Plaquée sur le bâti ordinaire.
+function construireFacadeArtisienne() {
+  const g = new THREE.Group();
+  const L = 14;
+  const gris = new THREE.MeshStandardMaterial({ color: 0xdedbd4, roughness: 0.85 });
+  const vitre = new THREE.MeshStandardMaterial({ color: 0x262c31, roughness: 0.2, metalness: 0.1 });
+  const noir = new THREE.MeshStandardMaterial({ color: 0x17181a, roughness: 0.55 });
+
+  const mur = new THREE.Mesh(new THREE.BoxGeometry(L, 4.6, 0.25), gris);
+  mur.position.set(0, 2.3, 0);
+  g.add(mur);
+  // Fronton à trois redans, la signature art déco du bâtiment.
+  for (const [larg, h] of [[8, 0.7], [5, 0.65], [2.6, 0.6]]) {
+    const gradin = new THREE.Mesh(new THREE.BoxGeometry(larg, h, 0.25), gris);
+    const empil = { 8: 4.6, 5: 5.3, 2.6: 5.95 }[larg];
+    gradin.position.set(0, empil + h / 2, 0);
+    g.add(gradin);
+  }
+  // Bande de soulignement gris foncé à mi-hauteur.
+  const bande = new THREE.Mesh(new THREE.BoxGeometry(L, 0.25, 0.27), noir);
+  bande.position.set(0, 2.95, 0);
+  g.add(bande);
+  const texA = (() => {
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 160;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#141516';
+    ctx.fillRect(0, 0, 1024, 160);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#e8dfc0';
+    ctx.font = 'italic bold 72px Georgia, serif';
+    ctx.fillText("L'Artisienne", 512, 58);
+    ctx.fillStyle = '#d9b25c';
+    ctx.font = '600 36px Helvetica, Arial, sans-serif';
+    ctx.fillText('BOULANGERIE  PÂTISSERIE  ARTISANALE', 512, 122);
+    // Épis de blé stylisés de part et d'autre.
+    ctx.strokeStyle = '#d9b25c';
+    ctx.lineWidth = 5;
+    for (const cx of [86, 938]) {
+      ctx.beginPath();
+      ctx.moveTo(cx, 132);
+      ctx.lineTo(cx, 34);
+      ctx.stroke();
+      for (let k = 0; k < 4; k++) {
+        const y = 46 + k * 20;
+        ctx.beginPath();
+        ctx.moveTo(cx, y);
+        ctx.lineTo(cx - 14, y - 12);
+        ctx.moveTo(cx, y);
+        ctx.lineTo(cx + 14, y - 12);
+        ctx.stroke();
+      }
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const caisson = new THREE.Mesh(new THREE.BoxGeometry(8.5, 1.35, 0.2),
+    new THREE.MeshStandardMaterial({ map: texA, roughness: 0.5 }));
+  caisson.position.set(0, 3.9, 0.18);
+  g.add(caisson);
+  const entree = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 2.3), vitre);
+  entree.position.set(0, 1.2, 0.14);
+  g.add(entree);
+  for (const dx of [-3.2, 3.2]) {
+    const menu = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.9), noir);
+    menu.position.set(dx, 1.25, 0.14);
+    g.add(menu);
+  }
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Décor de l'Auberge du Parc (relevés Street View mai 2026 et Panoramax) :
+// panneau peint au sapin sur le pignon ouest, façade-décor de l'aile à
+// colombages avec galerie-balcon bois filante, ancienne piscine bâchée.
+// L'auberge est à vendre et enherbée : l'état actuel est conservé.
+function construireDecorAuberge(sol) {
+  const g = new THREE.Group();
+  const boisSombre = new THREE.MeshStandardMaterial({ color: 0x4a3828, roughness: 0.85 });
+  // Panneau « Auberge du Parc » du pignon ouest, légèrement incliné.
+  const texP = (() => {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 256;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#f0ede2';
+    ctx.fillRect(0, 0, 512, 256);
+    ctx.strokeStyle = '#3f6d3f';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(8, 8, 496, 240);
+    ctx.fillStyle = '#3f6d3f';
+    // Sapin stylisé à gauche.
+    for (let k = 0; k < 3; k++) {
+      const y = 70 + k * 40, w = 30 + k * 16;
+      ctx.beginPath();
+      ctx.moveTo(90, y - 34);
+      ctx.lineTo(90 - w / 2, y);
+      ctx.lineTo(90 + w / 2, y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillRect(84, 180, 12, 26);
+    ctx.font = 'italic bold 52px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Auberge', 320, 90);
+    ctx.fillText('du Parc', 320, 150);
+    ctx.font = '600 26px Helvetica, Arial, sans-serif';
+    ctx.fillText('Bar · Restaurant', 320, 210);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  // Sur le pignon ouest (arête 0 : milieu (-200,87, 151,39), normale
+  // (-0,55, -0,84)), en hauteur comme le panneau réel.
+  const panneau = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.7),
+    new THREE.MeshStandardMaterial({ map: texP, roughness: 0.6 }));
+  panneau.position.set(-200.87 - 0.55 * 0.2, sol(-200.87, 151.39) + 4.6, 151.39 - 0.84 * 0.2);
+  panneau.rotation.y = Math.atan2(-0.55, -0.84);
+  panneau.rotation.z = 0.06;
+  g.add(panneau);
+
+  // Aile à colombages : galerie-balcon bois filante sur la façade nord-est
+  // (arête 4 : milieu (-181,22, 150,80), normale (0,84, -0,54)).
+  {
+    const cx = -181.22, cz = 150.80, nx = 0.84, nz = -0.54;
+    const rot = Math.atan2(nx, nz);
+    const ySol = sol(cx, cz);
+    const aile = new THREE.Group();
+    // Colombages : traverses brunes sur l'enduit crème du bâti (plaquées).
+    for (const dx of [-6, -3, 0, 3, 6]) {
+      const colomb = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.2, 0.06), boisSombre);
+      colomb.position.set(dx, 4.4, 0.1);
+      aile.add(colomb);
+    }
+    const lisseH = new THREE.Mesh(new THREE.BoxGeometry(14, 0.18, 0.06), boisSombre);
+    lisseH.position.set(0, 3.3, 0.1);
+    aile.add(lisseH);
+    // Galerie : plancher, garde-corps à barreaux, consoles.
+    const plancher = new THREE.Mesh(new THREE.BoxGeometry(14, 0.12, 1.1), boisSombre);
+    plancher.position.set(0, 3.1, 0.65);
+    aile.add(plancher);
+    const lisse = new THREE.Mesh(new THREE.BoxGeometry(14, 0.08, 0.08), boisSombre);
+    lisse.position.set(0, 4.1, 1.15);
+    aile.add(lisse);
+    for (let k = 0; k < 18; k++) {
+      const barreau = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.95, 0.05), boisSombre);
+      barreau.position.set(-6.7 + k * 0.79, 3.62, 1.15);
+      aile.add(barreau);
+    }
+    aile.position.set(cx, ySol, cz);
+    aile.rotation.y = rot;
+    g.add(aile);
+  }
+
+  // Ancienne piscine bâchée, bleu délavé, dans la cour sud-ouest.
+  const bache = new THREE.Mesh(new THREE.PlaneGeometry(8, 4),
+    new THREE.MeshStandardMaterial({ color: 0x7fa8c0, roughness: 0.85 }));
+  bache.rotation.x = -Math.PI / 2;
+  bache.rotation.z = -1.16;
+  bache.position.set(-191.5, sol(-191.5, 159.5) + 0.03, 159.5);
+  g.add(bache);
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
 // Devanture de commerce paramétrée, posée en absolu sur une arête mesurée :
 // bandeau à enseigne dessinée, vitrines en retrait, porte vitrée, casquette.
 function construireDevantureCommerce({ nom, sous, fond, encre, largeur }) {
@@ -3811,6 +4128,33 @@ export function buildLandmarks(data, relief, roadY) {
       group.add(ca);
     }
 
+    // ---- Lieux relevés sur Street View (mai 2026) ------------------------
+    {
+      const solSV = (x, z) => (relief ? relief.hauteurRoute(x, z) : 0) + roadY;
+      // Gendarmerie : boîte orientée du bâtiment 979 (27,1 × 18,4 m), façade
+      // d'accueil à l'ouest (normale mesurée (-0,95, -0,31)).
+      const gendarmerie = construireGendarmerie();
+      gendarmerie.position.set(270.1, solSV(270.1, 321.9) - 0.12, 321.9);
+      gendarmerie.rotation.y = Math.atan2(-0.95, -0.31);
+      group.add(gendarmerie);
+      // Banque Pouyanne : façade-décor plaquée sur la longue façade nord-est
+      // du bâtiment 655 (normale (0,72, -0,69)).
+      const pouyanne = construireFacadePouyanne();
+      pouyanne.position.set(656.3, solSV(656.3, 539.8), 539.8);
+      pouyanne.rotation.y = Math.atan2(0.72, -0.69);
+      group.add(pouyanne);
+      // L'Artisienne : façade-décor à fronton sur la face nord-ouest du
+      // bâtiment 323, vers l'avenue de Castille (la fiche retenait le
+      // sud-est, la photo montre l'entrée côté avenue).
+      const artisienne = construireFacadeArtisienne();
+      artisienne.position.set(-486.1, solSV(-486.1, 474.2), 474.2);
+      artisienne.rotation.y = Math.atan2(-0.71, -0.7);
+      group.add(artisienne);
+      // Auberge du Parc : panneau du pignon, galerie à colombages, piscine
+      // bâchée (le bâti 346 reste extrudé, le décor s'y plaque).
+      group.add(construireDecorAuberge(solSV));
+    }
+
     // Bistrot Les Tontons, le café du centre : véranda accolée au flanc EST
     // du bâtiment 498 (laissé au bâti ordinaire), sur l'arête mesurée
     // (-48,69, 31,65)→(-36,81, 40,43), normale (0,593, -0,803) vers
@@ -4135,6 +4479,14 @@ export function buildLandmarks(data, relief, roadY) {
         // Bandeau cintré blanc à lettres grises sur façade saumon.
         { nom: "K'Méléon", sous: 'COIFFEUR · VISAGISTE', fond: '#f4f2ee', encre: '#4a4a4a',
           largeur: 4.5, x: -28.27, z: 69.63, rot: 1.048 },
+        // Bandeau noir, « C'zen » en grande cursive blanche à feuille verte
+        // (relevé Street View mai 2026, 915 av. de la République).
+        { nom: "C'zen", sous: "L'ART DE LA BEAUTÉ", fond: '#232326', encre: '#f2f2ee',
+          largeur: 5, x: -22.28, z: 89.8, rot: 1.067 },
+        // Maison béarnaise à bandeau anthracite, perron à rampes vertes
+        // (relevé Street View, rue Dufau, plateau nord).
+        { nom: 'PHARMACIE DU PLATEAU', sous: 'MATÉRIEL MÉDICAL · ORTHOPÉDIE', fond: '#33363a', encre: '#f2f2ee',
+          largeur: 8, x: 186, z: -469.5, rot: 1.227 },
       ];
       for (const d of DEVANTURES_EST) {
         const dev = construireDevantureCommerce({
