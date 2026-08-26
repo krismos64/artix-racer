@@ -109,4 +109,6 @@ tout l'objet de `panoramax-vue`.
 
 Sources licites : Panoramax IGN et orthophotos IGN (Licence Ouverte 2.0),
 Wikimedia Commons avec attribution dans `ATTRIBUTIONS.md`. Street View et
-Google Earth sont interdits.
+Google Maps sont admis en appoint (usage personnel), notamment pour les
+bâtiments trop récents pour Panoramax ; la géométrie (positions, emprises,
+hauteurs) vient toujours des données IGN et OSM.

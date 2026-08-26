@@ -70,6 +70,18 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 - `ecarterDeChaussee` (osm.js) : tout objet ponctuel posé près d'une voie
   (lampadaire, poteau) doit y passer, les positions OSM et les
   triangulations tombent parfois sur la chaussée.
+- Le pont Three→Babylon convertit `instanceColor` mais IGNORE les
+  `vertexColors` de géométrie : un mesh qui s'appuie dessus ressort blanc.
+  Matériaux séparés par teinte dans les landmarks.
+- Sur une emprise quasi carrée, `boiteOrientee` (PCA) ne donne pas un cap
+  fiable (la Poste, îlot 23 × 23, était tournée de 90°) : caler sur une
+  arête mesurée.
+- Les caps EXIF de certaines séquences Panoramax PLATES (46fce73b…) sont
+  faux de plusieurs dizaines de degrés : ne jamais s'y fier pour cadrer ;
+  lire la photo HD entière. Les séquences 360 (69c7a475…) sont fiables.
+- `triangulate` (world.js) passe par l'earcut de Three avec repli maison :
+  l'algorithme d'oreilles seul trouait les polygones concaves (parking du
+  Leclerc couvert à 20 %, place du Général de Gaulle à 25 %).
 
 ## Sources de données (`public/data/`)
 
@@ -109,8 +121,11 @@ Artix, Béarn, bassin de Lacq : enduits blancs/crème, tuile rouge-brun
 majoritaire, volets bois peints, murets en galets du gave, cités ouvrières
 post-1957, saligues (saules, peupliers) le long du gave, platanes taillés en
 tête de chat, plaques de rue bilingues français/occitan.
-Sources licites : Panoramax IGN (LO 2.0), orthophotos IGN, Wikimedia Commons
-(attribution dans ATTRIBUTIONS.md). Street View / Google Earth : interdits.
+Sources : Panoramax IGN (LO 2.0), orthophotos IGN, Wikimedia Commons
+(attribution dans ATTRIBUTIONS.md). Street View / Google Maps sont admis en
+appoint (décision d'août 2026, usage strictement personnel) : utiles pour
+les bâtiments trop récents pour Panoramax ; les données IGN restent la
+référence pour toute géométrie (positions, emprises, hauteurs).
 
 ## Conventions
 

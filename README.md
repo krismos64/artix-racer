@@ -273,17 +273,17 @@ distingue pas un arbre d'un bâtiment : une remise de 2 m sous un chêne
 ressortait avec 14 m de couverture, jusqu'à ce qu'un plafond lié à la largeur
 du bâtiment écarte ces intrusions.
 
-### Pourquoi pas Google Street View ou Google Earth
+### Panoramax d'abord, Street View en appoint
 
-Les images Street View et la géométrie 3D de Google Earth sont des œuvres
-protégées, et leurs conditions d'utilisation interdisent d'en dériver des
-reproductions, y compris pour un usage privé.
-
-L'objection n'est d'ailleurs pas seulement juridique. Street View fournirait
+Le projet s'appuie d'abord sur les sources ouvertes : Street View fournit
 des photographies, pas de la géométrie : reconstruire des volumes demanderait
 de la photogrammétrie sur des prises de vue qui ne sont pas faites pour ça. Le
 LiDAR HD donne directement la forme mesurée des toitures, ce qu'aucune banque
-de photographies ne fournira jamais.
+de photographies ne fournira jamais. Depuis août 2026, Street View et Google
+Maps servent toutefois d'appoint visuel (usage strictement personnel, le jeu
+n'est jamais publié) pour les bâtiments trop récents pour la campagne
+Panoramax, comme la zone commerciale est ; la géométrie continue de venir
+des données IGN et OSM.
 
 **Panoramax**, le service de photographies de rue de l'IGN, couvre Artix avec
 plus de 22 000 panoramiques 360° de janvier 2025, sous Licence Ouverte 2.0,
