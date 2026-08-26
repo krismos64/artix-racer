@@ -2,6 +2,51 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## État au 2026-08-26 (fin de session)
+
+Tout est commité, `npx tsc --noEmit` passe, le jeu tourne à 60 fps en profil
+Équilibré. Rien n'est en cours ni cassé.
+
+**Chantiers livrés** : ciel analytique + IBL + SSAO2, ambiances jour/soir/nuit
+(touche L) avec éclairage nocturne complet, volets et murets en galets,
+façades pierre, ripisylve, feuillage alpha, passants et touffes d'herbe,
+lignes aériennes (357 poteaux triangulés, 210 portées), placage photo (254
+façades + 109 HD), sols mesurés, musique en boucle, et le corridor commerçant
+du centre-bourg modélisé à la main commerce par commerce.
+
+**Reprise conseillée** : lancer `npm run dev`, rouler dans le centre-bourg,
+signaler ce qui cloche par capture d'écran. La méthode qui marche est décrite
+dans CLAUDE.md (« Méthode de fidélité ») : mesurer dans les données avant de
+corriger, jamais deviner un cap ou une position.
+
+**Pistes ouvertes** (aucune urgente) :
+- Ajouter le salon « Atmosphear » à gauche de la Caisse d'Épargne (visible
+  sur la photo, même immeuble).
+- Pizzeria de la place du Général de Gaulle (POI 21.8, 65.5) : encore en
+  devanture générique.
+- Touffes d'herbe du premier plan un peu sombres sur pelouse claire.
+- Placage photo : quelques cases restent à l'exposition perfectible.
+- Vérifier en roulant : côté de la croix de la pharmacie, sens de l'arrondi
+  de l'immeuble Vapozen, abri caddies du Leclerc.
+
+## 2026-08-26 (suite 9) : Leclerc, Caisse d'Épargne, pharmacie, documentation
+
+- Leclerc Express : parking entier en dur d'après l'ORTHOPHOTO (double-rangées
+  dos à dos), abri caddies, et surtout correction d'un bug de fond : les
+  emprises des bâtiments modélisés à la main étaient retirées de
+  `data.buildings`, donc invisibles des tests d'évitement : les voitures se
+  garaient dans la vitrine. Elles sont désormais exportées dans
+  `data.emprisesModelisees` et respectées partout.
+- Garde-fou : les bandes de parking se rognent d'une place tant qu'elles
+  approchent une chaussée (les axes relevés sur ortho sont idéalisés).
+- Caisse d'Épargne remise sur sa façade rue (la générique regardait la
+  mauvaise face), pharmacie Barrouilhet et son voisin modélisés d'après
+  photo (bandeau vertical à croix, croix lumineuse d'angle).
+- Documentation remise à plat : CLAUDE.md réécrit (architecture réelle,
+  pièges, méthode de fidélité, tableau des sources), README complété
+  (cinq pipelines Panoramax, centre-bourg à la main, touche L), scripts npm
+  pour chaque pipeline.
+
 ## 2026-08-26 (suite 8) : la rue commerçante en dur, commerce par commerce
 
 - Devantures dédiées posées sur arêtes mesurées : Maison Chaudron (bandeau
