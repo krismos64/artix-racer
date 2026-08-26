@@ -719,7 +719,10 @@ export function buildSignage(data, relief, roadY) {
         'Guy Hoquet', 'D. Florès', 'Entendre',
         'Super U', "Mc Donald's", 'Crédit Agricole',
         "C'zen", 'Pharmacie du Plateau', "L'Artisienne", 'Banque Pouyanne',
-        'Auberge du Parc', 'Gendarmerie nationale'].includes(e.nom)) continue;
+        'Auberge du Parc', 'Gendarmerie nationale',
+        'Intermarché', 'Leader Price', 'Crèche Municipale', 'Calandreta Artics',
+        "Pizz'Artix", 'Maison de la santé', 'Gamm Vert', 'Mr.Bricolage', 'Action',
+        'CERFRANCE ADOUR OCEAN', 'Bibliothèque Pour Tous'].includes(e.nom)) continue;
       // Bâtiment porteur : l'emprise dont une arête passe au plus près du
       // point OSM du commerce.
       let porteur = null, meilleure = 18;

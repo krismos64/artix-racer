@@ -1390,7 +1390,10 @@ function construireDevanturesPOI(data, relief, roadY) {
     'Guy Hoquet', 'D. Florès', 'Entendre',
     'Super U', "Mc Donald's", 'Crédit Agricole',
     "C'zen", 'Pharmacie du Plateau', "L'Artisienne", 'Banque Pouyanne',
-    'Auberge du Parc', 'Gendarmerie nationale']);
+    'Auberge du Parc', 'Gendarmerie nationale',
+    'Intermarché', 'Leader Price', 'Crèche Municipale', 'Calandreta Artics',
+    "Pizz'Artix", 'Maison de la santé', 'Gamm Vert', 'Mr.Bricolage', 'Action',
+    'CERFRANCE ADOUR OCEAN', 'Bibliothèque Pour Tous']);
   const palettes = ['#9b4934', '#315d68', '#4f704f', '#7d5935', '#68435f', '#285b86'];
 
   for (const e of commerces) {
@@ -3747,6 +3750,278 @@ function construireDecorAuberge(sol) {
   return g;
 }
 
+// Pavillon crèche municipale + Bibliothèque Pour Tous, avenue de la 2e DB
+// (bâtiment 2013, retiré du bâti). Street View mai 2026 : plain-pied à pans
+// alternés crème et rouge brique, deux frontons triangulaires, toit de
+// tuiles, enseigne « BIBLIOTHÈQUE POUR TOUS », clôture crème basse. Le POI
+// OSM de la bibliothèque (place du Général de Gaulle) était périmé : elle
+// est ICI. Façade sur +Z local (face nord en monde).
+function construireCrecheBibliotheque() {
+  const g = new THREE.Group();
+  const L = 24.8, PROF = 16.9, H = 2.9;
+  const creme = new THREE.MeshStandardMaterial({ color: 0xe8dcc0, roughness: 0.9 });
+  const brique = new THREE.MeshStandardMaterial({ color: 0xa04a38, roughness: 0.85 });
+  const tuile = new THREE.MeshStandardMaterial({
+    color: 0x8a4f38, roughness: 0.9, side: THREE.DoubleSide,
+  });
+  const vitre = new THREE.MeshStandardMaterial({ color: 0x2a3036, roughness: 0.25, metalness: 0.1 });
+
+  const corps = new THREE.Mesh(new THREE.BoxGeometry(L, H, PROF), creme);
+  corps.position.set(0, H / 2, -PROF / 2);
+  g.add(corps);
+  // Pans rouge brique alternés sur la façade.
+  for (const dx of [-8.5, -2.5, 3.5, 9.5]) {
+    const pan = new THREE.Mesh(new THREE.BoxGeometry(2.6, H - 0.3, 0.08), brique);
+    pan.position.set(dx, H / 2, 0.04);
+    g.add(pan);
+  }
+  for (const dx of [-5.5, 6.5]) {
+    const fen = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.4), vitre);
+    fen.position.set(dx, 1.5, 0.09);
+    g.add(fen);
+  }
+  // Toit à deux pans doux et deux frontons triangulaires sur la façade.
+  const pente = Math.atan2(1.6, PROF / 2);
+  for (const cote of [-1, 1]) {
+    const pan = new THREE.Mesh(new THREE.BoxGeometry(L + 1, 0.14, PROF / 2 + 1.2), tuile);
+    pan.position.set(0, H + 0.8, -PROF / 2 - cote * PROF / 4);
+    pan.rotation.x = -cote * pente;
+    g.add(pan);
+  }
+  for (const dx of [-6.5, 5.5]) {
+    const tri = new THREE.Shape();
+    tri.moveTo(-2.2, 0);
+    tri.lineTo(2.2, 0);
+    tri.lineTo(0, 1.5);
+    tri.closePath();
+    const fronton = new THREE.Mesh(new THREE.ShapeGeometry(tri),
+      new THREE.MeshStandardMaterial({ color: 0xe8dcc0, roughness: 0.9, side: THREE.DoubleSide }));
+    fronton.position.set(dx, H, 0.06);
+    g.add(fronton);
+    const chapeau = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.12, 0.9), tuile);
+    chapeau.position.set(dx, H + 0.85, 0.1);
+    g.add(chapeau);
+  }
+  // Enseigne de la bibliothèque, côté est de la façade.
+  const texB = (() => {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#f2f1ec';
+    ctx.fillRect(0, 0, 512, 128);
+    ctx.fillStyle = '#1d50a8';
+    // Livres stylisés à gauche.
+    for (let k = 0; k < 3; k++) ctx.fillRect(30 + k * 18, 30 - k * 4, 12, 68 + k * 8);
+    ctx.font = '600 40px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('BIBLIOTHÈQUE', 110, 46);
+    ctx.fillText('POUR TOUS', 110, 92);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const enseigne = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.65),
+    new THREE.MeshStandardMaterial({ map: texB, roughness: 0.55 }));
+  enseigne.position.set(-4, 2.1, 0.1);
+  g.add(enseigne);
+  // Clôture crème basse à barreaux le long de la rue.
+  for (let k = 0; k <= 10; k++) {
+    const poteau = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.05, 0.14), creme);
+    poteau.position.set(-L / 2 + 1 + k * (L - 2) / 10, 0.52, 5.2);
+    g.add(poteau);
+  }
+  for (const dy of [0.35, 0.95]) {
+    const lisse = new THREE.Mesh(new THREE.BoxGeometry(L - 1.5, 0.09, 0.06), creme);
+    lisse.position.set(0, dy, 5.2);
+    g.add(lisse);
+  }
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Halle Gamm vert + Mr.Bricolage du retail park est : ABSENTE de la BD TOPO
+// (emprise OSM seulement, comme le Super U). Street View mars 2026 : bardage
+// anthracite nervuré à bandes de lattes bois, lettres rouges géantes
+// Mr.Bricolage et pastille verte à l'est, bandeau Gamm vert et sas vitré à
+// l'ouest. Construite en coordonnées MONDE.
+function construireRetailBricoGamm(sol) {
+  const g = new THREE.Group();
+  const H = 6.5;
+  const PTS = [[1466, 477], [1476, 454], [1532, 479], [1522, 502]];
+  const yBase = Math.min(...PTS.map(([x, z]) => sol(x, z))) - 0.25;
+  const anthracite = new THREE.MeshStandardMaterial({ color: 0x4a4c50, roughness: 0.85, side: THREE.DoubleSide });
+  const murPos = [];
+  for (let i = 0; i < PTS.length; i++) {
+    const [x1, z1] = PTS[i], [x2, z2] = PTS[(i + 1) % PTS.length];
+    murPos.push(x1, yBase, z1, x2, yBase, z2, x2, yBase + H, z2);
+    murPos.push(x1, yBase, z1, x2, yBase + H, z2, x1, yBase + H, z1);
+  }
+  const gm = new THREE.BufferGeometry();
+  gm.setAttribute('position', new THREE.Float32BufferAttribute(murPos, 3));
+  gm.computeVertexNormals();
+  gm.computeBoundingSphere();
+  g.add(new THREE.Mesh(gm, anthracite));
+  const forme = new THREE.Shape();
+  forme.moveTo(PTS[0][0], PTS[0][1]);
+  for (let i = 1; i < PTS.length; i++) forme.lineTo(PTS[i][0], PTS[i][1]);
+  forme.closePath();
+  const toit = new THREE.Mesh(new THREE.ShapeGeometry(forme),
+    new THREE.MeshStandardMaterial({ color: 0x8a8a88, roughness: 0.95, side: THREE.DoubleSide }));
+  toit.rotation.x = Math.PI / 2;
+  toit.position.y = yBase + H;
+  toit.scale.z = -1;
+  g.add(toit);
+
+  // Façade commerciale sud (segment (1522,502)→(1466,477), normale
+  // extérieure (-0,408, 0,913)... orientée vers la voie au sud-est).
+  const [nx, nz] = [0.408, 0.913];
+  const rot = Math.atan2(nx, nz);
+  const dir = [0.913, -0.408];
+  const milieu = [1494, 489.5];
+  const poser = (mesh, u, y, saillie) => {
+    mesh.position.set(milieu[0] + dir[0] * u + nx * saillie, y, milieu[1] + dir[1] * u + nz * saillie);
+    mesh.rotation.y = rot;
+    g.add(mesh);
+  };
+  // Lattes bois par touches.
+  for (const u of [-24, -8, 8, 24]) {
+    poser(new THREE.Mesh(new THREE.BoxGeometry(3, H - 1, 0.1),
+      new THREE.MeshStandardMaterial({ color: 0xb08a58, roughness: 0.85 })), u, yBase + H / 2 - 0.5, 0.08);
+  }
+  // Sas vitré central (Gamm vert) à fronton blanc.
+  poser(new THREE.Mesh(new THREE.BoxGeometry(8, H + 0.8, 0.4),
+    new THREE.MeshStandardMaterial({ color: 0xefeee8, roughness: 0.6 })), -6, yBase + (H + 0.8) / 2, 0.1);
+  poser(new THREE.Mesh(new THREE.PlaneGeometry(6.5, H - 1),
+    new THREE.MeshStandardMaterial({ color: 0x2a3036, roughness: 0.2, metalness: 0.1 })), -6, yBase + H / 2 - 0.4, 0.35);
+  // Enseigne Gamm vert : blanc et rond vert sur l'anthracite.
+  const texGV = (() => {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 96;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#3c3e42';
+    ctx.fillRect(0, 0, 512, 96);
+    ctx.fillStyle = '#f2f1ec';
+    ctx.font = 'bold 56px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Gamm vert', 30, 50);
+    ctx.fillStyle = '#4a9c3a';
+    ctx.beginPath();
+    ctx.arc(430, 48, 30, 0, Math.PI * 2);
+    ctx.fill();
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  poser(new THREE.Mesh(new THREE.PlaneGeometry(7, 1.3),
+    new THREE.MeshStandardMaterial({ map: texGV, roughness: 0.5 })), -17, yBase + H - 1.2, 0.1);
+  // Lettres rouges géantes Mr.Bricolage et pastille verte.
+  const texMB = (() => {
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 160;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, 1024, 160);
+    ctx.fillStyle = '#d63b2f';
+    ctx.font = 'bold 120px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Mr.Bricolage', 512, 84);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  poser(new THREE.Mesh(new THREE.PlaneGeometry(15, 2.3),
+    new THREE.MeshStandardMaterial({ map: texMB, roughness: 0.5, transparent: true, alphaTest: 0.2 })),
+  17, yBase + H - 1.6, 0.1);
+  const pastille = new THREE.Mesh(new THREE.CircleGeometry(1.5, 24),
+    new THREE.MeshStandardMaterial({ color: 0x9ccf6a, roughness: 0.6 }));
+  poser(pastille, 9, yBase + 2.6, 0.12);
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Magasin Action du retail park est, lui aussi absent de la BD TOPO :
+// boîte anthracite sur son emprise OSM, bandeau blanc à lettres bleu marine
+// et chevron rouge (charte de l'enseigne). Coordonnées MONDE.
+function construireAction(sol) {
+  const g = new THREE.Group();
+  const H = 6.5;
+  const PTS = [[1586, 557], [1612, 578], [1586, 612], [1559, 592]];
+  const yBase = Math.min(...PTS.map(([x, z]) => sol(x, z))) - 0.25;
+  const murPos = [];
+  for (let i = 0; i < PTS.length; i++) {
+    const [x1, z1] = PTS[i], [x2, z2] = PTS[(i + 1) % PTS.length];
+    murPos.push(x1, yBase, z1, x2, yBase, z2, x2, yBase + H, z2);
+    murPos.push(x1, yBase, z1, x2, yBase + H, z2, x1, yBase + H, z1);
+  }
+  const gm = new THREE.BufferGeometry();
+  gm.setAttribute('position', new THREE.Float32BufferAttribute(murPos, 3));
+  gm.computeVertexNormals();
+  gm.computeBoundingSphere();
+  g.add(new THREE.Mesh(gm, new THREE.MeshStandardMaterial({
+    color: 0x4a4c50, roughness: 0.85, side: THREE.DoubleSide,
+  })));
+  const forme = new THREE.Shape();
+  forme.moveTo(PTS[0][0], PTS[0][1]);
+  for (let i = 1; i < PTS.length; i++) forme.lineTo(PTS[i][0], PTS[i][1]);
+  forme.closePath();
+  const toit = new THREE.Mesh(new THREE.ShapeGeometry(forme),
+    new THREE.MeshStandardMaterial({ color: 0x8a8a88, roughness: 0.95, side: THREE.DoubleSide }));
+  toit.rotation.x = Math.PI / 2;
+  toit.position.y = yBase + H;
+  toit.scale.z = -1;
+  g.add(toit);
+  // Façade ouest (segment (1559,592)→(1586,557), normale (-0,79, -0,61)) :
+  // vitrine et enseigne face à la voie du parc.
+  const [nx, nz] = [-0.79, -0.61];
+  const rot = Math.atan2(nx, nz);
+  const milieu = [1572.5, 574.5];
+  const texAc = (() => {
+    const c = document.createElement('canvas');
+    c.width = 768; c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#f2f1ec';
+    ctx.fillRect(0, 0, 768, 128);
+    // Chevron rouge et bleu de la charte.
+    ctx.fillStyle = '#d63b2f';
+    ctx.beginPath();
+    ctx.moveTo(60, 24);
+    ctx.lineTo(130, 64);
+    ctx.lineTo(60, 104);
+    ctx.lineTo(96, 64);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#1a3a6e';
+    ctx.font = 'bold 88px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Action', 180, 70);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = anisotropie();
+    return t;
+  })();
+  const enseigne = new THREE.Mesh(new THREE.PlaneGeometry(10, 1.7),
+    new THREE.MeshStandardMaterial({ map: texAc, roughness: 0.5 }));
+  enseigne.position.set(milieu[0] + nx * 0.1, yBase + H - 1.3, milieu[1] + nz * 0.1);
+  enseigne.rotation.y = rot;
+  g.add(enseigne);
+  const vitrine = new THREE.Mesh(new THREE.PlaneGeometry(10, 3),
+    new THREE.MeshStandardMaterial({ color: 0x2a3036, roughness: 0.2, metalness: 0.1 }));
+  vitrine.position.set(milieu[0] + nx * 0.1, yBase + 1.7, milieu[1] + nz * 0.1);
+  vitrine.rotation.y = rot;
+  g.add(vitrine);
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
 // Devanture de commerce paramétrée, posée en absolu sur une arête mesurée :
 // bandeau à enseigne dessinée, vitrines en retrait, porte vitrée, casquette.
 function construireDevantureCommerce({ nom, sous, fond, encre, largeur }) {
@@ -4129,6 +4404,118 @@ export function buildLandmarks(data, relief, roadY) {
     }
 
     // ---- Lieux relevés sur Street View (mai 2026) ------------------------
+    {
+      const solRV = (x, z) => (relief ? relief.hauteurRoute(x, z) : 0) + roadY;
+      // Crèche municipale + Bibliothèque Pour Tous (bâtiment 2013), façade
+      // nord sur l'avenue de la 2e DB (normale mesurée (0,16, -0,99)).
+      const crecheBib = construireCrecheBibliotheque();
+      crecheBib.position.set(4.4, solRV(4.4, -177.8) - 0.12, -177.8);
+      crecheBib.rotation.y = 2.982;
+      group.add(crecheBib);
+      // Retail park est : halle Gamm vert + Mr.Bricolage et magasin Action,
+      // tous deux absents de la BD TOPO (emprise OSM seule).
+      group.add(construireRetailBricoGamm(solRV));
+      group.add(construireAction(solRV));
+      // Banderole multicolore de l'Escola Calandreta, plaquée sur l'annexe
+      // mesurée (arête sud, 6,4 m, normale (-0,16, 0,99)).
+      {
+        const texCal = (() => {
+          const c = document.createElement('canvas');
+          c.width = 768; c.height = 96;
+          const ctx = c.getContext('2d');
+          ctx.fillStyle = '#f4f2ea';
+          ctx.fillRect(0, 0, 768, 96);
+          const teintes = ['#d63b2f', '#e8871e', '#3f8f3f', '#1d50a8', '#8a3c8f'];
+          ctx.font = 'bold 54px Georgia, serif';
+          ctx.textBaseline = 'middle';
+          const mot = 'Escola Calandreta';
+          let x = 40;
+          for (let i = 0; i < mot.length; i++) {
+            ctx.fillStyle = teintes[i % teintes.length];
+            ctx.fillText(mot[i], x, 52);
+            x += ctx.measureText(mot[i]).width + 2;
+          }
+          const t = new THREE.CanvasTexture(c);
+          t.colorSpace = THREE.SRGBColorSpace;
+          t.anisotropy = anisotropie();
+          return t;
+        })();
+        const banderole = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 0.75),
+          new THREE.MeshStandardMaterial({ map: texCal, roughness: 0.7 }));
+        banderole.position.set(63.71, solRV(63.71, -217.46) + 2.6, -217.46);
+        banderole.rotation.y = -0.158;
+        group.add(banderole);
+      }
+      // Maison de la santé : entrée vitrée sous large auvent à poutres bois
+      // apparentes, pan de lattes, tableau de plaques de praticiens.
+      {
+        const sante = new THREE.Group();
+        const boisFonce = new THREE.MeshStandardMaterial({ color: 0x4a3a2c, roughness: 0.85 });
+        const auvent = new THREE.Mesh(new THREE.BoxGeometry(9, 0.2, 3.2),
+          new THREE.MeshStandardMaterial({ color: 0x5a4636, roughness: 0.8 }));
+        auvent.position.set(0, 3.4, 1.4);
+        sante.add(auvent);
+        for (const dx of [-3.4, -1.2, 1.2, 3.4]) {
+          const poutre = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.3, 3.1), boisFonce);
+          poutre.position.set(dx, 3.18, 1.4);
+          sante.add(poutre);
+        }
+        const vitrage = new THREE.Mesh(new THREE.PlaneGeometry(5.5, 2.6),
+          new THREE.MeshStandardMaterial({ color: 0x2a3036, roughness: 0.2, metalness: 0.1 }));
+        vitrage.position.set(-1, 1.45, 0.06);
+        sante.add(vitrage);
+        const lattes = new THREE.Mesh(new THREE.BoxGeometry(2.2, 3.1, 0.1),
+          new THREE.MeshStandardMaterial({ color: 0xa87c48, roughness: 0.8 }));
+        lattes.position.set(3, 1.6, 0.05);
+        sante.add(lattes);
+        const plaques = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.8),
+          new THREE.MeshStandardMaterial({ color: 0xefeee8, roughness: 0.5 }));
+        plaques.position.set(4.6, 1.6, 0.06);
+        sante.add(plaques);
+        sante.position.set(134.81, solRV(134.81, 206.46), 206.46);
+        sante.rotation.y = 3.062;
+        sante.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        group.add(sante);
+      }
+      // Ancien Leader Price, FERMÉ en 2026 : casquette verte délavée et
+      // rideau baissé sur la façade sud-est de la halle 648, aucune enseigne
+      // (l'exclusion du POI évite l'enseigne générique mensongère).
+      {
+        const friche = new THREE.Group();
+        const casquette = new THREE.Mesh(new THREE.BoxGeometry(11, 0.7, 1),
+          new THREE.MeshStandardMaterial({ color: 0x5a7a5a, roughness: 0.8 }));
+        casquette.position.set(0, 3.5, 0.55);
+        friche.add(casquette);
+        const rideau = new THREE.Mesh(new THREE.PlaneGeometry(9, 3),
+          new THREE.MeshStandardMaterial({ color: 0x8a8c8e, roughness: 0.6, metalness: 0.3 }));
+        rideau.position.set(0, 1.6, 0.06);
+        friche.add(rideau);
+        friche.position.set(845.9, solRV(845.9, 484.2), 484.2);
+        friche.rotation.y = Math.atan2(0.84, 0.55);
+        friche.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        group.add(friche);
+      }
+      // Pizz'Artix : petite enseigne blanche à lettres rouges sur la maison
+      // rose de l'avenue (le commerce est discret, la devanture reste sobre).
+      const pizzArtix = construireDevantureCommerce({
+        nom: "Pizz'Artix", sous: 'PIZZERIA',
+        fond: '#f4f2ee', encre: '#c5334a', largeur: 3.5,
+      });
+      pizzArtix.position.set(-87.76, solRV(-87.76, 54.14), 54.14);
+      pizzArtix.rotation.y = 2.673;
+      group.add(pizzArtix);
+      // CERFRANCE, l'expert-comptable qui partage l'immeuble du Crédit
+      // Agricole (bandeau EXPERTISE COMPTABLE vu sur les photos).
+      const cerfrance = construireDevantureCommerce({
+        nom: 'CERFRANCE', sous: 'EXPERTISE COMPTABLE',
+        fond: '#f2f2f0', encre: '#1a7a4a', largeur: 5.5,
+      });
+      cerfrance.position.set(1269.48, solRV(1269.48, 548.14), 548.14);
+      cerfrance.rotation.y = 2.479;
+      group.add(cerfrance);
+    }
+
+    // ---- Lieux relevés sur Street View, première tournée -----------------
     {
       const solSV = (x, z) => (relief ? relief.hauteurRoute(x, z) : 0) + roadY;
       // Gendarmerie : boîte orientée du bâtiment 979 (27,1 × 18,4 m), façade

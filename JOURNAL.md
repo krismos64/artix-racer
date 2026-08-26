@@ -2,6 +2,27 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-08-26 (suite 14) : deuxième tournée Street View
+
+- **Crèche municipale + Bibliothèque Pour Tous EN DUR** (bât 2013 retiré) :
+  pavillon à pans crème et rouge brique, frontons, toit de tuiles, enseigne,
+  clôture crème. DÉCOUVERTE : le POI OSM de la bibliothèque (place du
+  Général de Gaulle) est PÉRIMÉ, elle est avenue de la 2e DB dans ce
+  pavillon : mystère de la « suite 13 » résolu.
+- **Retail park est ABSENT de la BD TOPO comme le Super U** : halle Gamm
+  vert + Mr.Bricolage (bardage anthracite à lattes bois, lettres rouges
+  géantes, pastille verte, sas vitré) et magasin Action (chevron rouge,
+  lettres bleu marine) construits sur leurs emprises OSM.
+- **Leader Price : FERMÉ en 2026** (halle muette, parking désert, un food
+  truck) : rendu fidèle à la friche : casquette verte délavée et rideau
+  baissé, POI exclu pour éviter l'enseigne générique mensongère. Le POI
+  « Intermarché » (ancien nom du Leclerc Express) est lui aussi exclu.
+- Décors et devantures : banderole multicolore « Escola Calandreta »,
+  auvent à poutres bois de la Maison de la santé (tableau de plaques),
+  Pizz'Artix (petite enseigne blanche à lettres rouges sur la maison rose
+  à bandeau vert d'eau), CERFRANCE (l'expert-comptable de l'immeuble du
+  Crédit Agricole).
+
 ## 2026-08-26 (suite 13) : les lieux restants, relevés sur Street View
 
 Première utilisation de Street View (via Chrome piloté, imagerie mai 2026,
