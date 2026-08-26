@@ -1466,6 +1466,9 @@ export function buildWorld(scene, data) {
     fusionner(data.facadesCentre, chargerAtlas('facades-centre', data.facadesCentre.atlas));
   }
   const roofPos = [], roofCol = [], roofUv = [];
+  // Chants de rive : quads verticaux sous le bord des couvertures. Sans eux,
+  // le toit est une feuille sans épaisseur vue de profil.
+  const rivePos = [], riveCol = [];
   // Superstructures de toiture : souches de cheminée, lucarnes, blocs de
   // ventilation. Collectées ici pendant la boucle des bâtiments, instanciées
   // ensuite en trois appels de dessin pour toute la ville. Les poser une par
@@ -2042,11 +2045,36 @@ export function buildWorld(scene, data) {
     // et à la dalle de sécurité. Chaque sommet est poussé vers l'extérieur de
     // son propre débord, un bâtiment pouvant être mitoyen d'un côté et dégagé
     // de l'autre, ce qui est le cas de tous les immeubles de bout de rangée.
+    const debords = [];
     const contour = b.pts.map(([x, z]) => {
       const d = Math.min(DEBORD_MAX, distVoisin(b, x, z) * 0.5);
+      debords.push(d);
       const l = Math.hypot(x - cx, z - cz) || 1;
       return [x + (x - cx) / l * d, z + (z - cz) / l * d];
     });
+
+    // Chant de rive : un bandeau vertical de 13 cm sous l'égout, sur chaque
+    // arête du contour débordé. C'est lui qui donne son épaisseur à la
+    // toiture (planche de rive ou gouttière, selon la teinte tirée). Les
+    // côtés mitoyens (débord quasi nul aux deux bouts) sont sautés : le
+    // bandeau serait coplanaire au mur du voisin et scintillerait.
+    {
+      const tr = hash(b.graine ?? 0);
+      const teinteRive = new THREE.Color(tr < 0.6 ? 0xd6d2c6 : 0xb0b4b6)
+        .multiplyScalar(0.92 + hash((b.graine ?? 0) + 3.3) * 0.16);
+      const yH = top + 0.01, yB = top - 0.13;
+      for (let i2 = 0; i2 < contour.length; i2++) {
+        const j2 = (i2 + 1) % contour.length;
+        if (debords[i2] < 0.08 && debords[j2] < 0.08) continue;
+        const [x1, z1] = contour[i2], [x2, z2] = contour[j2];
+        if (Math.hypot(x2 - x1, z2 - z1) < 0.4) continue;
+        rivePos.push(
+          x1, yB, z1, x2, yB, z2, x2, yH, z2,
+          x1, yB, z1, x2, yH, z2, x1, yH, z1,
+        );
+        for (let v = 0; v < 6; v++) riveCol.push(teinteRive.r, teinteRive.g, teinteRive.b);
+      }
+    }
 
     // Écrit un sommet de couverture : position, teinte, et UV projetées sur les
     // axes du toit pour que les rangs de tuiles courent parallèlement au
@@ -2511,6 +2539,18 @@ export function buildWorld(scene, data) {
     m.receiveShadow = true;
     group.add(m);
   }
+  if (rivePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(rivePos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(riveCol, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.8, side: THREE.DoubleSide,
+    }));
+    m.name = 'rives-de-toit';
+    group.add(m);
+  }
 
   // ---- Superstructures instanciées ---------------------------------------
   //
@@ -2542,6 +2582,40 @@ export function buildWorld(scene, data) {
       m.receiveShadow = true;
       m.name = 'cheminees';
       group.add(m);
+
+      // Antennes râteau : sur un tiers des souches, un mât et sa herse de
+      // barreaux. Toutes pointent vers le même azimut (l'émetteur réel est
+      // au sud-est d'Artix), au petit désalignement près : c'est ce cap
+      // commun qui fait vrai sur une ligne de toits.
+      const antennes = cheminees.filter((c, i2) => hash(i2 * 7.7 + 1.3) < 0.34);
+      if (antennes.length) {
+        const mat5 = new THREE.CylinderGeometry(0.014, 0.014, 1.5, 5);
+        mat5.translate(0, 0.75, 0);
+        const hampe = new THREE.BoxGeometry(0.02, 0.02, 0.95);
+        hampe.translate(0, 1.42, 0.25);
+        const morceaux = [mat5, hampe];
+        for (let k2 = 0; k2 < 4; k2++) {
+          const barreau = new THREE.BoxGeometry(0.36 - k2 * 0.055, 0.016, 0.016);
+          barreau.translate(0, 1.42, -0.15 + k2 * 0.26);
+          morceaux.push(barreau);
+        }
+        const geoAntenne = mergeGeometries(morceaux);
+        const ma = new THREE.InstancedMesh(geoAntenne, new THREE.MeshStandardMaterial({
+          color: 0x6a6e72, roughness: 0.45, metalness: 0.55,
+        }), antennes.length);
+        antennes.forEach((c, i2) => {
+          // Contre la souche, légèrement décalée, pied au sommet de la souche.
+          dummy.position.set(c.x + Math.sin(c.cap) * 0.42, c.y + c.h - 0.25,
+            c.z + Math.cos(c.cap) * 0.42);
+          dummy.rotation.set(0, 2.8 + (hash(i2 * 3.1) - 0.5) * 0.3, 0);
+          dummy.scale.set(1, 0.85 + hash(i2 * 5.9) * 0.4, 1);
+          dummy.updateMatrix();
+          ma.setMatrixAt(i2, dummy.matrix);
+        });
+        ma.instanceMatrix.needsUpdate = true;
+        ma.name = 'antennes';
+        group.add(ma);
+      }
     }
 
     if (lucarnes.length) {

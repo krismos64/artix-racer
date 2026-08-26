@@ -77,6 +77,16 @@ Barrouilhet, captures de Christophe à l'appui.
   drapeau VERTICAL rouge à sigle, à la limite salon/banque (82,05, -49,15) ;
   croix verte de la pharmacie juste à côté (83,81, -50,19) : signalétique
   déportée qui capte la D32.
+- **Couronnement des toits.** (1) Chants de rive : un bandeau vertical de
+  13 cm sous l'égout de chaque couverture, sur le contour débordé (buffer
+  dédié, hors de la texture tuile), planche claire ou zinc selon un tirage
+  par bâtiment, sauté sur les côtés mitoyens (débord quasi nul : le bandeau
+  serait coplanaire au mur voisin et scintillerait). Le toit cesse d'être
+  une feuille sans épaisseur vue de profil. (2) Antennes râteau sur un
+  tiers des souches de cheminée (mât + herse de 4 barreaux fusionnés,
+  instanciés) : toutes pointent vers le même azimut sud-est (l'émetteur
+  réel), au désalignement près : c'est le cap commun qui fait vrai sur une
+  ligne de toits.
 - **Circulation légère et fin du stationnement d'accotement.** Nouveau
   module traffic.js : douze véhicules sur le graphe des voies carrossables
   (service et track exclus, rayon 1 200 m), conduite à droite (décalage
