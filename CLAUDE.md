@@ -82,6 +82,16 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 - `triangulate` (world.js) passe par l'earcut de Three avec repli maison :
   l'algorithme d'oreilles seul trouait les polygones concaves (parking du
   Leclerc couvert à 20 %, place du Général de Gaulle à 25 %).
+- Les bâtiments récents (Super U, retail park est, McDo) manquent parfois de
+  la BD TOPO : chercher l'emprise dans OSM (`building`), et l'ortho IGN du
+  secteur peut être ANTÉRIEURE aux travaux. Aucune source ne suffit seule.
+- Les POI OSM d'Artix ne sont pas tous à jour : bibliothèque déplacée,
+  Leader Price fermé, « Intermarché » = ancien nom du Leclerc. Vérifier
+  l'actualité sur l'imagerie la plus récente avant de poser une enseigne.
+- Un élément de FOND (backdrop) doit échapper au brouillard
+  (`applyFog = false`) ET tenir sous `camera.maxZ` : les Pyrénées ont vécu
+  des mois dans la scène sans jamais être visibles, clippées par le plan
+  lointain et noyées par le fog.
 
 ## Sources de données (`public/data/`)
 
@@ -126,6 +136,15 @@ Sources : Panoramax IGN (LO 2.0), orthophotos IGN, Wikimedia Commons
 appoint (décision d'août 2026, usage strictement personnel) : utiles pour
 les bâtiments trop récents pour Panoramax ; les données IGN restent la
 référence pour toute géométrie (positions, emprises, hauteurs).
+
+Mode opératoire Street View (imagerie d'Artix : mai 2026, plus fraîche que
+Panoramax janv. 2025) : piloter Chrome par le MCP chrome-devtools
+(l'extension Claude n'est pas branchée). Ouvrir
+`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=LAT,LON`,
+lire l'URL résolue (`location.href`) pour la position réelle du panorama,
+calculer le cap boussole vers la cible (`atan2(dx, -dz)` en degrés), puis
+naviguer vers `@LAT,LON,3a,FOVy,CAPh,88t/...` et capturer. La conversion
+jeu→WGS84 : lat = 43.39743 - z/111320 ; lon = -0.57224 + x/80887.
 
 ## Conventions
 

@@ -112,3 +112,10 @@ Wikimedia Commons avec attribution dans `ATTRIBUTIONS.md`. Street View et
 Google Maps sont admis en appoint (usage personnel), notamment pour les
 bâtiments trop récents pour Panoramax ; la géométrie (positions, emprises,
 hauteurs) vient toujours des données IGN et OSM.
+
+Mode opératoire Street View (voir CLAUDE.md pour le détail) : Chrome piloté
+par le MCP chrome-devtools, URL `maps/@?api=1&map_action=pano&viewpoint=`
+puis navigation par cap calculé et capture d'écran. L'imagerie d'Artix date
+de mai 2026 : c'est la source la plus fraîche pour vérifier qu'un commerce
+existe encore (Leader Price fermé, poissonnerie disparue) avant de poser
+son enseigne.
