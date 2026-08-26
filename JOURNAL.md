@@ -77,6 +77,18 @@ Barrouilhet, captures de Christophe à l'appui.
   drapeau VERTICAL rouge à sigle, à la limite salon/banque (82,05, -49,15) ;
   croix verte de la pharmacie juste à côté (83,81, -50,19) : signalétique
   déportée qui capte la D32.
+- **Voirie : deux corrections signalées en jeu.** (1) Garde-fou
+  `ecarterDeChaussee` (osm.js, exporté) : tout point à moins de
+  largeur/2 + marge de l'axe d'une voie carrossable est repoussé sur
+  l'accotement, en deux passes pour les angles de carrefour. Appliqué aux
+  lampadaires (OSM réels et complément, qui mordaient les voies croisées)
+  et aux 357 poteaux triangulés (imprécision de triangulation) ; les câbles
+  suivent, ils lisent les positions corrigées. (2) Passages piétons refaits
+  À LA FRANÇAISE : bandes de 2,5 × 0,5 m PARALLÈLES à l'axe de la
+  circulation, entraxe 1 m, réparties sur la largeur de chaussée :
+  l'ancienne version dessinait cinq lignes en travers, une échelle plutôt
+  qu'un passage. Peinture éclaircie (0xfaf8f2, plancher d'usure relevé) :
+  un passage même usé reste blanc de loin.
 - **Parc de véhicules garés refondu** : cinq silhouettes paramétriques au
   lieu du gabarit unique étiré (compacte 26 %, berline 20 %, break/SUV
   24 %, fourgonnette 15 %, fourgon 9 %) plus 6 % de scooters (corps caréné

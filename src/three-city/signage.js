@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { anisotropie } from './textures.js';
 import { CATEGORIES } from './poi.js';
+import { ecarterDeChaussee } from './osm.js';
 
 // Fabrique une texture de panneau à partir d'un dessin canvas. Les panneaux
 // réels étant très lisibles, un rendu texte net vaut mieux qu'une géométrie
@@ -417,22 +418,26 @@ export function buildSignage(data, relief, roadY) {
     }
     if (dMin > 12) continue;   // pas de route à proximité
 
-    // Cinq bandes dans le sens de la marche, en travers de la chaussée.
-    // Clarté de la peinture : de 0,55 (marquage presque effacé, mesuré sur
-    // photo) à 1 (repeint récemment).
+    // Passage piéton FRANÇAIS : les bandes sont PARALLÈLES à l'axe de la
+    // circulation (2,5 m de long, 0,5 m de large, entraxe 1 m), répétées en
+    // travers sur la largeur de la chaussée. L'ancienne version dessinait
+    // cinq lignes en travers, une échelle plutôt qu'un passage.
+    // Clarté de la peinture : blanche, tirée vers le gris par l'usure
+    // relevée passage par passage (plancher relevé : un passage même usé
+    // reste blanc de loin).
     const usure = usureEn(p.x, p.z);
-    const clarte = 0.42 + usure * 0.58;
+    const clarte = 0.62 + usure * 0.38;
     const ux = Math.cos(cap), uz = -Math.sin(cap);          // travers de la voie
     const vx = Math.sin(cap), vz = Math.cos(cap);           // axe de la voie
-    const demiL = largeur / 2 - 0.25;
-    const nb = 5, pas = 0.62, larg = 0.34;
+    const DEMI_BANDE = 1.25, LARG_BANDE = 0.5, ENTRAXE = 1.02;
+    const nb = Math.max(4, Math.round((largeur - 0.6) / ENTRAXE));
     for (let k = 0; k < nb; k++) {
-      const off = (k - (nb - 1) / 2) * pas;
-      const cx = p.x + vx * off, cz = p.z + vz * off;
+      const off = (k - (nb - 1) / 2) * ENTRAXE;             // en travers
+      const cx = p.x + ux * off, cz = p.z + uz * off;
       const y = solEn(relief, cx, cz, roadY) + 0.02;
-      // Rectangle : longueur en travers, largeur dans l'axe.
-      const ax = ux * demiL, az = uz * demiL;
-      const bx = vx * (larg / 2), bz = vz * (larg / 2);
+      // Rectangle : longueur dans l'axe de la voie, largeur en travers.
+      const ax = vx * DEMI_BANDE, az = vz * DEMI_BANDE;
+      const bx = ux * (LARG_BANDE / 2), bz = uz * (LARG_BANDE / 2);
       bandes.push(
         cx - ax - bx, y, cz - az - bz,
         cx + ax - bx, y, cz + az - bz,
@@ -451,7 +456,9 @@ export function buildSignage(data, relief, roadY) {
     g.computeVertexNormals();
     g.computeBoundingSphere();
     const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
-      color: 0xf0ede4, side: THREE.DoubleSide, vertexColors: true,
+      // Blanc franc : la peinture routière neuve est nettement plus claire
+      // que l'ancien 0xf0ede4, et l'usure mesurée fait déjà le vieillissement.
+      color: 0xfaf8f2, side: THREE.DoubleSide, vertexColors: true,
       polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -16,
     }));
     m.renderOrder = 4;
@@ -873,9 +880,11 @@ export function buildSignage(data, relief, roadY) {
     if (releves.length >= 20) {
       for (const q of releves) {
         // Traverse perpendiculaire à la voie la plus proche, comme les vrais
-        // supports dont la ligne suit la rue.
-        const r = routeProche(q.x, q.z, 30);
-        positionsPoteaux.push([q.x, q.z, r.cap, hash(Math.abs(q.x * 7.3 + q.z * 3.1))]);
+        // supports dont la ligne suit la rue. La triangulation porte quelques
+        // mètres d'imprécision : aucun poteau sur la chaussée.
+        const [qx, qz] = ecarterDeChaussee(data.roads, q.x, q.z, 0.55);
+        const r = routeProche(qx, qz, 30);
+        positionsPoteaux.push([qx, qz, r.cap, hash(Math.abs(q.x * 7.3 + q.z * 3.1))]);
       }
     } else {
       for (const r of data.roads) {

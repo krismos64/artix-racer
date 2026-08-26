@@ -11,6 +11,50 @@ export function project(lat, lon) {
   return [x, z];
 }
 
+// Repousse un point posé sur la chaussée vers l'accotement le plus proche.
+// Les positions OSM et les triangulations Panoramax portent quelques mètres
+// d'imprécision : sans ce garde-fou, un lampadaire ou un poteau tombé sur la
+// voie se retrouve planté au milieu de la route. Deux passes : un point
+// d'angle de carrefour peut être repoussé d'une voie vers l'autre.
+export function ecarterDeChaussee(roads, x, z, marge = 0.7) {
+  let px = x, pz = z;
+  for (let passe = 0; passe < 2; passe++) {
+    let meilleur = null;
+    for (const r of roads) {
+      if (!r.drivable) continue;
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+        if (Math.abs(x1 - px) > 40 && Math.abs(z1 - pz) > 40) continue;
+        const dx = x2 - x1, dz = z2 - z1;
+        const l2 = dx * dx + dz * dz;
+        if (l2 < 1e-6) continue;
+        let t = ((px - x1) * dx + (pz - z1) * dz) / l2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const qx = x1 + dx * t, qz = z1 + dz * t;
+        const d = Math.hypot(px - qx, pz - qz);
+        const limite = r.width / 2 + marge;
+        if (d < limite && (!meilleur || limite - d > meilleur.pen)) {
+          meilleur = { qx, qz, d, limite, pen: limite - d, dx, dz, l2 };
+        }
+      }
+    }
+    if (!meilleur) break;
+    let nx, nz;
+    if (meilleur.d > 0.05) {
+      nx = (px - meilleur.qx) / meilleur.d;
+      nz = (pz - meilleur.qz) / meilleur.d;
+    } else {
+      // Point pile sur l'axe : côté arbitraire mais stable.
+      const len = Math.sqrt(meilleur.l2);
+      nx = -meilleur.dz / len;
+      nz = meilleur.dx / len;
+    }
+    px = meilleur.qx + nx * meilleur.limite;
+    pz = meilleur.qz + nz * meilleur.limite;
+  }
+  return [px, pz];
+}
+
 // Largeur de chaussée réaliste par type de voie OSM.
 const ROAD_WIDTH = {
   motorway: 14, trunk: 12, primary: 10, secondary: 8.5, tertiary: 7.5,

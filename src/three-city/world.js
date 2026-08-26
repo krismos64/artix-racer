@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { couleurMur, couleurToit } from './bdtopo.js';
+import { ecarterDeChaussee } from './osm.js';
 import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce, texturerGalets, texturerFeuilles,
   texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage,
   texturerNormalesEau, bruit,
@@ -3386,6 +3387,12 @@ function placeLamps(data, relief = null) {
     }
   }
   if (!spots.length) return null;
+
+  // Aucun mât sur la chaussée : les positions OSM des lampadaires réels et
+  // le complément posé au bord peuvent mordre une voie croisée au carrefour.
+  for (const sp of spots) {
+    [sp[0], sp[1]] = ecarterDeChaussee(data.roads, sp[0], sp[1], 0.55);
+  }
 
   const MAX_LAMPS = 1200;
   if (spots.length > MAX_LAMPS) {
