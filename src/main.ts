@@ -352,6 +352,18 @@ function createBackdrop(scene: Scene): PBRMaterial[] {
     const materiau = new PBRMaterial(`pyrenees-${crete.graine}`, scene);
     materiau.albedoTexture = texture;
     materiau.opacityTexture = texture;
+    // Le canal alpha de la texture N'EST PAS lu tant que le matériau reste en
+    // mode opaque : Babylon peignait donc le quad entier, y compris la moitié
+    // basse transparente et les bords estompés. C'est ce qui produisait le
+    // grand voile gris à arêtes verticales en travers du ciel, celui qui
+    // survivait à toutes les corrections du dessin de la texture.
+    texture.hasAlpha = true;
+    materiau.useAlphaFromAlbedoTexture = true;
+    materiau.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
+    materiau.alphaMode = Engine.ALPHA_COMBINE;
+    // Un fond lointain n'écrit pas la profondeur : il se dessine derrière
+    // tout le reste, et le ciel se voit à travers ses parties transparentes.
+    materiau.disableDepthWrite = true;
     materiau.unlit = true;
     materiau.backFaceCulling = false;
     materiau.metadata = { brume: crete.brume };
