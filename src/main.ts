@@ -159,39 +159,228 @@ function createSkybox(scene: Scene): { mesh: Mesh; material: PBRMaterial } {
   return { mesh, material };
 }
 
-function createBackdrop(scene: Scene): Mesh[] {
-  const mountainMaterial = new PBRMaterial('pyrenees-material', scene);
-  mountainMaterial.albedoColor = Color3.FromHexString('#536d78');
-  mountainMaterial.emissiveColor = Color3.FromHexString('#14232a');
-  mountainMaterial.metallic = 0;
-  mountainMaterial.roughness = 1;
-  mountainMaterial.backFaceCulling = false;
-  mountainMaterial.freeze();
-  const lower: Vector3[] = [], ridge: Vector3[] = [];
-  const count = 64;
-  for (let i = 0; i < count; i++) {
-    const t = i / (count - 1);
-    const x = -1800 + t * 3600;
-    let peak = 80 + Math.abs(Math.sin(t * 13.2)) * 95 + Math.abs(Math.sin(t * 31.4 + .8)) * 42;
-    // Pic du Midi d'Ossau au sud-sud-est (azimut réel ~160° depuis Artix,
-    // soit x ≈ +500 pour un fond à 1 380 m) : la dent à deux pointes qui
-    // signe l'horizon béarnais, Grand Pic et son épaulement.
-    peak += 150 * Math.exp(-(((x - 500) / 85) ** 2));
-    peak += 60 * Math.exp(-(((x - 620) / 60) ** 2));
-    lower.push(new Vector3(x, -24, 1380));
-    ridge.push(new Vector3(x, peak, 1380 + Math.sin(t * 8) * 55));
+// ---- Chaîne des Pyrénées au sud ------------------------------------------
+// Le fond est peint, pas modelé : trois plans de crêtes emboîtés, chacun
+// avec son dégradé de brume. C'est la perspective atmosphérique, et non le
+// relief, qui donne l'échelle et la distance à une montagne lointaine.
+//
+// Le premier jet était un ruban unique en gris-vert opaque, brouillard
+// désactivé : il se lisait comme un carton découpé posé derrière la ville.
+// Pire, il portait un pic du Midi d'Ossau de 150 m de haut pour 85 m de
+// large, dessiné sur une grille de 64 points (un tous les 56 m) : la dent
+// tombait entre deux sommets et ressortait en un gigantesque triangle de
+// travers, celui qu'on voyait à l'écran.
+//
+// Cotes réelles, mesurées depuis Artix (43,39743 N ; -0,57224 E) :
+//   Ossau (Grand Pic 2 884 m) à 62,6 km, azimut 169,9°, hauteur apparente
+//   2 467 m une fois la courbure terrestre retirée (307 m), soit 2,26° de
+//   haut et 2,75° de large. Sur un fond posé à 1 380 m de la caméra, cela
+//   fait 54 m de haut et 66 m de large : le pic doit être DISCRET, presque
+//   une dent sur l'horizon. L'ancien était trois fois trop grand.
+const OSSAU = {
+  distanceCamera: 1380,     // profondeur du fond dans la scène
+  hauteur: 54,              // hauteur apparente exacte, en mètres de scène
+  demiLargeur: 33,
+  x: -246,                  // azimut 169,9° projeté sur le plan de fond
+  breche: .62,              // hauteur de la Fourche : 180 m sous le Grand Pic
+  // TRICHE ASSUMÉE sur l'échelle du seul pic. À sa taille exacte (2,26° de
+  // haut), l'Ossau se réduit à une dent de quelques pixels que la brume de
+  // 63 km d'air efface presque : fidèle, mais invisible en roulant. Le
+  // grossir de deux fois et demie le rend reconnaissable comme sur les vues
+  // du Béarn, sans écraser la ville ni toucher au reste de la chaîne, qui
+  // garde ses cotes réelles. Choix de Christophe, septembre 2026.
+  exagerationHauteur: 2.5,
+  exagerationLargeur: 1.6,
+};
+
+interface CretePyrenees {
+  profondeur: number;   // distance à la caméra
+  hauteur: number;      // altitude moyenne de la crête
+  brume: number;        // 0 = crête nette, 1 = fondue dans le ciel
+  graine: number;
+  ossau: boolean;       // cette couche porte-t-elle le pic ?
+}
+// Trois plans, du plus lointain au plus proche. Les crêtes de l'arrière-plan
+// sont plus hautes et plus pâles : c'est ce recouvrement, plus le contraste
+// croissant vers l'avant, qui fait lire une chaîne et non une découpe.
+const CRETES: CretePyrenees[] = [
+  { profondeur: 1420, hauteur: 62, brume: .62, graine: 7.3, ossau: false },
+  { profondeur: 1380, hauteur: 52, brume: .42, graine: 3.1, ossau: true },
+  { profondeur: 1330, hauteur: 36, brume: .24, graine: 11.7, ossau: false },
+];
+
+// Profil d'une crête : sommes de sinus de périodes différentes, donc des
+// pics irréguliers plutôt qu'une ondulation régulière. `u` va de 0 à 1.
+function profilCrete(u: number, graine: number): number {
+  const x = u * 22 + graine;
+  return (Math.abs(Math.sin(x)) * .5
+    + Math.abs(Math.sin(x * 2.3 + 1.7)) * .3
+    + Math.abs(Math.sin(x * 5.1 + .4)) * .2);
+}
+
+// Texture d'une couche de crêtes : la silhouette est dessinée en opacité,
+// avec un dégradé vertical qui fond le pied dans le ciel (brume de vallée)
+// et garde les sommets denses. Les hauts sommets reçoivent leur neige.
+//
+// Passer par une texture plutôt que par de la géométrie permet une
+// silhouette au pixel près, un dégradé continu et un seul quad par couche :
+// impossible à obtenir avec un ruban de 64 points.
+function texturerCrete(scene: Scene, crete: CretePyrenees, largeur = 2048, hauteur = 256): DynamicTexture {
+  const texture = new DynamicTexture(`crete-${crete.graine}`, { width: largeur, height: hauteur }, scene, false);
+  const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+  ctx.clearRect(0, 0, largeur, hauteur);
+
+  // Ligne de crête, échantillonnée au pixel : plus de pic dessiné « entre
+  // deux sommets », le défaut de l'ancien ruban.
+  // Deux passes : la chaîne d'abord, seule, pour fixer l'échelle verticale ;
+  // le pic ensuite, ajouté PAR-DESSUS cette échelle. Normaliser sur une
+  // ligne qui contient déjà l'Ossau grossi écraserait toute la chaîne autour
+  // de lui, exactement ce qu'on cherche à éviter.
+  const fond: number[] = [];
+  for (let px = 0; px < largeur; px++) fond.push(profilCrete(px / (largeur - 1), crete.graine));
+  const maxFond = Math.max(...fond);
+
+  const ligne: number[] = [];
+  for (let px = 0; px < largeur; px++) {
+    const u = px / (largeur - 1);
+    let h = fond[px] / maxFond;
+    if (crete.ossau) {
+      // Silhouette de l'Ossau : deux dents séparées par la Fourche, 180 m
+      // sous le Grand Pic. Le Petit Pic (2 812 m) est à peine plus bas et
+      // se tient à l'est. Cotes ramenées à la largeur de la texture.
+      const centre = .5 + OSSAU.x / 3600;
+      const demi = OSSAU.demiLargeur * OSSAU.exagerationLargeur / 3600;
+      const d = (u - centre) / demi;
+      // Deux gaussiennes serrées et une brèche creusée entre elles.
+      const grand = Math.exp(-((d + .45) ** 2) * 9);
+      const petit = Math.exp(-((d - .55) ** 2) * 11) * .95;
+      const fourche = Math.exp(-((d - .05) ** 2) * 46) * (1 - OSSAU.breche);
+      const massif = Math.exp(-(d ** 2) * 1.6) * .5;
+      // Hauteur du pic rapportée à celle de la chaîne : le rapport réel est
+      // 54 m de pic pour 52 m de crête moyenne, soit à peine plus haut. Avec
+      // l'exagération il monte à deux fois et demie la crête, ce qui le
+      // détache franchement de la ligne d'horizon.
+      const relief = Math.max(0, massif + Math.max(grand, petit) - fourche);
+      h += relief * (OSSAU.hauteur / 52) * OSSAU.exagerationHauteur;
+    }
+    ligne.push(h);
   }
-  const mountains = MeshBuilder.CreateRibbon('pyrenees', { pathArray: [lower, ridge], closeArray: false, closePath: false }, scene);
-  mountains.material = mountainMaterial;
-  mountains.isPickable = false;
-  mountains.infiniteDistance = true;
-  // Sans quoi le brouillard linéaire (fin à 980 m en Équilibré) noyait
-  // entièrement un fond situé à 1 380 m : les Pyrénées existaient dans la
-  // scène depuis le début mais ne se voyaient jamais.
-  mountains.applyFog = false;
-  // Les nuages sculptés en sphères ont disparu : ceux du panorama HDR les
-  // remplacent, avec leur vraie lumière.
-  return [mountains];
+  // Échelle : la chaîne occupe 1, le pic dépasse au-delà. On divise par le
+  // maximum atteint pour que rien ne sorte du canvas, mais le rapport entre
+  // pic et crête est désormais fixé plus haut, pas subi.
+  const maxLigne = Math.max(...ligne);
+
+  // Remplissage colonne par colonne, avec dégradé vertical.
+  //
+  // La ligne de crête occupe la bande `PART_CRETE` du HAUT du canvas : le
+  // sommet le plus élevé touche le bord supérieur, le plus bas s'arrête à
+  // `PART_CRETE`. Sous cette bande, il n'y a plus que le pied de la montagne
+  // qui se dissout dans la brume de vallée.
+  //
+  // Le calcul précédent partait du bas de la bande et REMONTAIT : une
+  // colonne de faible hauteur y démarrait donc tout en haut du canvas, et
+  // son remplissage descendait jusqu'au pied. Toutes les colonnes basses
+  // peignaient ainsi un bloc plein par-dessus les crêtes, ce grand rectangle
+  // gris à bords verticaux nets qui barrait le ciel.
+  const PART_CRETE = .55;
+  for (let px = 0; px < largeur; px++) {
+    const h = ligne[px] / maxLigne;
+    const sommet = hauteur * PART_CRETE * (1 - h);
+    const grad = ctx.createLinearGradient(0, sommet, 0, hauteur);
+    // Le sommet est le plus opaque, le pied se dissout dans la brume.
+    // Corps de la montagne en GRIS : le blanc est réservé à la neige, sinon
+    // elle ne se distingue pas du rocher (mesuré : 173 px blancs sur 256
+    // dans la colonne du pic, la neige noyait toute la silhouette).
+    grad.addColorStop(0, `rgba(150,158,170,${(1 - crete.brume * .18).toFixed(3)})`);
+    grad.addColorStop(.30, `rgba(142,152,166,${(1 - crete.brume * .55).toFixed(3)})`);
+    // Extinction rapide : au-delà du tiers inférieur de la bande, la brume
+    // de vallée a tout mangé. Un dégradé étalé jusqu'au bas du plan
+    // remplissait l'écran d'un voile laiteux au lieu d'une chaîne.
+    grad.addColorStop(.62, `rgba(134,146,160,${(1 - crete.brume).toFixed(3)})`);
+    grad.addColorStop(1, "rgba(130,142,158,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(px, sommet, 1, hauteur - sommet);
+  }
+
+  // Neige des hauts sommets : au-dessus d'une ligne d'enneigement, et
+  // seulement là où la pente s'adoucit (une paroi verticale ne retient pas
+  // la neige). Dessinée en blanc franc par-dessus la silhouette.
+  const enneigement = crete.ossau ? .72 : .80;
+  ctx.globalCompositeOperation = 'source-atop';
+  for (let px = 0; px < largeur; px++) {
+    const h = ligne[px] / maxLigne;
+    if (h < enneigement) continue;
+    // Épaisseur du manteau : croît avec l'altitude au-dessus de la limite.
+    const part = (h - enneigement) / (1 - enneigement);
+    const sommet = hauteur * PART_CRETE * (1 - h);
+    const bas = sommet + hauteur * PART_CRETE * (.08 + part * .12);
+    const grad = ctx.createLinearGradient(0, sommet, 0, bas);
+    grad.addColorStop(0, `rgba(255,255,255,${(.55 + part * .40).toFixed(3)})`);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(px, sommet, 1, bas - sommet);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Extinction latérale : le plan s'arrête net à ses deux extrémités, ce qui
+  // dessinait deux arêtes verticales franches en plein ciel. On efface donc
+  // progressivement les bords, la chaîne se perdant dans la brume comme elle
+  // le fait vers l'est et l'ouest depuis la plaine.
+  ctx.globalCompositeOperation = 'destination-out';
+  const marge = largeur * .14;
+  for (const [x0, x1] of [[0, marge], [largeur, largeur - marge]] as const) {
+    const fondu = ctx.createLinearGradient(x0, 0, x1, 0);
+    fondu.addColorStop(0, 'rgba(0,0,0,1)');
+    fondu.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = fondu;
+    ctx.fillRect(Math.min(x0, x1), 0, marge, hauteur);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  texture.update(false);
+  texture.hasAlpha = true;
+  return texture;
+}
+
+// Plans de crêtes. Renvoie les matériaux, dont la teinte est recalée sur
+// chaque ambiance (`teinterBackdrop`) : une montagne bleutée à midi vire au
+// mauve au couchant et disparaît presque la nuit.
+function createBackdrop(scene: Scene): PBRMaterial[] {
+  const materiaux: PBRMaterial[] = [];
+  for (const crete of CRETES) {
+    const texture = texturerCrete(scene, crete);
+    const materiau = new PBRMaterial(`pyrenees-${crete.graine}`, scene);
+    materiau.albedoTexture = texture;
+    materiau.opacityTexture = texture;
+    materiau.unlit = true;
+    materiau.backFaceCulling = false;
+    materiau.metadata = { brume: crete.brume };
+    materiaux.push(materiau);
+
+    // Un seul quad par couche, largeur 3 600 m pour couvrir tout l'horizon
+    // sud. La hauteur suit la cote apparente calculée pour l'Ossau.
+    const largeur = 3600;
+    const hauteur = crete.hauteur * (256 / 54) * 1.05;
+    const plan = MeshBuilder.CreatePlane(`pyrenees-plan-${crete.graine}`, {
+      width: largeur, height: hauteur, sideOrientation: Mesh.DOUBLESIDE,
+    }, scene);
+    plan.material = materiau;
+    // Le pied du plan doit passer SOUS la ligne d'horizon, sinon la bande
+    // transparente du bas laisse voir les crêtes flotter en l'air, détachées
+    // du sol. On l'enfonce donc largement : la partie basse est de toute
+    // façon masquée par le terrain et par la ville.
+    plan.position.set(0, hauteur * .5 - 120, crete.profondeur);
+    plan.isPickable = false;
+    // PAS d'infiniteDistance : il recentre le plan sur la caméra à chaque
+    // image, ce qui annule sa position en Z et écrase les trois couches à la
+    // même profondeur. Le fond est assez loin (1 330 à 1 420 m) pour que le
+    // déplacement du joueur ne produise aucune parallaxe visible.
+    // Le brouillard linéaire (fin à 980 m en Équilibré) noierait un fond
+    // situé au-delà de 1 300 m : la brume est peinte dans la texture.
+    plan.applyFog = false;
+    plan.freezeWorldMatrix();
+  }
+  return materiaux;
 }
 
 
@@ -223,7 +412,34 @@ async function start(): Promise<void> {
   scene.imageProcessingConfiguration.exposure = .94;
   scene.imageProcessingConfiguration.contrast = 1.18;
 
-  createBackdrop(scene);
+  const cretesPyrenees = createBackdrop(scene);
+  // Teinte des crêtes, recalée à chaque ambiance. Une montagne lointaine
+  // prend la couleur de l'air qui la sépare de l'observateur : elle est donc
+  // dérivée de la couleur du brouillard, tirée vers le bleu et assombrie
+  // d'autant moins que la couche est loin (celle du fond est presque le
+  // ciel). Sans cela le fond restait gris-vert au couchant comme la nuit.
+  const teinterBackdrop = (fog: Color3, neige: number): void => {
+    for (const materiau of cretesPyrenees) {
+      const brume = (materiau.metadata?.brume as number) ?? .6;
+      // Plus la couche est embrumée, plus elle se rapproche de l'air ambiant.
+      // L'étagement doit être FRANC : à teintes trop voisines (0,54 contre
+      // 0,43 mesuré à l'écran), les trois couches se confondent en une seule
+      // bande pâle et la chaîne perd sa profondeur. La couche de devant
+      // descend donc nettement plus bas que celle du fond.
+      const montagne = new Color3(
+        fog.r * (.38 + brume * .96),
+        fog.g * (.46 + brume * .92),
+        fog.b * (.68 + brume * .78),
+      );
+      materiau.unfreeze?.();
+      materiau.albedoColor = montagne;
+      // Le matériau est `unlit` : l'émissif s'AJOUTE à l'albédo et lave
+      // l'image s'il est trop fort. Il ne sert qu'à faire capter aux
+      // sommets la lumière que la plaine n'a plus, dosé très bas.
+      materiau.emissiveColor = montagne.scale(neige * .22 * (1 - brume * .6));
+      materiau.freeze();
+    }
+  };
   const skybox = createSkybox(scene);
   // Textures de ciel chargées à la demande et gardées : le premier passage
   // dans une ambiance coûte le chargement et le préfiltrage (une seconde),
@@ -284,6 +500,7 @@ async function start(): Promise<void> {
     exposure: number;
     darkness: number;
     fenetres: number;      // intensité d'émission des vitrages
+    neige: number;         // éclat des sommets enneigés du fond
   }
   const AMBIANCES: Ambiance[] = [
     {
@@ -304,6 +521,8 @@ async function start(): Promise<void> {
       exposure: 1,
       darkness: .3,
       fenetres: 0,
+      // Plein midi : la neige des sommets est éblouissante.
+      neige: .55,
     },
     {
       nom: 'Fin de journée',
@@ -327,6 +546,9 @@ async function start(): Promise<void> {
       exposure: .82,
       darkness: .28,
       fenetres: .12,
+      // Le soir, les sommets gardent la lumière quand la plaine est à
+      // l'ombre : c'est l'effet alpenglow, rose sur la neige.
+      neige: .72,
     },
     {
       nom: 'Nuit',
@@ -346,6 +568,8 @@ async function start(): Promise<void> {
       exposure: .8,
       darkness: .5,
       fenetres: .85,
+      // La nuit, seule la neige capte encore un peu de clair de lune.
+      neige: .18,
     },
   ];
   let ambianceIndex = 0;
@@ -370,6 +594,7 @@ async function start(): Promise<void> {
     ambient.diffuse.copyFrom(a.ambientDiffuse);
     ambient.groundColor.copyFrom(a.ambientGround);
     scene.fogColor.copyFrom(a.fog);
+    teinterBackdrop(a.fog, a.neige);
     scene.clearColor.copyFrom(a.clear);
     scene.imageProcessingConfiguration.exposure = a.exposure;
     scene.environmentIntensity = a.envIntensity;
