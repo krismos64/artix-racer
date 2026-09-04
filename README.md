@@ -25,27 +25,18 @@ npm run build && npm run preview
 
 | Touche | Action |
 | --- | --- |
-| ↑ / Z | Accélérer |
-| ↓ / S | Freiner ; maintenir à l'arrêt engage la marche arrière (limitée à 30 km/h) |
-| ← / → | Diriger |
+| ↑ / Z / W | Accélérer |
+| ↓ / S | Freiner, puis marche arrière |
+| ← / → ou Q / D | Diriger |
 | Espace | Frein à main (drift) |
-| C | Changer de caméra (poursuite, capot, cinématique, aérienne) |
-| G | Boîte automatique ou manuelle |
-| E / X | Monter / descendre un rapport (en manuel) |
+| Maj | Nitro |
+| C | Changer de caméra (poursuite, capot, aérienne) |
 | R | Réapparaître au point de départ |
-| F | Remettre la voiture sur ses roues |
-| T | Accélérer l'écoulement du temps (cycle jour/nuit) |
+| T | Relancer le chrono |
 | L | Ambiance d'éclairage : Midi, Fin de journée, Nuit |
-| B | Klaxon |
-| M / N | Musique / son |
-| O | Ombres portées (désactivées par défaut, coûteuses) |
-| K | Rendu dessin animé : contours de silhouette et ombrage en paliers |
-| V | Grade couleur arcade : contraste, saturation, vignettage, grain |
-| A | Anticrénelage (SMAA, activé par défaut) |
-| J | Profil graphique : Performance, Équilibré, Qualité |
-| U | Ajustement automatique de la résolution |
-| P | Pause |
-| H | Aide à l'écran |
+| 1 / 2 / 3 | Profil graphique : Performance, Équilibré, Qualité |
+| P ou Échap | Pause |
+| Entrée | Démarrer en balade libre |
 
 ## D'où vient la ville
 
@@ -140,15 +131,29 @@ Les lieux ainsi signalés incluent la Mairie d'Artix, l'Église Saint-Pierre, le
 Collège Jean Moulin, les écoles Jean Sarrailh et Jean Moulin, la Gendarmerie,
 l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 
-### Rendu et identité visuelle (chantier d'août 2026)
+### Rendu et identité visuelle (chantiers d'août et septembre 2026)
 
-- **Ciel analytique** (modèle de Preetham, SkyMaterial officielle Babylon) lié
-  à la lumière directionnelle : voile d'horizon, halo solaire et ombres
-  racontent la même heure. Réglages calés à l'écran (turbidité 2,6).
-- **IBL réelle** : l'éclairage d'ambiance PBR est rendu au démarrage depuis ce
-  ciel par une sonde de réflexion, au lieu de trois gradients de 32 pixels.
-- **SSAO2** en profil Qualité : l'occlusion ambiante assoit les bâtiments au
-  sol et creuse les angles de rue.
+- **Ciel photographique HDR** : trois panoramas Poly Haven (jour, soir, nuit)
+  servent à la fois de fond et d'éclairage d'ambiance. Les nuages visibles
+  sont exactement ceux qui se reflètent sur la carrosserie, et la lumière
+  directionnelle est posée sous le soleil du panorama, dont la position est
+  mesurée par `scripts/ciel-soleil.mjs`. Le script plafonne aussi le disque
+  solaire : sans cela il entre dans l'éclairage d'ambiance et éclaire tout
+  sans ombre.
+- **Sols photographiques** (ambientCG, CC0) avec cartes de normales : enrobé,
+  herbe, béton de trottoir, pavés, grave, écorce. C'est le relief de la
+  normale qui accroche la lumière rasante, ce qu'un grain de canvas ne
+  pouvait pas rendre, et ce qui distingue enfin le trottoir de la chaussée.
+- **Chaîne des Pyrénées** peinte en trois plans de crêtes emboîtés, chacun
+  avec son dégradé de brume : c'est la perspective atmosphérique, et non le
+  relief, qui donne la distance. Le pic du Midi d'Ossau y porte sa silhouette
+  à deux dents et sa neige, volontairement grossi (à sa cote réelle, 62,6 km
+  et 2,26° de haut, il serait invisible).
+- **Occlusion ambiante et flou de mouvement** en profil Qualité : ils exigent
+  une pré-passe qui redessine la ville, d'où leur réservation au profil le
+  plus lourd.
+- **Étalonnage image** : grain animé, aberration chromatique de bord de champ,
+  courbes couleur (ombres bleutées, hautes lumières chaudes).
 - **Volets** sur les habitations, ouverts de part et d'autre de chaque baie :
   couleur relevée sur les panoramiques Panoramax quand elle est détectée,
   sinon palette des teintes réellement vues à Artix (bordeaux, vert, bleu-gris,
@@ -170,10 +175,12 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 - **Trois ambiances d'éclairage** sur la touche L : midi, fin de journée aux
   ombres longues, nuit. Chaque bascule re-rend la sonde d'environnement et
   ajuste ciel, brouillard, exposition et noirceur des ombres.
-- **Nuit complète** : phares à faisceau resserré portant à trente mètres,
-  optiques et feux émissifs, lanternes allumées, halos de lumière sodium au
-  sol sous les 357 lampadaires (permanents, sans attendre le passage du
-  joueur), fenêtres des habitations éclairées.
+- **Nuit complète et ÉCLAIRÉE** : phares, optiques et feux émissifs, lanternes
+  allumées, halos de lumière sodium au sol sous les 357 lampadaires
+  (permanents, sans attendre le passage du joueur), fenêtres des habitations
+  éclairées. Douze sources réelles de 260 cd portant à 62 m suivent le
+  joueur : la chaussée et les façades sont lisibles, une rue éclairée au
+  sodium n'étant jamais noire entre deux lampadaires.
 - **Ville habitée** : 110 passants marchent sur les cheminements piétons
   réels, s'arrêtent pour discuter, traversent aux passages ; touffes d'herbe
   3D sur les bas-côtés.
@@ -182,13 +189,20 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 - **Circulation légère** : une douzaine de véhicules parcourent les voies du
   bourg, roulent à droite, respectent les sens uniques et freinent derrière
   le joueur.
-- **Parc automobile varié** : cinq silhouettes (compacte, berline, break,
-  fourgonnette, fourgon) plus des scooters, plaques et rétroviseurs, palette
-  pondérée du parc français ; ombre de contact sous chaque véhicule garé.
+- **Parc automobile modelé** : cinq voitures low-poly (Kenney Car Kit, CC0)
+  pour le stationnement et la circulation, séparées par triangle en
+  carrosserie vernie teintée par instance et en détails (vitres, feux,
+  calandre) à la palette du kit ; palette pondérée du parc français, ombre de
+  contact sous chaque véhicule. Les scooters gardent leur silhouette
+  procédurale.
 - **Trottoirs à bordures** dans le centre-bourg : plateau surélevé de 12 cm,
   chant de bordure clair, interrompus aux carrefours et devant les parkings.
 - **Passages piétons à la française** : bandes parallèles à l'axe de la
   circulation, usure mesurée passage par passage sur les panoramiques.
+- **Marquage complet** : lignes de rive continues des deux côtés de toutes les
+  voies du bourg (dessertes et chemins exclus, comme en réalité), axe médian
+  discontinu sur les bidirectionnelles assez larges. Largeur de trait et
+  retrait du bord proportionnels à la largeur de la voie.
 - **Couronnement des toits** : chant de rive sous chaque égout, antennes
   râteau sur un tiers des cheminées, toutes tournées vers le même émetteur.
 - **Surfaces végétales nuancées** : plaques d'herbe jaunie et taches de
@@ -432,7 +446,7 @@ fichier est absent ou illisible, plutôt que de laisser le jeu muet.
 - **16 800 fenêtres** générées à partir du nombre d'étages réel de chaque
   bâtiment : c'est ce qui distingue le plus nettement une façade d'un bloc
   coloré
-- dôme de ciel en dégradé zénith/horizon plutôt qu'un fond uni
+- ciel photographique HDR servant aussi d'éclairage d'ambiance
 - **140 passants** marchant sur les 11,6 km de cheminements piétons réellement
   cartographiés (153 trottoirs, sentiers et places). Ils s'arrêtent par deux
   pour discuter, gesticulent en parlant, se tournent vers leur interlocuteur,
@@ -443,7 +457,9 @@ fichier est absent ou illisible, plutôt que de laisser le jeu muet.
 - cycle jour/nuit complet avec allumage automatique des phares et des
   lampadaires à la tombée du jour
 - traces de pneus laissées au sol lors des glissements
-- textures d'asphalte et d'herbe générées en canvas, donc aucun asset externe
+- sols en photos de matière CC0 (ambientCG) avec cartes de normales ; le
+  reste des textures (enduits, tuiles, feuillages, marquage) est généré en
+  canvas
 - les **maillages instanciés ne sont dessinés qu'à portée utile** : un
   `InstancedMesh` n'étant écarté qu'en bloc par le frustum culling, les
   3 500 arbres, les lampadaires et les véhicules garés étaient chacun
@@ -457,7 +473,7 @@ fichier est absent ou illisible, plutôt que de laisser le jeu muet.
 
 ### Profils graphiques
 
-Trois profils sous la touche `J` : **Performance**, **Équilibré** (par défaut)
+Trois profils sous les touches `1`, `2` et `3` : **Performance**, **Équilibré** (par défaut)
 et **Qualité**. Chacun règle d'un bloc le pixel ratio, la résolution de
 l'occlusion ambiante, les ombres et la taille de leur carte, les distances de
 brouillard, le nombre de lampadaires réellement calculés, l'effectif des
@@ -619,20 +635,24 @@ dans la table `SECTIONS` : il sert de secours si le chargement du glTF échoue.
 
 ## Limites connues
 
-- les façades sont des aplats de couleur : la teinte est relevée sur les
-  photographies de rue, mais aucune texture photographique n'y est plaquée
-- les véhicules stationnés et les passants animent la ville, mais il n'y a pas
-  de trafic au sens propre : aucun véhicule ne circule ni ne respecte la
-  signalisation
-- les bâtiments en fond de parcelle gardent une teinte déduite de leur matériau
-  BD TOPO : aucune photographie de rue ne les atteint
-- les ombres se coupent par la touche O, ou en passant au profil Performance.
-  Leur coût vient de leur échantillonnage sur les triangles qui les reçoivent,
-  pas de la construction de la carte d'ombre
-- **des à-coups subsistent en roulage** : 17,4 % des frames dépassent 20 ms et
-  le p99 reste à 28,8 ms, sans que le découpage de la végétation ni la
-  suppression des allocations ne les aient réduits. La médiane, elle, tient
-  60 fps. La cause de ces pointes n'est pas identifiée
+- les façades sont des aplats de couleur texturés en enduit : la teinte est
+  relevée sur les photographies de rue, mais le placage de photos rectifiées
+  a été retiré en septembre 2026. Les cases d'atlas cadraient trop souvent ce
+  qui se trouvait devant le mur (haie, gravier, trottoir) et le résultat se
+  lisait comme une capture d'écran collée sur le bâtiment. Le mécanisme reste
+  dans le code derrière le drapeau `PLACAGE_PHOTO`
+- les bâtiments en fond de parcelle gardent une teinte déduite de leur
+  matériau BD TOPO : aucune photographie de rue ne les atteint
+- les **piétons sont des capsules** articulées : ils marchent, discutent et
+  gesticulent correctement, mais leur silhouette n'a pas été remodelée
+- les **feuillages** sont des lobes d'icosaèdre dentelés par texture alpha,
+  éclaircis pour le nouvel éclairage mais pas remodelés
+- l'ombre des **véhicules de la flotte** vient d'un voile de contact et non
+  de la carte d'ombre, dont le volume est resserré autour du joueur
+- le fond de montagnes n'a plus `infiniteDistance` pour que ses trois couches
+  gardent leur profondeur : posé à 1 330 m, il ne devrait produire aucune
+  parallaxe visible, mais cela reste à confirmer sur un long trajet vers le
+  sud
 
 ## Calage sur photographies
 
@@ -682,6 +702,10 @@ Données cartographiques © les contributeurs OpenStreetMap, sous licence ODbL.
 BD TOPO® © IGN, sous Licence Ouverte 2.0. Photographies de référence
 © Jean Michel Etchecolonea, CC BY-SA 3.0, via Wikimedia Commons, et Panoramax
 sous Licence Ouverte 2.0.
+
+Ressources visuelles ajoutées en septembre 2026, toutes sous CC0 1.0 :
+panoramas de ciel HDR Poly Haven, photos de matière ambientCG (enrobé, herbe,
+béton, pavés, grave, écorce), modèles de véhicules Kenney Car Kit.
 
 Le modèle 3D du véhicule ne porte plus de métadonnées d'auteur : son
 attribution reste à établir. Le détail de chaque source figure dans

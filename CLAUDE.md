@@ -106,6 +106,27 @@ Objectif unique : le meilleur rendu visuel possible, vite.
   nom après conversion doit être dans `PROTEGES_FUSION`. SSAO et flou de
   mouvement exigent une pré-passe qui redessine la ville : profil Qualité
   seulement.
+- **Une texture d'opacité ne suffit pas** : tant que le matériau reste en
+  mode opaque (`transparencyMode` à null), Babylon ne lit JAMAIS le canal
+  alpha et peint le quad entier. Poser `hasAlpha`,
+  `useAlphaFromAlbedoTexture` et `transparencyMode = ALPHABLEND`. Ce piège a
+  coûté quatre corrections inutiles du dessin de la texture des Pyrénées, le
+  voile gris venant du matériau et non du canvas.
+- Fond de montagnes : trois plans peints, pas de géométrie. Pied du plan SOUS
+  la ligne d'horizon (sinon les crêtes flottent), pas d'`infiniteDistance`
+  (il recentre le plan sur la caméra et écrase les couches à la même
+  profondeur), bords latéraux estompés. L'Ossau est exagéré 2,5 fois en
+  hauteur : à sa cote réelle (62,6 km, 2,26° de haut) il est invisible.
+- Éclairage nocturne : les matériaux convertis plafonnent à 10 lumières
+  simultanées (`maxSimultaneousLights`, three-city-bridge). Au-delà les
+  lampes surnuméraires s'éteignent en silence. Le pool en compte 12, jamais
+  toutes proches à la fois.
+- Marquage au sol : les seuils se lisent dans `ROAD_WIDTH` (osm.js). Rives à
+  partir de 5,60 m hors `service` et `track`, axe médian à partir de 6,20 m.
+  Une rue résidentielle fait 6 m : deux rives, pas d'axe.
+- Placage photo des façades DÉSACTIVÉ (`PLACAGE_PHOTO` dans world.js ET
+  signage.js) : les cases d'atlas cadraient souvent la haie devant le mur.
+  Réactiver les deux drapeaux ensemble, sinon enseignes manquantes.
 - Les textures de fichier passent par `textureFichier`/`matiere`
   (textures.js) : le pont ne lit que `image.src`, jamais les pixels ; ne pas
   leur appliquer `carteRelief` (canvas vide). Cartes de normales OpenGL :

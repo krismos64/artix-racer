@@ -2,6 +2,69 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-09-04 (suite) : façades photo retirées, Pyrénées refaites, nuit éclairée
+
+Suite de la refonte, en réponse à des défauts signalés en jeu par
+Christophe. Le dépôt GitHub `krismos64/artix-racer` a par ailleurs été
+repris : son `main` portait encore la version Three.js du 19 août, écrasé
+sur décision explicite après vérification de ce qu'il contenait.
+
+**Placage photo des façades supprimé.** Sur beaucoup de murs, la case
+d'atlas rectifiée depuis les panoramiques ne cadrait pas la façade mais ce
+qui se trouvait devant : haie, tas de gravier, bout de trottoir. Le résultat
+se lisait comme une capture d'écran collée sur le bâtiment. Drapeau
+`PLACAGE_PHOTO` à false dans world.js : les deux manifestes ne sont plus
+fusionnés ni leurs six atlas chargés, les murs repassent par l'enduit
+procédural dont la teinte reste relevée sur Panoramax. Effet de bord traité :
+signage.js supprimait l'enseigne générique des commerces à façade
+photographiée, ils seraient restés muets.
+
+**Fond des Pyrénées entièrement refait.** L'ancien ruban unique portait un
+Ossau de 150 m de haut pour 85 m de large sur une grille d'un point tous les
+56 m : la dent tombait entre deux sommets et sortait en grand triangle de
+travers. Cotes mesurées depuis Artix : 62,6 km, azimut 169,9°, hauteur
+apparente 2 467 m courbure déduite, soit 2,26°. Il était trois fois trop
+grand et au mauvais azimut. Remplacé par trois plans de crêtes peints
+(2 048 × 256), du plus lointain au plus proche, chacun avec son dégradé de
+brume et son étagement de teinte, la couleur suivant l'ambiance courante.
+Silhouette de l'Ossau à deux dents séparées par la Fourche, échantillonnée
+au pixel, avec neige des hauts sommets. **Exagération assumée de 2,5 en
+hauteur** (choix de Christophe) : à sa taille exacte le pic se réduit à une
+dent que la brume efface.
+
+- **Piège coûteux** : le voile gris qui barrait le ciel a survécu à quatre
+  corrections du dessin de la texture parce que la cause était en aval.
+  `transparencyMode` restait à `null` sur le matériau : Babylon le traitait
+  comme OPAQUE et n'a jamais lu le canal alpha, pourtant correct (mesuré :
+  alpha 0 en haut du canvas, 180 au milieu). Il peignait donc le quad
+  entier. Corrigé par `hasAlpha`, `useAlphaFromAlbedoTexture`,
+  `transparencyMode = ALPHABLEND` et `disableDepthWrite`.
+- Autres pièges : le remplissage des colonnes partait du bas de la bande et
+  remontait, d'où un bloc plein sur les colonnes basses ; le pied des plans
+  était à +26 m, au-dessus de l'horizon, et les montagnes flottaient ;
+  `infiniteDistance` recentre les plans sur la caméra et écrase les trois
+  couches à la même profondeur.
+
+**Éclairage public nocturne.** La ville était noire entre les flaques : 70 cd
+sur 30 m de portée, huit sources. Passé à douze sources, 260 cd, 62 m de
+portée, avec la fenêtre d'allumage élargie en conséquence (une source de
+62 m s'éteignait avant que son halo ne sorte du champ). Halos au sol de 7,5
+à 11,5 m de rayon. Ambiance nocturne relevée : ambiante de 0,05 à 0,22 avec
+un sol qui renvoie une teinte chaude, exposition de 0,80 à 1,05. Plafond à
+connaître : les matériaux convertis acceptent 10 lumières simultanées.
+
+**Lignes de rive des deux côtés.** Le marquage existait mais son seuil était
+à 7,60 m : seules autoroutes, nationales et secondaires en avaient. Les
+tertiaires (7,50 m) passaient juste à côté et aucune rue du bourg n'était
+marquée. Seuil abaissé à 5,60 m, dessertes et chemins exclus, retrait du
+bord proportionnel à la largeur (plafonné à 42 cm) et trait de 11 cm sous
+7 m de large. L'axe médian garde son seuil de 6,20 m : une rue de 6 m a donc
+ses deux rives sans ligne axiale, ce qui est le marquage réel d'un bourg.
+
+**Reste ouvert** : piétons toujours en capsules ; feuillages en lobes
+d'icosaèdre, éclaircis mais pas remodelés ; parallaxe du fond de montagnes à
+confirmer sur un long trajet vers le sud (`infiniteDistance` retiré).
+
 ## 2026-09-04 : refonte visuelle (ciel HDR, sols photo, flotte, post-process)
 
 Constat de départ, capture à l'appui : lumière plate (ambiante hémisphérique
