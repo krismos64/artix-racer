@@ -1725,21 +1725,38 @@ export function buildWorld(scene, data) {
       }
     }
 
-    // Lignes de rive continues sur les axes principaux : elles cadrent la
-    // chaussée et donnent beaucoup de lisibilité en conduite.
-    if (r.width >= 7.6) {
+    // Lignes de rive continues des DEUX côtés de la chaussée : elles cadrent
+    // la voie et donnent beaucoup de lisibilité en conduite.
+    //
+    // Le seuil était à 7,60 m, ce qui ne laissait des rives qu'aux
+    // autoroutes, nationales et secondaires : les tertiaires (7,50 m dans
+    // ROAD_WIDTH) passaient juste à côté, et toutes les rues du bourg
+    // (résidentielles et non classées, 6 m) en étaient privées. Il descend
+    // à 5,60 m, la cote sous laquelle une voie devient trop étroite pour
+    // porter deux rives sans que la peinture ne mange la chaussée.
+    //
+    // Les dessertes (`service`, 4,50 m) et les chemins (`track`) restent
+    // nus : une aire de livraison ou un chemin d'exploitation n'est pas
+    // marqué en réalité.
+    if (r.width >= 5.6 && r.kind !== 'service' && r.kind !== 'track') {
+      // Retrait du bord : la rive se peint à une quarantaine de centimètres
+      // du bord d'enrobé sur une route large, moins sur une rue étroite où
+      // ce retrait fixe aurait posé les deux traits presque au milieu.
+      const retrait = Math.min(0.42, r.width * 0.075);
       for (let i = 0; i < r.pts.length - 1; i++) {
         const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
         const dx = x2 - x1, dz = z2 - z1;
         const len = Math.hypot(dx, dz);
         if (len < 0.5) continue;
-        const nx = (-dz / len) * (r.width / 2 - 0.42);
-        const nz = (dx / len) * (r.width / 2 - 0.42);
+        const nx = (-dz / len) * (r.width / 2 - retrait);
+        const nz = (dx / len) * (r.width / 2 - retrait);
         for (const s of [1, -1]) {
           traceLigne(
             [x1 + nx * s, z1 + nz * s],
             [x2 + nx * s, z2 + nz * s],
-            0.13, 0,
+            // Trait plus fin sur les petites voies : une rive de 13 cm sur
+            // une rue de 6 m se lit comme une bande de roulement.
+            r.width >= 7 ? 0.13 : 0.11, 0,
           );
         }
       }
