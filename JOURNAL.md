@@ -2,6 +2,355 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-09-04 (suite 7) : panneaux de police à droite, et rendus en volume
+
+Christophe a signalé deux défauts sur les STOP et cédez-le-passage : posés à
+gauche de la chaussée, et visibles des deux côtés comme s'ils régissaient les
+deux sens.
+
+**Côté d'implantation.** `surAccotement` choisissait le bord « le mieux
+dégagé », par un score mêlant distance aux autres chaussées et proximité du
+nœud OSM. Ce critère n'a rien à voir avec le code de la route : un panneau de
+police se pose à droite dans le sens qu'il régit. La moitié se retrouvait donc
+du mauvais bord.
+
+Le côté vient maintenant du sens de circulation concerné, lu dans le tag OSM
+`direction` (`forward`/`backward`, porté par 77 des 86 panneaux d'Artix).
+Droite du conducteur circulant selon (ux, uz) : `(-uz, ux)`, vérifié sur trois
+caps en repère main droite avec Z vers le sud.
+
+Le garde-fou anti-carrefour est conservé mais retourné : si le côté droit
+tombe sur une transversale, le panneau RECULE le long de sa propre voie au
+lieu de changer de bord. Chaque essai repart de la position initiale, un
+cumul l'emmenait jusqu'à 25 m du carrefour annoncé.
+
+**Double face : le coupable était le pont, et la première parade était
+mauvaise.** Les matériaux étaient déjà en `side: THREE.FrontSide` avec un dos
+de tôle grise distinct, donc corrects côté Three. Mais `three-city-bridge.ts`
+force `backFaceCulling = false` sur TOUS les matériaux, garde-fou légitime
+contre les nappes cadastrales à l'ordre de sommets inversé.
+
+J'ai d'abord ajouté une exception au pont (`userData.faceUnique`) pour
+rétablir le culling sur ces seuls matériaux. Capture à l'appui : le STOP se
+lisait toujours en miroir. La cause est double, et la seconde m'avait échappé
+: la scène est en repère MAIN DROITE, où Babylon inverse sa convention
+d'enroulement par rapport à Three. Rétablir le culling ne suffit donc pas, il
+masque la mauvaise face. Poser `sideOrientation` à la main aurait été un pari
+de plus, sans moyen de le vérifier sans navigateur.
+
+Parade retenue, qui ne dépend d'AUCUNE convention : donner du **volume** au
+panneau. `plaqueGeo` devient une `BoxGeometry` de 3 cm portant six matériaux
+(ordre +X, -X, +Y, -Y, +Z, -Z) : la face texturée sur +Z, la tôle grise sur
+les cinq autres. Un objet épais n'a pas de face traversante. Les deux plans
+dos à dos et leur décalage anti-z-fighting disparaissent, et l'exception
+ajoutée au pont a été retirée : laisser un mécanisme non testé aurait été pire
+que le défaut.
+
+La tôle reprend la texture du panneau comme masque de découpe, sinon
+l'octogone découpé sur la face avant laisserait dépasser les angles d'un carré
+gris plein.
+
+**Contrôle** : script Node rejouant la logique de placement sur les 86 nœuds
+de priorité d'Artix. 86 sur 86 à droite du sens régi, vérifié par produit
+vectoriel indépendant de la formule employée. Pas de navigateur disponible
+(MCP déconnecté), le rendu reste à juger à l'écran.
+
+## 2026-09-04 (suite 6) : vue conducteur fixe, à la place du volant
+
+La vue intérieure (touche C, deuxième mode) flottait à chaque accélération.
+Deux causes, pas une :
+
+1. **Le lissage.** La caméra passait par le même `LerpToRef` que les vues
+   extérieures, avec un facteur 15. Elle rattrapait donc la voiture avec du
+   retard, ce qui est souhaitable derrière le véhicule et absurde à
+   l'intérieur. Le mode 1 sort désormais de l'interpolation.
+2. **L'assiette ignorée.** La caisse porte un tangage visuel (`visualPitch`
+   vaut -0,012 en accélération, -0,025 sous boost, +0,018 en marche arrière)
+   et un roulis en virage. La caméra, calculée à partir de la seule position
+   du véhicule et du cap, ne suivait pas ces rotations : l'habitacle
+   paraissait glisser devant l'œil. Elle passe maintenant par
+   `getDirectionToRef`, qui transforme un vecteur du repère local du châssis
+   vers le monde en tenant compte de l'assiette.
+
+**Position de l'œil.** Le volant du modèle est à (0,34 ; 0,77 ; 0,34) dans le
+repère du châssis. Le côté a été établi sans supposition : `wheel_fl` (front
+left) est à x = -0,84 dans le modèle et `wheel_fr` à x = +0,83, donc x négatif
+y est la gauche, et le demi-tour du pivot l'envoie sur le +X local. Conduite à
+gauche confirmée.
+
+**Deux erreurs commises en route, toutes deux prises par la vérification :**
+
+- J'avais d'abord nommé « droite » le vecteur `(forward.z, -forward.x)`, qui
+  est en fait la GAUCHE en repère main droite avec Z vers le sud. Avec un
+  décalage négatif, l'œil partait côté passager. Vérifié par le calcul sur
+  trois caps avant correction.
+- Mon premier script de contrôle appliquait la rotation du nœud `main` au
+  volant, alors que `steering_wheel` et les roues n'en sont PAS enfants : leur
+  translation est déjà dans le repère final. Le test échouait à tort et
+  m'aurait fait « corriger » du code juste.
+
+**Réglage de hauteur, après retour de Christophe** : l'œil était à 1,12 m,
+soit 35 cm au-dessus du centre du volant, quand un conducteur réel se tient à
+15-20 cm. Le volant s'enfonçait dans le bas du cadre et le plafonnier occupait
+le haut. Descendu à 0,96 m : 19 cm au-dessus du volant, 25 cm de garde sous le
+pavillon (1,21 m sur une 458).
+
+**Deuxième retour, capture à l'appui : le volant mangeait l'image et la route
+avait disparu.** J'avais cherché du côté de la hauteur et de l'angle de
+regard, mais le calcul montre que ni l'un ni l'autre ne pouvait suffire : à
+l'œil bas, l'horizon reste au centre du cadre et la route se tasse autour de
+50 % quel que soit l'angle.
+
+Le paramètre qui commande est le RECUL. Le volant (jante de 36 cm) n'était
+qu'à 49 cm de l'œil et occupait **69 % de la hauteur de l'image**. Reculé à
+55 cm, la position d'un conducteur adossé, il passe à 0,91 m de distance et ne
+prend plus que **38 %** : son bord haut se tient vers 54 % et toute la moitié
+supérieure revient à la route.
+
+Second défaut du même cadrage : le regard ne plongeait que de 0,14°, ce qui
+visait le sol à **384 m**, autant dire l'horizon, d'où le ciel sur le tiers
+haut. Porté à 2°, l'angle sous lequel on regarde la chaussée trente mètres
+devant soi (visée mesurée à 29 m).
+
+**Troisième retour : le dossier du siège bouchait le centre.** Le recul qui
+dégageait le volant avait placé l'œil dans la plage des sièges (le mesh
+`leather` s'étend de z = -0,75 à +0,75, l'œil était à -0,55). Impasse de
+réglage : avancer l'œil dégage le siège mais fait regrossir le volant, qui
+remonte à 50-73 % du cadre.
+
+Sortie par le haut, comme le fait tout jeu de course : les sièges sont
+**masqués en vue conducteur** (`setVueCabine` dans car.ts, appelée au
+changement de caméra). On ne voit jamais son propre dossier au volant. Le
+mesh visé est `leather` par son nom exact, jamais par un motif : le modèle
+contient aussi `steering_leather`, la gaine du volant, qui doit rester. Nom
+vérifié unique dans le glTF, donc sans suffixe d'import Babylon.
+
+Réglage final : œil à (0,36 ; 1,02 ; -0,55), volant à 0,91 m occupant 38 % de
+la hauteur du cadre contre 69 % au premier essai, bord haut à 60 %, regard
+plongeant de 2°.
+
+**Identifier les bons meshes a demandé trois essais**, faute de navigateur
+pour vérifier (MCP déconnecté). Le chemin, pour ne pas le refaire :
+
+- `leather` seul : le dossier restait. Sa couleur sur la capture (gris clair,
+  presque blanc) ne correspondait d'ailleurs pas au matériau `Leather`
+  (#6e6e72, gris-mauve foncé) : le siège est assemblé de plusieurs pièces.
+- `leather` + `interior_dark` + `carpet` : le siège disparaissait, mais le
+  TABLEAU DE BORD se trouait, la console centrale laissant voir la rue au
+  travers et la casquette d'instruments flottant en arche isolée.
+- La mesure a tranché. Le modèle étant compressé en **Draco**, sa géométrie
+  n'est pas lisible hors navigateur, mais les bornes `min`/`max` des
+  accesseurs le restent, et il faut les composer avec la translation du nœud
+  puis la rotation de `main` (mon premier calcul les lisait brutes, d'où des
+  étendues symétriques absurdes). Résultat sans ambiguïté :
+
+  | mesh | étendue en z | nature |
+  | --- | --- | --- |
+  | `leather` | -0,41 à 1,08 | sièges |
+  | `trim` | -0,35 à 1,08 | surpiqûres |
+  | `carpet` | -0,56 à 1,10 | moquette |
+  | `interior_dark` | -2,16 à 2,16 | garniture de TOUTE la voiture |
+  | `interior_light` | -2,16 à 2,15 | idem |
+
+  Les deux derniers courent sur les 4,3 m du véhicule : ce sont les garnitures
+  générales, planche de bord comprise, à ne jamais masquer.
+
+**Quatrième essai, et la vraie difficulté apparaît** : sans `interior_dark`
+le tableau de bord se troue, avec lui le dossier revient. Ce mesh est UNE
+SEULE primitive de 20 563 sommets couvrant les 4,5 m du véhicule, qui porte à
+la fois la coque des sièges et la planche de bord. Aucun tri par nom ne peut
+les départager, et masquer par matériau non plus.
+
+Solution : **découper la primitive à l'exécution**. `decouperCabine` clone le
+maillage et ne garde que les triangles dont le CENTRE est en deçà du seuil,
+c'est-à-dire vers l'avant. La vue conducteur affiche ce clone (la planche) et
+masque l'original (planche + sièges) ; les vues extérieures font l'inverse.
+
+Trois pièges dans cette découpe, tous évités par vérification :
+
+- Le tri porte sur le centre du triangle, pas sur chaque sommet : découper au
+  sommet près laisserait des trous sur les faces à cheval sur le seuil.
+- Le sens du seuil. Dans le repère LOCAL du modèle l'avant est en z NÉGATIF
+  (roues avant à -1,16, arrière à +1,49) ; c'est le demi-tour du pivot qui
+  remet l'ensemble à l'endroit. Le premier jet gardait z > seuil, donc les
+  sièges, et jetait la planche : l'inverse exact du but.
+- `clone()` PARTAGE la géométrie en Babylon. Sans `makeGeometryUnique()`
+  avant `setIndices`, la découpe s'appliquait aussi à l'original et la voiture
+  perdait sa planche de bord dans toutes les vues. Vérifié dans la source de
+  Babylon que cette méthode modifie bien sur place et retourne `this`.
+
+Masquage retenu : `leather`, `trim`, `carpet` en entier, plus la moitié
+arrière de `interior_dark`. `__cabine()` reste exposée dans la console pour
+lister ce qui se tient devant l'œil et basculer une pièce, plutôt que de
+deviner d'après le fichier.
+
+Le plan proche passe aussi à 0,08 m dans cette vue : à 0,35 m, celui des vues
+extérieures tranchait le volant, situé à 49 cm de l'œil.
+
+**Vérification** : toujours pas de navigateur pilotable (MCP chrome-devtools
+déconnecté, extension Claude in Chrome non branchée). Contrôle par le calcul
+sur le fichier GLB : côté, recul, hauteur au-dessus du volant, garde sous
+pavillon et distance au plan proche. Type-check et build passent. Le rendu
+final reste à juger à l'écran.
+
+## 2026-09-04 (suite 5) : la Ferrari 458 remplace l'Audi R8
+
+Christophe a proposé le modèle de l'exemple `webgl_materials_car` de three.js.
+C'est une Ferrari 458 Italia (auteur vicent091036), reprise depuis
+`examples/models/gltf/ferrari.glb`.
+
+**Pourquoi le changement est bon** : 1,60 Mo contre 4,21 Mo, aucune texture
+(17 matériaux de couleur), un intérieur complet avec volant et sièges, et un
+modèle à l'échelle réelle (empattement mesuré 2,65 m, la cote officielle de
+la 458 ; voie 1,67 m).
+
+**Trois points d'adaptation dans `src/car.ts` :**
+
+- Le modèle regarde -Z (roues avant à z = -1,15, arrière à +1,50). La scène
+  attend l'inverse : sans `pivot.rotation.y = PI`, la voiture roulerait en
+  marche arrière, phares braqués derrière elle. Les phares et feux restent
+  parentés au châssis et non au pivot, ils ne subissent donc pas ce demi-tour.
+- Les roues s'appellent `wheel_fl/fr/rl/rr`. L'ancien motif visait le nommage
+  Audi (`wheelFrontL`) : laissé tel quel, il ne trouvait plus rien et les
+  roues seraient restées figées.
+- Matériaux repris nom par nom : vernis sur `Body_Color`, transparence sur
+  `Glass_Gray` (le modèle le donne opaque, ce qui bouchait l'habitacle qu'il
+  vient de modéliser), métal poli sur les jantes, caoutchouc mat sur `Tires`.
+
+**Licence : point à connaître.** three.js ne documente pas la licence de ce
+fichier et la page Sketchfab d'origine est aujourd'hui DÉSACTIVÉE. Consigné
+dans ATTRIBUTIONS.md : usage personnel assumé, à tirer au clair avant toute
+publication du dépôt.
+
+**Vérification incomplète** : le pont MCP chrome-devtools s'est déconnecté en
+cours de session et l'extension Claude in Chrome n'est pas branchée, donc le
+rendu en jeu N'A PAS été contrôlé à l'écran. À la place, un script Node
+(`scripts` non commité) a validé sur le fichier GLB : les 4 roues matchent le
+motif de `car.ts`, les 5 matériaux ciblés existent, l'orientation -Z confirme
+le demi-tour, et les cotes sont plausibles. Le type-check et le build passent.
+Reste à ouvrir le jeu pour juger la teinte de carrosserie, la transparence du
+vitrage et la rotation des roues en roulant.
+
+## 2026-09-04 (suite 4) : les cinq écoles d'Artix, modélisées en dur
+
+Christophe voulait les écoles modélisées d'après Street View : Jean Moulin
+(collège, élémentaire, maternelle) et Jean Sarrailh (élémentaire, maternelle).
+
+**Relevés Street View, cinq établissements :**
+
+- Collège Jean Moulin, rue du Galupe (mai 2026) : corps R+1 rénové, bardage
+  gris anthracite, larges encadrements de baies BLEU VIF à l'étage, cage
+  d'escalier en avant-corps gris foncé, rez-de-chaussée béton clair,
+  garde-corps métallique en terrasse.
+- Élémentaire Jean Moulin, même rue : barre de plain-pied, tuile rouge-brun,
+  poteaux blancs, stores toile beige baissés, bandeau de rive vert.
+- Maternelle Jean Moulin, rue des Écoles : plain-pied, tuile rouge-orangé,
+  façade blanche, bandeau BLEU sous gouttière, portique rouge et cabane bleue
+  dans la cour.
+- Maternelle Jean Sarrailh, D663 : pignon à deux pentes sur rue avec enseigne
+  et drapeau, panneaux colorés vert-rose-bleu, auvent d'entrée.
+- Élémentaire Jean Sarrailh, rue Fourticot : longue barre blanche, bandeau
+  CONTINU de menuiseries TURQUOISE, parking de pins parasols.
+
+**Deux primitives partagées** dans landmarks.js : `construireBarreEcole`
+(ossature poteaux-poutres, trame de 3,4 m relevée sur photo) et
+`toitureEcole` (comble à deux pentes débordant, construit face par face).
+Ces bâtiments d'après-guerre s'identifient à leur RYTHME de façade, pas à
+leur volume.
+
+**Le vrai obstacle : l'emprise 535.** La BD TOPO donne au groupe scolaire
+Jean Moulin une seule emprise de 5 856 m² et 47 sommets. Extrudée, elle
+produit un bloc plein de 8,1 m qui avalait complètement le collège modélisé.
+L'orthophoto montre en réalité un peigne d'ailes étroites autour de deux
+cours. Onze ailes reconstruites depuis les arêtes mesurées, emprise retirée
+via `BATIMENTS_MODELISES`.
+
+**Erreurs de placement, corrigées par la mesure et non par le raisonnement :**
+
+- J'ai d'abord reculé le collège d'une demi-profondeur « vers l'intérieur »,
+  déduit de la normale extérieure. `world.isOnRoad` a montré qu'il tombait en
+  travers de la rue du Galoupé. En balayant les deux sens de -16 à +16 m, le
+  seul décalage qui dégage toute la façade est -4 m. Le raisonnement sur la
+  normale était faux, la mesure a tranché.
+- L'aile sud-ouest débordait aussi : profondeur ramenée de 12 à 6 m, valeur
+  maximale mesurée débord de toiture compris.
+- Premier contrôle systématique : 48 sommets « sur la chaussée ». En cherchant
+  les maillages coupables, ce sont surtout `trottoirs` et `bordures-trottoir`,
+  légitimement sur la voirie, plus deux maillages de 5,6 km d'étendue. En ne
+  gardant que les maillages locaux (< 120 m) et hauts (> 2 m), il ne restait
+  que 5 vrais fautifs, les encadrements bleus du collège.
+
+**Vitrages : le réflexe inverse du bon.** Les baies rendaient des trous noirs.
+Je les ai d'abord rendues plus métalliques pour capter l'IBL, ce qui a aggravé
+le défaut : ces façades regardent le nord, et un métal ne renvoie que le sol
+sombre qui lui fait face. La bonne réponse est un verre DIÉLECTRIQUE et CLAIR
+(0x8fa2b0, metalness 0,04).
+
+**Contrôle final** : 290 sommets de bâti scolaire testés, zéro sur une
+chaussée. Image complète à 8,59 ms (référence du projet : 8,81 ms), 60 fps.
+
+Reste à faire : le gymnase bardé gris clair vu à droite du collège n'est pas
+modélisé, et les cours (basket tracé, piste d'athlétisme visibles sur
+l'orthophoto) restent en enrobé nu.
+
+## 2026-09-04 (suite 3) : haies de clôture, relevées sur Street View
+
+Christophe voulait des haies de végétation (lauriers, sapinettes) dans les
+zones concernées. Le rendu existant posait sur les 23 barrières `hedge` de
+l'OSM une boîte verte à trois faces plates, deux verts alternés par segment :
+vue depuis la route, une haie se lisait comme un muret peint en vert.
+
+**Relevés Street View (imagerie Artix mai 2026), trois secteurs :**
+
+- D817 / avenue du Rhin et Danube : laurier-palme taillé, 1,6 m au-dessus d'un
+  muret de galets d'environ 1 m, grillage rigide vert intercalé. Une section
+  jaune-doré (troène doré) rompt le vert au milieu du linéaire.
+- Avenue Poumayou : cyprès de Leyland taillé, 2,2 m, vert très sombre, crête
+  franchement irrégulière. Muret béton bas et grillage losange.
+- Rue de la Gare : charmille sur tronc, rideau rectangulaire à 5 m, portée par
+  des fûts dégagés, plus une boule de laurier taillée isolée.
+
+**Module `src/three-city/haies.js`.** Quatre espèces avec leurs cotes, un
+ruban de tranches (0,7 m) au profil de mur végétal (flancs presque droits,
+seule la crête s'arrondit), grain de surface et ondulation de crête par bruit
+déterministe. Les 23 haies OSM étant toutes en périphérie, les haies du bourg
+sont déduites des rues résidentielles : retrait de `width/2 + 3,4` m depuis
+l'axe, une trouée sur deux (entrées de garage, parcelles ouvertes), rayon
+limité à 900 m du centre.
+
+**Ce qui a coûté du temps, consigné dans CLAUDE.md :**
+
+- Le pont force `backFaceCulling = false` et `twoSidedLighting` sur tous les
+  matériaux. Un volume ouvert par le dessous montre son intérieur éclairé
+  comme une face avant : les premières haies ressortaient délavées, presque
+  translucides au-dessus du pavé. Il faut fermer le dessous, même invisible.
+- Le premier jet plantait une haie EN DIAGONALE DE LA PLACE DE LA MAIRIE, et
+  d'autres barraient la chaussée en travers aux carrefours. Trois causes
+  cumulées : aucun test des esplanades et parkings, aucune exigence de bâti
+  résidentiel à proximité (la rue de la mairie est commerçante), et un
+  contrôle de position en trois points fixes là où un tronçon de 30 m laisse
+  passer une maison de 12 m. Corrigé par un échantillonnage à pas fixe de 2 m
+  sur les deux extrémités, plus les filtres manquants.
+- Contrairement à ce que laissait entendre la note sur les `vertexColors`, le
+  pont TRANSMET l'attribut `color` de géométrie et Babylon le lit par défaut.
+  Une couleur par facette suffit à casser les aplats d'un flanc uni, sans
+  texture ni appel de dessin supplémentaire.
+
+**Contrôle systématique plutôt qu'à l'oeil** : `world.isOnRoad` et
+`world.collidesBuilding` passés sur les sommets du maillage produit, sur cinq
+quartiers chargés. 37 479 sommets testés, zéro sur une chaussée, zéro dans un
+bâtiment (contre 291 au premier jet).
+
+**Coût mesuré avec `__comparer()`** (hors vsync, seul chiffre décisionnel) :
+10,04 ms avec les haies contre 9,72 ms sans, soit 0,32 ms pour 150 000
+triangles en 3 appels de dessin. Confirme une fois de plus que le coût suit
+les appels de dessin, pas les triangles. 60 fps tenus en profil Équilibré.
+
+Reste à faire : les haies OSM de la D817 mériteraient leur muret de galets et
+leur grillage (relevés mais non modélisés), et l'espèce `charmille` n'est
+jamais tirée automatiquement, elle attend un placement explicite rue de la
+Gare.
+
 ## 2026-09-04 (suite 2) : profilage, question DLSS tranchée par la mesure
 
 Christophe a demandé s'il serait envisageable d'intégrer DLSS de NVIDIA.

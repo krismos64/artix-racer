@@ -43,7 +43,24 @@ Utilisées de la même façon, pour le calage des teintes, sans redistribution.
 
 ## Modèle 3D du véhicule
 
-**`public/models/AudiR8.glb`** : attribution inconnue.
+**`public/models/ferrari.glb`** : Ferrari 458 Italia, par vicent091036.
+
+Modèle repris de l'exemple `webgl_materials_car` de three.js
+(`examples/models/gltf/ferrari.glb`), lui-même issu de Sketchfab. C'est le
+véhicule du joueur depuis septembre 2026.
+
+La licence n'a PAS pu être vérifiée : le dépôt three.js ne documente pas
+celle de ce fichier, et la page Sketchfab d'origine
+(modèle 57bf6cc56931426e87494f554df1dab6) est aujourd'hui désactivée. Le
+modèle est utilisé ici dans un projet strictement personnel, jamais mis en
+ligne. Toute publication du dépôt demanderait de tirer ce point au clair ou
+de remplacer le fichier.
+
+« Ferrari » et « 458 Italia » sont des marques déposées de Ferrari S.p.A. Ce
+projet n'est ni affilié à Ferrari S.p.A. ni approuvé par elle.
+
+**`public/models/AudiR8.glb`** : attribution inconnue. Ancien véhicule du
+joueur, conservé dans le dépôt mais plus chargé par le jeu.
 
 Le fichier a été retraité par glTF-Transform et ne porte plus de métadonnées
 d'auteur ni de licence. L'origine n'a pas pu être retrouvée à ce jour. Il est

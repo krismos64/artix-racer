@@ -199,8 +199,16 @@ class ThreeCityConverter {
     // voyait à la place de l'herbe et une façade de mairie disparaissait selon
     // l'angle. La ville ne contient pas de coque transparente : rendre les
     // deux faces est donc le garde-fou fidèle et déterministe.
+    //
+    // Ce garde-fou interdit de compter sur le back-face culling pour cacher
+    // quoi que ce soit : une plaque à une seule face reste visible de dos, et
+    // en repère main droite Babylon inverse en plus sa convention
+    // d'enroulement, si bien qu'un STOP se lisait EN MIROIR depuis la voie
+    // opposée. La parade n'est pas d'exempter le matériau mais de donner du
+    // VOLUME à l'objet : voir la plaque des panneaux dans signage.js.
     material.backFaceCulling = false;
     material.twoSidedLighting = true;
+
     // Nuit : phares du joueur et lampadaires proches s'ajoutent au soleil et à
     // l'ambiante. Le plafond par défaut (4) éteindrait silencieusement les
     // lampes surnuméraires.

@@ -124,30 +124,54 @@ export function buildSignage(data, relief, roadY) {
   const poteauGeo = new THREE.CylinderGeometry(0.045, 0.05, 1, 6);
 
   // ---- Panneaux STOP et cédez-le-passage --------------------------------
-  // FrontSide : en DoubleSide, le dos du panneau afficherait « POTS » en
-  // miroir depuis la voie opposée.
-  const matStop = new THREE.MeshStandardMaterial({
-    map: textureStop(), transparent: true, roughness: 0.4,
-    side: THREE.FrontSide, alphaTest: 0.5,
+  // `side: FrontSide` ne sert à RIEN ici : le pont Three vers Babylon force
+  // `backFaceCulling = false` sur tous les matériaux, pour protéger les nappes
+  // cadastrales dont l'ordre des sommets est inversé. Le réglage de Three est
+  // donc ignoré, et la face avant du STOP restait visible depuis l'arrière, en
+  // miroir : le panneau paraissait double face et régissait les deux sens.
+  //
+  // La parade retenue ne touche pas au culling, elle donne du VOLUME au
+  // panneau (voir `plaqueGeo` plus bas) : une plaque épaisse n'a pas de face
+  // traversante, le résultat ne dépend plus d'aucune convention d'enroulement.
+  // La boîte porte SIX matériaux, dans l'ordre de BoxGeometry : +X, -X, +Y,
+  // -Y, +Z, -Z. Seule la face +Z reçoit le visuel du panneau ; les cinq autres
+  // prennent la tôle grise. C'est ce qui garantit qu'aucun conducteur ne voit
+  // le STOP depuis l'arrière, sans dépendre du back-face culling.
+  // La tôle du dos et des tranches reprend la texture du panneau comme MASQUE
+  // de découpe (teinte grise, alphaTest identique) : sans cela, l'octogone
+  // découpé sur la face avant laisserait voir un carré gris plein derrière,
+  // dont les angles dépasseraient de la silhouette.
+  const toleStop = new THREE.MeshStandardMaterial({
+    map: textureStop(), color: 0x8f959b, alphaTest: 0.5, transparent: true,
+    roughness: 0.6, metalness: 0.3,
   });
-  const matCedez = new THREE.MeshStandardMaterial({
-    map: textureCedez(), transparent: true, roughness: 0.4,
-    side: THREE.FrontSide, alphaTest: 0.5,
+  const toleCedez = new THREE.MeshStandardMaterial({
+    map: textureCedez(), color: 0x8f959b, alphaTest: 0.5, transparent: true,
+    roughness: 0.6, metalness: 0.3,
   });
-  // Le dos reprend la texture du panneau comme masque de découpe, sinon un
-  // carré gris apparaîtrait derrière l'octogone du STOP.
-  const dosStop = new THREE.MeshStandardMaterial({
-    map: textureStop(), color: 0x9aa0a6, alphaTest: 0.5, transparent: true,
-    roughness: 0.6, metalness: 0.3, side: THREE.FrontSide,
+  const faceStop = new THREE.MeshStandardMaterial({
+    map: textureStop(), transparent: true, roughness: 0.4, alphaTest: 0.5,
   });
-  const dosCedez = new THREE.MeshStandardMaterial({
-    map: textureCedez(), color: 0x9aa0a6, alphaTest: 0.5, transparent: true,
-    roughness: 0.6, metalness: 0.3, side: THREE.FrontSide,
+  const faceCedez = new THREE.MeshStandardMaterial({
+    map: textureCedez(), transparent: true, roughness: 0.4, alphaTest: 0.5,
   });
+  // Ordre des faces d'un BoxGeometry : +X, -X, +Y, -Y, +Z, -Z. Seule +Z porte
+  // le visuel, les cinq autres la tôle. Un conducteur venant de l'arrière ne
+  // voit donc jamais le panneau, quel que soit le sens du culling.
+  const matStop = [toleStop, toleStop, toleStop, toleStop, faceStop, toleStop];
+  const matCedez = [toleCedez, toleCedez, toleCedez, toleCedez, faceCedez, toleCedez];
   // Un STOP réel mesure 70 cm : à l'échelle du jeu et avec le champ de vision
   // d'une caméra de poursuite, il devient illisible. On le grossit d'un tiers,
   // comme le font les jeux de conduite pour garder la signalisation lisible.
-  const plaqueGeo = new THREE.PlaneGeometry(1.05, 1.05);
+  // VOLUME et non plan. Deux plans dos à dos ne suffisaient pas : la scène
+  // est en repère main droite, où Babylon inverse sa convention d'enroulement
+  // par rapport à Three, si bien que le culling masquait la mauvaise face et
+  // que le STOP se lisait EN MIROIR depuis la voie opposée. Une plaque qui a
+  // une épaisseur réelle n'a plus de face traversante : le résultat ne dépend
+  // plus de la convention d'enroulement, quelle qu'elle soit.
+  //
+  // 3 cm : l'épaisseur d'un vrai panneau avec son cadre.
+  const plaqueGeo = new THREE.BoxGeometry(1.05, 1.05, 0.03);
 
   // Route la plus proche d'un point : cap, distance et projection sur l'axe.
   // Les nœuds OSM de signalisation sont posés SUR l'axe de la chaussée ; il
@@ -199,28 +223,51 @@ export function buildSignage(data, relief, roadY) {
     if (!Number.isFinite(r.dMin) || r.dMin > 40) {
       return { x, z, cap: 0, trouve: false };
     }
-    // Normale à la voie. Les deux côtés sont testés : on retient celui qui
-    // éloigne le plus le panneau de toute chaussée, pour ne pas le planter sur
-    // la voie transversale d'un carrefour.
-    const nx = Math.cos(r.cap), nz = -Math.sin(r.cap);
+    // CÔTÉ D'IMPLANTATION : la droite du conducteur concerné, sans exception.
+    //
+    // En France, un panneau de priorité se pose à droite de la chaussée dans
+    // le sens qu'il régit ; c'est une règle d'implantation, pas une préférence
+    // esthétique. Le code retenait auparavant le côté le mieux dégagé, ce qui
+    // en plantait la moitié à gauche, où aucun conducteur ne les cherche.
+    //
+    // Droite du conducteur circulant selon (ux, uz) : (-uz, ux). Vérifié sur
+    // trois caps en repère main droite avec Z vers le sud : face au sud (0,1)
+    // la droite est l'ouest (-1,0), face à l'est (1,0) elle est le sud (0,1).
     const recul = r.largeur / 2 + decalage;
-    const candidats = [
-      { x: r.px + nx * recul, z: r.pz + nz * recul },
-      { x: r.px - nx * recul, z: r.pz - nz * recul },
-    ];
-    // Deux critères départagent les côtés : rester du côté où le nœud OSM se
-    // trouvait déjà (les stops sont cartographiés côté circulation), et ne pas
-    // atterrir sur une voie transversale. Le second l'emporte en cas de
-    // conflit, un panneau planté sur la chaussée étant pire que du mauvais côté.
-    let meilleur = candidats[0], meilleurScore = -Infinity;
-    for (const c of candidats) {
-      const d = routeProche(c.x, c.z, 25).dMin;
-      const degagement = Number.isFinite(d) ? Math.min(d, 12) : 12;
-      const proximiteOrigine = -Math.hypot(c.x - x, c.z - z);
-      const score = degagement * 2 + proximiteOrigine;
-      if (score > meilleurScore) { meilleurScore = score; meilleur = c; }
+    let px, pz;
+    if (r.sens) {
+      // Sens de circulation concerné : celui du tracé pour `forward`, l'opposé
+      // pour `backward`. Sans tag, on garde le sens du tracé, faute de mieux.
+      const inverse = direction === 'backward';
+      const cx = inverse ? -r.sens.ux : r.sens.ux;
+      const cz2 = inverse ? -r.sens.uz : r.sens.uz;
+      px = r.px + (-cz2) * recul;
+      pz = r.pz + cx * recul;
+    } else {
+      // Aucune direction connue : on retombe sur la normale, côté du nœud OSM.
+      const nx = Math.cos(r.cap), nz = -Math.sin(r.cap);
+      const versNoeud = (x - r.px) * nx + (z - r.pz) * nz >= 0 ? 1 : -1;
+      px = r.px + nx * recul * versNoeud;
+      pz = r.pz + nz * recul * versNoeud;
     }
-    const px = meilleur.x, pz = meilleur.z;
+    // Garde-fou : si le côté droit tombe sur une chaussée transversale (cas
+    // des carrefours en Y), le panneau RECULE le long de sa propre voie, il ne
+    // change pas de bord. Un panneau à gauche n'est pas une option, alors
+    // qu'un stop posé deux mètres en amont reste juste.
+    //
+    // Chaque essai repart de la position de départ : cumuler les reculs
+    // emmenait le panneau jusqu'à 25 m du carrefour qu'il annonce.
+    {
+      const ax = r.sens ? r.sens.ux : Math.sin(r.cap);
+      const az = r.sens ? r.sens.uz : Math.cos(r.cap);
+      const dx0 = px, dz0 = pz;
+      for (let essai = 1; essai <= 3 && routeProche(px, pz, 20).dMin < 1.2; essai++) {
+        px = dx0 - ax * essai * 2;
+        pz = dz0 - az * essai * 2;
+      }
+    }
+    // Normale à la voie, conservée pour l'orientation par défaut.
+    const nx = Math.cos(r.cap), nz = -Math.sin(r.cap);
 
     // Le panneau fait face au point de la voie qu'il signale, c'est-à-dire la
     // projection du nœud d'origine sur son axe. Un PlaneGeometry non tourné
@@ -280,24 +327,17 @@ export function buildSignage(data, relief, roadY) {
     poteau.position.set(pos.x, sol + 1.1, pos.z);
     group.add(poteau);
 
+    // UN SEUL maillage : la boîte porte sa face avant et sa tôle. L'ancien
+    // montage superposait deux plans, l'un tourné de PI, ce qui exigeait de
+    // les décaler pour éviter qu'ils se disputent le depth buffer, et surtout
+    // dépendait du back-face culling pour masquer la face avant depuis
+    // l'arrière. Le culling étant désactivé par le pont et son sens inversé
+    // en repère main droite, le STOP se lisait en miroir depuis la voie
+    // opposée. Un volume rend le problème sans objet.
     const plaque = new THREE.Mesh(plaqueGeo, s.type === 'stop' ? matStop : matCedez);
-    // La face et le dos ne doivent jamais être coplanaires. Babylon rend les
-    // deux côtés des maillages importés pour protéger les toitures et terrains
-    // cadastraux mal orientés ; deux plans confondus se disputeraient alors le
-    // depth buffer et le panneau clignoterait à chaque déplacement de caméra.
-    const epaisseurPanneau = 0.018;
-    const nx = Math.sin(pos.cap), nz = Math.cos(pos.cap);
-    plaque.position.set(pos.x + nx * epaisseurPanneau, sol + 2.3,
-      pos.z + nz * epaisseurPanneau);
+    plaque.position.set(pos.x, sol + 2.3, pos.z);
     plaque.rotation.y = pos.cap;
     group.add(plaque);
-
-    // Dos de tôle grise, comme sur un vrai panneau.
-    const dos = new THREE.Mesh(plaqueGeo, s.type === 'stop' ? dosStop : dosCedez);
-    dos.position.set(pos.x - nx * epaisseurPanneau, sol + 2.3,
-      pos.z - nz * epaisseurPanneau);
-    dos.rotation.y = pos.cap + Math.PI;
-    group.add(dos);
 
     if (s.type === 'stop') nbStop++; else nbCedez++;
   }

@@ -30,7 +30,7 @@ npm run build && npm run preview
 | ← / → ou Q / D | Diriger |
 | Espace | Frein à main (drift) |
 | Maj | Nitro |
-| C | Changer de caméra (poursuite, capot, aérienne) |
+| C | Changer de caméra (poursuite, conducteur, aérienne) |
 | R | Réapparaître au point de départ |
 | T | Relancer le chrono |
 | L | Ambiance d'éclairage : Midi, Fin de journée, Nuit |
@@ -104,11 +104,26 @@ Les panneaux sont plantés à l'emplacement réel des nœuds OSM, décalés sur
 l'accotement : les stops sont cartographiés sur l'axe de la chaussée, les
 poser tels quels les dresserait au milieu de la voie.
 
-Leur orientation est calculée à partir du vecteur qui va du panneau vers l'axe
-de la voie, et non par une rotation fixe appliquée au cap de la route. Le sens
-de ce cap dépend de l'ordre de numérisation de la polyligne dans OSM, qui est
-arbitraire : une rotation fixe plantait donc la moitié des panneaux dos à la
-route, illisibles depuis la voiture.
+**Ils sont posés à droite de la chaussée**, dans le sens qu'ils régissent :
+c'est une règle d'implantation, pas une préférence. Le côté vient du tag OSM
+`direction` (`forward`/`backward`), que portent 77 des 86 panneaux de priorité
+d'Artix. Le code retenait auparavant le bord le mieux dégagé, ce qui en
+plantait la moitié à gauche, là où aucun conducteur ne les cherche. Si le côté
+droit tombe sur une chaussée transversale, le panneau recule le long de sa
+propre voie plutôt que de changer de bord.
+
+Leur orientation vient du même tag : la face du panneau remonte le sens de
+circulation, donc regarde le conducteur qui arrive. Sans cette information,
+« tourner le panneau vers la chaussée » laisse deux solutions sur une voie à
+double sens et en retient une au hasard.
+
+Chaque panneau est un **volume** de 3 cm d'épaisseur, pas une plaque plate :
+la face texturée est sur l'avant, de la tôle grise sur les cinq autres faces.
+Le back-face culling ne pouvait pas servir ici, le pont Three vers Babylon le
+désactivant partout pour protéger les nappes cadastrales inversées, et la
+scène étant de surcroît en repère main droite où Babylon inverse sa convention
+d'enroulement : un STOP en deux plans dos à dos se lisait EN MIROIR depuis la
+voie opposée. Un objet épais n'a pas de face traversante.
 
 **Artix ne compte aucun feu tricolore.** La circulation y est réglée par stops,
 cédez-le-passage et ronds-points, ce que le jeu reproduit fidèlement plutôt que
@@ -184,6 +199,13 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 - **Ville habitée** : 110 passants marchent sur les cheminements piétons
   réels, s'arrêtent pour discuter, traversent aux passages ; touffes d'herbe
   3D sur les bas-côtés.
+- **Haies de clôture** (`src/three-city/haies.js`) : quatre espèces relevées
+  sur Street View, laurier-palme, cyprès de Leyland, troène doré et charmille
+  sur tronc. Volumes à flancs dressés et crête dentelée, avec un grain de
+  surface et une nuance par facette : l'ancien rendu, une boîte verte à trois
+  faces plates, se lisait comme un muret peint. OSM n'en cartographie que 23,
+  toutes en périphérie ; les 13 km du bourg sont déduits des rues
+  résidentielles, avec une trouée sur deux pour les entrées de garage.
 - **Lignes aériennes** : 357 poteaux triangulés depuis les panoramiques
   (+ 77 interpolés), reliés par 210 portées de caténaires paraboliques.
 - **Circulation légère** : une douzaine de véhicules parcourent les voies du
@@ -229,6 +251,34 @@ enseignes réelles :
   vertical à croix vertes, croix lumineuse d'angle)
 - **Mairie**, **église Saint-Pierre**, **gare**, immeubles d'angle du
   carrefour de la Patte d'Oie, jardinières de la place, préaux des écoles
+
+### Les groupes scolaires
+
+Les cinq établissements d'Artix sont modélisés en dur depuis le 04/09/2026,
+relevés sur Street View (imagerie mai 2026 pour Jean Moulin, avril 2016 pour
+Jean Sarrailh, dont le bâti n'a pas changé) :
+
+- **Collège Jean Moulin** : le seul en R+1, bardage gris anthracite et larges
+  encadrements de baies bleu vif à l'étage, cage d'escalier en avant-corps,
+  garde-corps de terrasse
+- **École élémentaire Jean Moulin** : barre de plain-pied à tuile rouge-brun,
+  poteaux blancs, stores toile beige baissés, bandeau de rive vert
+- **École maternelle Jean Moulin** : bandeau bleu sous gouttière, et sa cour
+  avec portique rouge et cabane bleue
+- **École maternelle Jean Sarrailh** : pignon sur rue, panneaux colorés
+  vert-rose-bleu, auvent d'entrée et drapeau
+- **École élémentaire Jean Sarrailh** : longue barre blanche à bandeau continu
+  de menuiseries turquoise, sa signature depuis la rue Fourticot
+
+Ce sont des bâtiments d'après-guerre à ossature poteaux-poutres : c'est le
+RYTHME de leur façade (un poteau tous les 3,4 m, un bandeau continu de baies)
+qui les identifie, pas leur volume.
+
+Le groupe Jean Moulin a demandé un traitement particulier. La BD TOPO lui
+donne **une seule emprise de 5 856 m² et 47 sommets** : extrudée telle quelle,
+elle produisait un bloc plein de 8,1 m qui avalait les bâtiments modélisés.
+L'orthophoto montre en réalité un peigne d'ailes étroites autour de deux
+cours, reconstruit aile par aile depuis les arêtes mesurées.
 
 Le stationnement suit les photos : file longitudinale devant les commerces,
 bande en bataille côté est de l'avenue, place du Général de Gaulle laissée en
@@ -378,15 +428,19 @@ Modèle à quatre roues indépendantes, dans l'esprit des simulateurs :
 - adhérence par cercle de friction : les efforts longitudinaux et latéraux se
   partagent une réserve d'adhérence proportionnelle à la charge sur la roue
 - moteur avec courbe de couple de V10 atmosphérique (pic vers 4 500 tr/min,
-  régime maximum 8 500), boîte 6 rapports, **propulsion arrière**, comme
-  l'Audi R8 réelle affichée à l'écran
+  régime maximum 8 500), boîte 6 rapports, **propulsion arrière**, valeurs
+  calées sur l'Audi R8, le modèle affiché jusqu'au 04/09/2026
 - appui aérodynamique et traînée fonction du carré de la vitesse
 - le frein à main annule l'adhérence latérale arrière, ce qui permet le drift
 
-Le véhicule et sa physique ont été recalés le 19/08/2026 sur l'Audi R8
-affichée, jusque-là restée sur les valeurs d'une compacte générique
-héritées de l'origine du projet (masse, couple, traction avant). Chiffres
-de performance à remesurer sur une base propre avant de les republier ici.
+Le véhicule et sa physique ont été recalés le 19/08/2026 sur l'Audi R8 alors
+affichée, jusque-là restés sur les valeurs d'une compacte générique héritées
+de l'origine du projet (masse, couple, traction avant). Le modèle a changé le
+04/09/2026 pour une Ferrari 458, mais la physique n'a PAS été recalée : la 458
+est une propulsion à V8 de cylindrée voisine, les écarts avec la R8 (répartition
+des masses, transmission intégrale sur la R8) restent dans le bruit d'un modèle
+arcade. Chiffres de performance à remesurer sur une base propre avant de les
+republier ici.
 
 L'adhérence chute hors chaussée (coefficient 0,72 sur l'herbe contre 1,15 sur
 l'asphalte), ce qui se sent immédiatement au volant.
@@ -399,8 +453,10 @@ générative décrite plus bas reste dans le code et reprend la main si le
 fichier est absent ou illisible, plutôt que de laisser le jeu muet.
 
 - **Moteur** : une table d'onde périodique contenant les **cinq explosions
-  d'un cycle quatre temps** d'un V10 à 90°, comme le moteur de l'Audi R8
-  réelle (quatre jusqu'au 19/08/2026, pour le moteur générique d'origine),
+  d'un cycle quatre temps** d'un V10 à 90°, calé sur l'Audi R8 alors affichée
+  (quatre jusqu'au 19/08/2026, pour le moteur générique d'origine). Le modèle
+  affiché est depuis une 458, dont le vrai moteur est un V8 : le son n'a pas
+  été refait, c'est un écart assumé,
   avec attaque raide et décroissance exponentielle, et un léger déséquilibre
   entre cylindres. Un banc d'oscillateurs continus produit un bourdonnement
   de synthétiseur ; c'est la granularité des détonations qui donne le grain
@@ -592,46 +648,68 @@ En développement, `window.__game` expose la scène, le renderer et
 
 ## Le véhicule
 
-**Audi R8**, modèle glTF de 207 329 triangles, compressé en Meshopt : le
-fichier pèse 1,65 Mo contre 7,54 auparavant, pour une géométrie identique au
-triangle près. Il ne portait aucune texture, seulement de la géométrie brute en
-virgule flottante, ce qui en faisait 80 % du poids réellement transféré. Le
-décodeur est fourni par Three.js et reste local. Le fichier d'origine était un
-fichier de studio : 807 274 triangles, un plan de sol et deux sources de lumière
-modélisées, chaque roue éclatée en sept pièces. La conversion l'a ramené au
-gabarit du jeu et regroupé ses roues sous les quatre noms attendus par le
-chargeur, avec leur translation propre.
+**Ferrari 458 Italia**, le modèle de l'exemple `webgl_materials_car` de
+three.js (auteur vicent091036), en place depuis le 04/09/2026. Il remplace
+l'Audi R8 : 1,60 Mo contre 4,21, aucune texture (tout est porté par dix-sept
+matériaux de couleur), et surtout un **habitacle complet** avec volant, sièges,
+planche de bord et console centrale, là où le modèle précédent n'était qu'une
+carrosserie extérieure. Le modèle est à l'échelle réelle, empattement mesuré à
+2,65 m, la cote officielle de la 458.
 
-Le chargeur (`carmodel.js`) recale l'orientation, met le modèle à la longueur
-cible de 4,25 m et pose le bas des pneus à la hauteur qu'attend la physique. Il
-enveloppe chaque roue dans deux pivots imbriqués, l'un pour le braquage, l'autre
-pour le roulement : l'orientation propre du noeud, héritée de la modélisation et
-sans signification physique, reste ainsi portée un cran plus bas et n'entraîne
-pas l'axe de rotation.
+Le chargeur (`src/car.ts`) met le modèle à la longueur cible de 4,35 m, pose le
+bas des pneus à la hauteur qu'attend la physique, et lui fait faire un
+demi-tour : le modèle regarde -Z (roues avant à z = -1,16, arrière à +1,50)
+quand la scène attend l'inverse. Les roues sont retrouvées par leurs noms
+`wheel_fl`, `wheel_fr`, `wheel_rl`, `wheel_rr`.
 
-Le modèle n'a pas d'habitacle : c'est une carrosserie extérieure seule, sans
-sièges ni planche de bord. La caméra intérieure a été retirée pour cette raison
-le 19/08/2026 : une vue depuis le poste de conduite n'y montrait que de la
-carrosserie. La caméra capot occupe cette place.
+Les matériaux sont repris nom par nom : vernis sur `Body_Color`, transparence
+sur `Glass_Gray` (le modèle le livre opaque, ce qui bouchait l'habitacle),
+métal poli sur les jantes, caoutchouc mat sur les pneus.
 
-Vue pile de l'arrière, la voiture masque ses propres roues derrière son bouclier,
-comme le fait la vraie : le débord de carrosserie mesure 0,147 m par côté contre
-0,151 m sur une R8 de série. Elles se voient de trois quarts et en caméra
-cinématique.
+### La vue conducteur
 
-L'attribution du fichier reste à retrouver : il a été retraité par
+L'habitacle a permis de rétablir une **caméra intérieure** (touche `C`,
+deuxième position), retirée en août 2026 faute de poste de conduite à montrer.
+Elle est posée à la place du volant, à gauche : le modèle place son
+`steering_wheel` du côté gauche, ce que confirment les noms de roues
+(`wheel_fl` en x négatif).
+
+Trois choix la distinguent des caméras extérieures :
+
+- **Elle ne s'interpole pas.** Les vues extérieures suivent le véhicule avec
+  un lissage, ce qui les adoucit ; à l'intérieur, le même lissage faisait
+  flotter l'habitacle à chaque accélération. La caméra est solidaire de la
+  caisse, tangage et roulis visuels compris, via `getDirectionToRef`.
+- **Le recul commande le cadrage**, pas la hauteur. Le volant occupe une part
+  de l'image qui dépend de sa distance à l'œil : à 12 cm de recul il mangeait
+  69 % de la hauteur, à 55 cm il tombe à 38 % et dégage la route.
+- **Les sièges sont masqués**, comme dans tout jeu de course : on ne voit
+  jamais son propre dossier au volant. Le cas est délicat parce que le mesh
+  `interior_dark` porte à la fois la coque des sièges et la planche de bord
+  dans une seule primitive : il est donc découpé à l'exécution, seule la
+  moitié avant restant affichée.
+
+Le plan proche passe à 0,08 m dans cette vue : à 0,35 m, celui des vues
+extérieures tranchait le volant, situé à 49 cm de l'œil.
+
+### Licence du modèle
+
+Elle n'a **pas pu être vérifiée** : three.js ne documente pas celle de ce
+fichier, et la page Sketchfab d'origine est aujourd'hui désactivée. Le modèle
+est utilisé ici dans un projet strictement personnel, jamais mis en ligne.
+Toute publication demanderait de tirer ce point au clair ou de remplacer le
+fichier. Voir `ATTRIBUTIONS.md`.
+
+L'ancien modèle **Audi R8** reste dans `public/models/` mais n'est plus chargé.
+Son attribution n'a jamais pu être retrouvée : il avait été retraité par
 glTF-Transform et ne porte plus ni auteur ni licence.
 
-Le pack **Kenney Car Kit** (CC0) avait été essayé auparavant : vingt fois plus
-léger, roues nommées séparément, dix images par seconde de mieux. Il a été
-écarté pour son style, franchement cartoon : carrosseries trapues, aplats de
-couleur, roues en disques plats, aucun vitrage. Dans une ville reconstituée au
-LiDAR et à la photographie de rue, le contraste était trop fort. Le chargeur
-reconnaît malgré tout sa convention de nommage : déposer un de ces fichiers
-dans `public/models/` et changer `MODELE_VOITURE` suffit à l'essayer.
+Le pack **Kenney Car Kit** (CC0) sert au parc garé et à la circulation. Il
+avait été essayé pour le joueur, puis écarté pour son style franchement
+cartoon, trop contrasté avec une ville reconstituée au LiDAR.
 
-Un maillage procédural reste disponible dans `carmesh.js`, avec ses proportions
-dans la table `SECTIONS` : il sert de secours si le chargement du glTF échoue.
+Un maillage procédural reste disponible dans `carmesh.js` : il sert de secours
+si le chargement du glTF échoue.
 
 ## Limites connues
 

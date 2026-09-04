@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { couleurMur, couleurToit } from './bdtopo.js';
 import { ecarterDeChaussee } from './osm.js';
+import { construireHaies } from './haies.js';
 import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce, texturerGalets, texturerFeuilles,
   texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage, texturerDamierPlace,
   texturerNormalesEau, bruit, matiere, textureFichier, texturerMacroHerbe,
@@ -3258,9 +3259,10 @@ export function buildWorld(scene, data) {
   // ---- Haies, murets et clôtures ----------------------------------------
   // Ces limites de parcelles structurent le paysage d'un lotissement bien plus
   // que les bâtiments seuls : sans elles, les maisons flottent sur une pelouse.
-  const hedgePos = [], hedgeCol = [], wallPos = [], wallUV = [];
-  const hedgeColor = new THREE.Color(0x3f6b32);
-  const hedgeColor2 = new THREE.Color(0x4c7a3a);
+  // `fencePos` : clôtures et grillages, sans texture. `wallPos` : murets de
+  // galets, qui portent des UV. Les deux tampons restent séparés, un maillage
+  // dont seule une partie des sommets porte des UV étant invalide.
+  const wallPos = [], wallUV = [], fencePos = [];
 
   // Une barrière longeant une route est souvent tracée à un mètre de l'axe :
   // la poser telle quelle barrerait la chaussée. On écarte tout segment qui
@@ -3289,8 +3291,12 @@ export function buildWorld(scene, data) {
 
   for (const b of data.barriers ?? []) {
     if (b.kind === 'tree_row') continue; // traité avec la végétation
+    // Les haies passent désormais par `haies.js`, qui leur donne du volume et
+    // une essence : la boîte verte à trois faces plates les faisait lire comme
+    // un muret peint. Ici ne restent que les murets et les clôtures.
+    if (b.kind === 'hedge') continue;
     const solide = b.kind === 'wall';
-    const demi = solide ? 0.16 : b.kind === 'hedge' ? 0.45 : 0.06;
+    const demi = solide ? 0.16 : 0.06;
     for (let i = 0; i < b.pts.length - 1; i++) {
       const [x1, z1] = b.pts[i], [x2, z2] = b.pts[i + 1];
       const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
@@ -3300,7 +3306,7 @@ export function buildWorld(scene, data) {
       if (surChaussee((x1 + x2) / 2, (z1 + z2) / 2)) continue;
       const nx = (-dz / len) * demi, nz = (dx / len) * demi;
       const h = b.height;
-      const cible = solide ? wallPos : hedgePos;
+      const cible = solide ? wallPos : fencePos;
       // Base posée sur le terrain : une haie de coteau doit suivre la pente.
       const yb1 = (relief ? relief.hauteurRoute(x1, z1) : 0) + ROAD_Y;
       const yb2 = (relief ? relief.hauteurRoute(x2, z2) : 0) + ROAD_Y;
@@ -3329,21 +3335,18 @@ export function buildWorld(scene, data) {
         wallUV.push(0, 0, L, 0, L, W, 0, 0, L, W, 0, W);
       }
 
-      if (!solide) {
-        // Feuillage nuancé : deux verts alternés selon la position.
-        const c = (Math.abs(Math.round(x1) + Math.round(z1)) % 2) ? hedgeColor : hedgeColor2;
-        for (let k = 0; k < 18; k++) hedgeCol.push(c.r, c.g, c.b);
-      }
     }
   }
-  if (hedgePos.length) {
+  if (fencePos.length) {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(hedgePos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(hedgeCol, 3));
+    g.setAttribute('position', new THREE.Float32BufferAttribute(fencePos, 3));
     g.computeVertexNormals();
     g.computeBoundingSphere();
+    // Grillage rigide vert des clôtures de lotissement, relevé sur les
+    // panoramiques de la D817 et de l'avenue Poumayou : poteaux et panneaux
+    // sont d'un vert sombre presque uniforme.
     group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: 1, side: THREE.DoubleSide, flatShading: true,
+      color: 0x4a5a4c, roughness: 0.85, side: THREE.DoubleSide, flatShading: true,
     })));
   }
   if (wallPos.length) {
@@ -3366,6 +3369,14 @@ export function buildWorld(scene, data) {
   // On le déduit de la boucle réelle : pelouse, bordure, arbuste et fleurs.
   const ilots = construireIlotsRondsPoints(data, relief);
   if (ilots) group.add(ilots);
+
+  // ---- Haies de clôture -------------------------------------------------
+  const haies = construireHaies(lignesDeHaie(data), {
+    hauteurSol: relief ? (x, z) => relief.hauteurRoute(x, z) : null,
+    estLibre: (x, z) => !surChaussee(x, z),
+    roadY: ROAD_Y,
+  });
+  if (haies) group.add(haies);
 
   // ---- Végétation : arbres le long des routes et dans les zones boisées --
   const trees = plantTrees(data, relief);
@@ -3397,6 +3408,188 @@ export function buildWorld(scene, data) {
     // liste depuis `main.js`.
     instances: [trees?.userData.instances, lamps?.userData.instances].filter(Boolean),
   };
+}
+
+// Linéaires de haie de la commune.
+//
+// Deux sources. Les 23 barrières `hedge` d'OpenStreetMap d'abord : elles sont
+// exactes, mais toutes en périphérie (zone d'activités est, Labastide), et le
+// bourg n'en compte aucune alors que les panoramiques y montrent des haies
+// devant presque chaque pavillon.
+//
+// D'où la seconde source : les limites de parcelle le long des rues
+// résidentielles, déduites de la voirie. Une maison de lotissement d'Artix se
+// clôt d'une haie taillée en bord de rue, c'est le motif dominant relevé
+// avenue Poumayou et sur toute la couronne pavillonnaire.
+function lignesDeHaie(data) {
+  const lignes = [];
+
+  // Haies cartographiées : espèce laissée au tirage, sauf la D817 dont le
+  // relevé montre du laurier-palme sur presque tout son linéaire.
+  for (const b of data.barriers ?? []) {
+    if (b.kind !== 'hedge') continue;
+    lignes.push({ pts: b.pts });
+  }
+
+  // Emprises bâties, pour ne pas planter une haie à travers une maison.
+  //
+  // Une grille des SOMMETS de contour au pas de 8 m ne suffit pas : elle ne
+  // marque que le pourtour, et l'intérieur d'un pavillon de 12 m de côté passe
+  // entre les mailles. Mesuré sur la commune, 1,4 % des sommets de haie
+  // finissaient dans un bâtiment. Il faut le vrai test polygonal, restreint
+  // par une grille de recherche pour rester rapide sur 3 542 emprises.
+  const CASE_BATI = 40;
+  const grilleBati = new Map();
+  for (const b of data.buildings ?? []) {
+    const pts = b.pts;
+    if (!pts || pts.length < 3) continue;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const [x, z] of pts) {
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+    }
+    for (let cx = Math.floor(minX / CASE_BATI); cx <= Math.floor(maxX / CASE_BATI); cx++) {
+      for (let cz = Math.floor(minZ / CASE_BATI); cz <= Math.floor(maxZ / CASE_BATI); cz++) {
+        const cle = `${cx},${cz}`;
+        if (!grilleBati.has(cle)) grilleBati.set(cle, []);
+        grilleBati.get(cle).push(pts);
+      }
+    }
+  }
+  // Marge de 1 m autour de l'emprise : une clôture collée au mur d'une maison
+  // se lit aussi mal qu'une clôture dedans.
+  const dansUnBatiment = (x, z) => {
+    const cases = grilleBati.get(`${Math.floor(x / CASE_BATI)},${Math.floor(z / CASE_BATI)}`);
+    if (!cases) return false;
+    for (const pts of cases) {
+      if (pointInPoly(x, z, pts)) return true;
+      // Bord : distance au segment le plus proche sous 1 m.
+      for (let i = 0; i < pts.length; i++) {
+        const [ax, az] = pts[i], [bx, bz] = pts[(i + 1) % pts.length];
+        const dx = bx - ax, dz = bz - az;
+        const l2 = dx * dx + dz * dz;
+        if (l2 < 1e-6) continue;
+        let t = ((x - ax) * dx + (z - az) * dz) / l2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const qx = ax + dx * t - x, qz = az + dz * t - z;
+        if (qx * qx + qz * qz < 1) return true;
+      }
+    }
+    return false;
+  };
+
+  // Surfaces publiques ouvertes : places, parvis, parkings. Une clôture de
+  // parcelle ne les traverse jamais, et la déduction par retrait depuis l'axe
+  // de la voie y tombe systématiquement, la rue longeant leur bord. Sans ce
+  // filtre, une haie coupait en diagonale la place pavée de la mairie.
+  const ouvert = [];
+  for (const e of data.esplanades ?? []) if (e.pts?.length >= 3) ouvert.push(e.pts);
+  for (const p of data.parkings ?? []) if (p.pts?.length >= 3) ouvert.push(p.pts);
+  const surSurfaceOuverte = (x, z) => ouvert.some((poly) => pointInPoly(x, z, poly));
+
+  // Maisons d'habitation, en grille au pas de 25 m. Une haie de clôture
+  // suppose un jardin : devant les commerces du centre, les ateliers de la
+  // zone d'activités ou un hangar agricole, la limite est un mur, une vitrine
+  // ou rien. Le premier essai plantait une haie le long de la rue de la
+  // mairie, bordée de commerces.
+  const jardins = new Set();
+  for (const b of data.buildings ?? []) {
+    if (b.usage !== 'Résidentiel') continue;
+    for (const [x, z] of b.pts ?? []) {
+      jardins.add(`${Math.round(x / 25)},${Math.round(z / 25)}`);
+    }
+  }
+  // Les cellules voisines comptent aussi : la maison est en fond de parcelle,
+  // sa clôture se tient jusqu'à 25 m de là, en bord de rue.
+  const prochesDUnJardin = (x, z) => {
+    const cx = Math.round(x / 25), cz = Math.round(z / 25);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) if (jardins.has(`${cx + dx},${cz + dz}`)) return true;
+    }
+    return false;
+  };
+
+  // Rues pavillonnaires : c'est là que se trouvent les clôtures végétales.
+  // Les voies de desserte (`service`) et les chemins sont écartés, ils longent
+  // des parkings et des champs, pas des jardins.
+  //
+  // Le rayon est ce qui décide du volume final. Sur toute la commune, les
+  // 171 rues résidentielles donnent 29,7 km de linéaire, soit 314 000
+  // triangles : le double du bâti pour de la clôture, et surtout des haies en
+  // rase campagne où les mêmes rues desservent des fermes isolées. Limité à la
+  // couronne pavillonnaire, où les panoramiques les montrent effectivement.
+  const RAYON_PAVILLONNAIRE = 900;
+  for (const r of data.roads ?? []) {
+    if (!r.drivable) continue;
+    if (r.kind !== 'residential' && r.kind !== 'living_street') continue;
+    // Retrait depuis l'axe : la limite de parcelle se tient au-delà du
+    // trottoir ET du caniveau. Mesuré avenue Poumayou : 1,4 m de trottoir,
+    // 0,5 m de caniveau, la clôture en retrait de 1,2 m derrière. À 2,2 m la
+    // haie mordait sur le trottoir et frôlait la chaussée dans les courbes,
+    // la corde d'un virage passant à l'intérieur de l'arc de la voie.
+    const recul = r.width / 2 + 3.4;
+
+    for (const cote of [1, -1]) {
+      // Un côté de rue se parcourt d'un trait : les haies successives d'un
+      // même trottoir forment un linéaire continu, coupé par les entrées de
+      // garage. On accumule les points puis on tronçonne.
+      let courant = [];
+      const vider = () => {
+        // Sous 6 m, ce n'est plus une clôture mais un bout de buisson.
+        if (courant.length >= 2) {
+          let l = 0;
+          for (let k = 1; k < courant.length; k++) {
+            l += Math.hypot(courant[k][0] - courant[k - 1][0], courant[k][1] - courant[k - 1][1]);
+          }
+          if (l >= 6) lignes.push({ pts: courant });
+        }
+        courant = [];
+      };
+
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const [x1, z1] = r.pts[i], [x2, z2] = r.pts[i + 1];
+        const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+        if (len < 1) continue;
+        const nx = (-dz / len) * cote, nz = (dx / len) * cote;
+        const px = x1 + nx * recul, pz = z1 + nz * recul;
+
+        // Hors de la couronne pavillonnaire, la même rue dessert des fermes :
+        // pas de haie de clôture.
+        if (px * px + pz * pz > RAYON_PAVILLONNAIRE * RAYON_PAVILLONNAIRE) { vider(); continue; }
+
+        // Trouées : entrées de garage, accès, tronçons sans clôture, et les
+        // parcelles simplement ouvertes sur la rue. Sans elles, la rue se
+        // retrouve murée sur toute sa longueur, ce qu'aucun lotissement ne
+        // présente. Un peu moins d'une façade sur deux porte une haie taillée
+        // sur les panoramiques du bourg. Tirage stable par position.
+        const graine = Math.abs(px * 12.7 + pz * 31.3 + cote * 5);
+        if (hash(graine) > 0.42) { vider(); continue; }
+        // Jamais à travers un bâtiment, une place ou un parking, et seulement
+        // devant des maisons d'habitation.
+        //
+        // Le segment est éprouvé tous les 2 m, pas en trois points fixes : un
+        // tronçon de rue fait couramment 30 m, et une maison de 12 m se glisse
+        // sans peine entre un test de départ, un de milieu et un d'arrivée.
+        // C'est ce qui laissait 0,75 % des sommets dans du bâti rue du Parc.
+        const qx = x2 + nx * recul, qz = z2 + nz * recul;
+        const mauvais = (ax, az) => dansUnBatiment(ax, az)
+          || surSurfaceOuverte(ax, az) || !prochesDUnJardin(ax, az);
+        const echantillons = Math.max(2, Math.ceil(Math.hypot(qx - px, qz - pz) / 2));
+        let bloque = false;
+        for (let k = 0; k <= echantillons; k++) {
+          const t = k / echantillons;
+          if (mauvais(px + (qx - px) * t, pz + (qz - pz) * t)) { bloque = true; break; }
+        }
+        if (bloque) { vider(); continue; }
+
+        if (!courant.length) courant.push([px, pz]);
+        courant.push([qx, qz]);
+      }
+      vider();
+    }
+  }
+
+  return lignes;
 }
 
 function construireIlotsRondsPoints(data, relief = null) {

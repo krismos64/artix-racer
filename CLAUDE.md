@@ -27,6 +27,7 @@ Objectif unique : le meilleur rendu visuel possible, vite.
    modélisés à la main), `signage.js` (signalisation, enseignes, poteaux),
    `parking.js`, `parkedcars.js` (parc garé : 5 silhouettes + scooters),
    `traffic.js` (circulation légère), `pedestrians.js`, `touffes.js`,
+   `haies.js` (haies de clôture : laurier, thuya, troène, charmille),
    `textures.js` (textures canvas procédurales).
 2. **`src/three-city-bridge.ts`** : convertit meshes/matériaux Three → Babylon
    PBR. Contient aussi `LiveInstancedBridge` (contenu animé) et le calcul du
@@ -144,6 +145,76 @@ Objectif unique : le meilleur rendu visuel possible, vite.
   (textures.js) : le pont ne lit que `image.src`, jamais les pixels ; ne pas
   leur appliquer `carteRelief` (canvas vide). Cartes de normales OpenGL :
   `invertNormalMapY = true` en repère main droite.
+- Le pont force `backFaceCulling = false` et `twoSidedLighting` sur TOUS les
+  matériaux (garde-fou contre les nappes cadastrales à l'envers). Un volume
+  ouvert par le dessous montre donc son intérieur éclairé comme une face
+  avant, et ressort délavé, presque translucide : les haies ont vécu ça
+  au-dessus de la place pavée. Fermer les volumes, même sur une face
+  invisible.
+- Nuance sans texture ni appel de dessin supplémentaire : l'attribut `color`
+  de géométrie EST transmis par le pont (`vertexData`) et lu par défaut
+  (`mesh.useVertexColors` vaut true). Le piège des `vertexColors` cité plus
+  haut concerne les landmarks, pas une limite du pont. Une couleur par facette
+  suffit à casser les aplats d'une surface unie (flancs de haie).
+- Une emprise BD TOPO d'équipement public peut couvrir TOUT un groupe de
+  bâtiments d'un seul tenant : celle du groupe scolaire Jean Moulin (535) fait
+  5 856 m² et 47 sommets, extrudée en bloc plein de 8,1 m qui avalait les
+  corps modélisés. L'orthophoto y montre un peigne d'ailes étroites (10 à
+  13 m) autour de deux cours. Reconstruire aile par aile depuis les ARÊTES
+  mesurées, et retirer l'emprise via `BATIMENTS_MODELISES`.
+- Poser un modèle sur une arête : ne PAS déduire le sens du recul de la
+  normale extérieure. Balayer les deux sens avec `world.isOnRoad` sur toute la
+  longueur de la façade et retenir le décalage mesuré ; sur le collège Jean
+  Moulin, le recul « logique » enfonçait le bâtiment dans la rue du Galoupé,
+  le bon décalage était -4 m. Vérifier aussi la PROFONDEUR : à 12 m l'aile
+  sud-ouest débordait, 6 m est le maximum tenable.
+- Contrôler un placement en échantillonnant les sommets, mais uniquement sur
+  les maillages LOCAUX (étendue < 120 m) et hauts (> 2 m) : les grands
+  maillages de terrain et de voirie couvrent 5,6 km et sont légitimement sur
+  la chaussée, ils noient le signal. Sans ce filtre, le contrôle remontait
+  48 faux positifs (trottoirs, bordures) pour 5 vrais.
+- Véhicule du joueur : `public/models/ferrari.glb` (Ferrari 458 de l'exemple
+  three.js), chargé par `src/car.ts`. Il regarde -Z, d'où le demi-tour du
+  pivot ; ses roues s'appellent `wheel_fl/fr/rl/rr`. Licence NON vérifiable
+  (page Sketchfab désactivée) : usage personnel assumé, voir ATTRIBUTIONS.md.
+- Vue conducteur (`cameraMode === 1` dans main.ts) : elle NE s'interpole PAS,
+  sinon l'habitacle flotte à chaque accélération, et elle passe par
+  `getDirectionToRef` pour suivre le tangage de la caisse. Le cadrage est
+  commandé par le RECUL de l'œil, pas par sa hauteur : le volant occupe 69 %
+  de l'image à 12 cm de recul, 38 % à 55 cm. Les sièges sont masqués, mais
+  `interior_dark` mêle sièges et planche de bord dans une seule primitive :
+  il est découpé à l'exécution (`decouperCabine`), pas masqué en entier.
+- Ne JAMAIS compter sur le back-face culling pour cacher une face : le pont
+  le désactive sur tous les matériaux (garde-fou contre les nappes cadastrales
+  inversées), et la scène étant en repère main droite, Babylon inverse en plus
+  sa convention d'enroulement. Un STOP en deux plans dos à dos se lisait donc
+  EN MIROIR depuis la voie opposée, et le rétablir par exception rouvrait les
+  trous ailleurs. La parade est de donner du VOLUME : une `BoxGeometry` mince
+  à six matériaux (face texturée sur +Z, tôle sur les cinq autres) ne dépend
+  d'aucune convention. Même logique que pour les haies, fermées par le dessous.
+- Panneau de police : il se pose à DROITE de la chaussée dans le sens qu'il
+  régit, c'est une règle d'implantation, pas une préférence. Droite du
+  conducteur circulant selon (ux, uz) : `(-uz, ux)` en repère main droite avec
+  Z vers le sud. Le sens concerné vient du tag OSM `direction`
+  (`forward`/`backward`, porté par 77 des 86 panneaux d'Artix). Choisir le
+  côté « le mieux dégagé » en plantait la moitié à gauche. Si le côté droit
+  tombe sur une transversale, RECULER le long de la voie, jamais changer de
+  bord.
+- Un vitrage de façade NORD doit être diélectrique et CLAIR (0x8fa2b0,
+  metalness 0,04). Le réflexe inverse (sombre et métallique) donne des trous
+  noirs : sans soleil direct, un métal ne renvoie que le sol sombre qui lui
+  fait face, et augmenter `metalness` aggrave le défaut au lieu de le
+  corriger.
+- Objet déduit le long d'une voie (haie de clôture, clôture, mobilier) :
+  éprouver le segment à PAS FIXE (2 m), jamais en trois points. Un tronçon de
+  rue fait couramment 30 m et une maison de 12 m se glisse entre un test de
+  départ, un de milieu et un d'arrivée. Tester les DEUX extrémités : ne
+  contrôler que le point de départ laisse passer le point d'arrivée qu'on
+  ajoute. Écarter aussi les esplanades et parkings (`data.esplanades`,
+  `data.parkings`), sinon la clôture traverse la place de la mairie, et
+  exiger du bâti `usage === 'Résidentiel'` à proximité (une haie suppose un
+  jardin, pas une vitrine). Contrôle : `world.isOnRoad` et
+  `world.collidesBuilding` sur les sommets du maillage produit.
 
 ## Sources de données (`public/data/`)
 
@@ -161,6 +232,7 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 | `textures/ciel/*.hdr` | 3 panoramas Poly Haven plafonnés (jour, soir, nuit) | `scripts/ciel-soleil.mjs` |
 | `textures/sols/*.jpg` | matières ambientCG (enrobé, herbe, béton, pavés, grave, écorce) | `scripts/preparer-textures.mjs` |
 | `models/flotte/*.glb` | 5 voitures Kenney Car Kit + palette | copie du kit |
+| `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 
 Caches locaux (gitignorés) : `.panoramax-cache/` (1 Go, photos SD),
 `.panoramax-cache-hd/` (246 Mo, photos HD), `data/panoramax-inventaire.json`

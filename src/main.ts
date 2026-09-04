@@ -933,6 +933,33 @@ async function start(): Promise<void> {
   const desiredCamera = new Vector3();
   const cameraTarget = new Vector3();
   const forward = new Vector3();
+  // Vue conducteur : l'œil et la ligne de regard, exprimés dans le repère
+  // LOCAL du châssis (+Z avant, +X gauche du conducteur en repère main
+  // droite, Y haut). Transformés vers le monde à chaque image, ils suivent
+  // l'assiette de la caisse au lieu de flotter au-dessus.
+  // Position de l'œil : c'est le RECUL qui commande, pas la hauteur.
+  //
+  // Le volant (jante de 36 cm, centre à 0,77 m de haut et 0,33 m devant le
+  // centre du châssis) occupe une part du cadre qui dépend de sa distance à
+  // l'œil. À 12 cm de recul il n'était qu'à 49 cm et mangeait 69 % de la
+  // hauteur de l'image, ne laissant qu'une bande de route au milieu. À 55 cm
+  // de recul, la position réelle d'un conducteur adossé, il tombe à 0,91 m et
+  // n'occupe plus que 38 % : son bord haut se tient vers 57 % de l'image, et
+  // toute la moitié supérieure revient à la route.
+  //
+  // 1,02 m de hauteur laisse 19 cm sous le pavillon d'une 458 (1,21 m), assez
+  // pour que le plafonnier reste hors champ.
+  const OEIL_LOCAL = new Vector3(.36, 1.02, -.55);
+  // Ligne de regard, en DÉPLACEMENT depuis l'œil et non en position absolue :
+  // elle est ajoutée à la position de l'œil, y répéter le décalage latéral
+  // comptait celui-ci deux fois et faisait loucher la vue vers la gauche.
+  //
+  // Plongée de 0,7 m sur 20 m, soit 2° : l'angle sous lequel un conducteur
+  // regarde la chaussée trente mètres devant lui. À 0,05 m (0,14°) la visée
+  // partait à l'horizon, à 384 m, et le ciel occupait le tiers haut du cadre.
+  const REGARD_LOCAL = new Vector3(0, -.7, 20);
+  const oeilMonde = new Vector3();
+  const regardMonde = new Vector3();
 
   await progress(100, 'Prêt à rouler');
   loading.classList.add('hidden');
@@ -950,7 +977,12 @@ async function start(): Promise<void> {
       paused = !paused;
       pauseScreen.classList.toggle('hidden', !paused);
     }
-    if (playing && input.tapped('c')) cameraMode = (cameraMode + 1) % 3;
+    if (playing && input.tapped('c')) {
+      cameraMode = (cameraMode + 1) % 3;
+      // Les sièges disparaissent en vue conducteur : leur dossier se trouve
+      // entre l'œil et le pare-brise et bouchait tout le centre de l'image.
+      car.setVueCabine(cameraMode === 1);
+    }
     if (playing && input.tapped('r')) car.reset();
     if (playing && input.tapped('t')) session.start('challenge');
     if (input.tapped('l')) {
@@ -1010,15 +1042,41 @@ async function start(): Promise<void> {
         car.root.position.z + forward.z * 7.5,
       );
     } else if (cameraMode === 1) {
+      // Vue conducteur, à la place du volant.
+      //
+      // La position vient du CHÂSSIS, pas d'un calcul à partir du cap : la
+      // caisse porte un tangage et un roulis visuels (`visualPitch` vaut
+      // -0,012 en accélération, -0,025 sous boost, +0,018 en marche arrière ;
+      // `visualRoll` suit la direction). Une caméra posée sur la seule
+      // position du véhicule ignorait cette assiette, et l'habitacle semblait
+      // glisser devant l'œil à chaque coup d'accélérateur.
+      //
+      // `getDirectionToRef` transforme un vecteur du repère LOCAL du châssis
+      // vers le monde en tenant compte de cette assiette : l'œil reste vissé
+      // au tableau de bord, quoi que fasse la voiture.
+      //
+      // Le volant du modèle Ferrari se trouve à (0,34 ; 0,77 ; 0,34) dans le
+      // repère du châssis : nœud `steering_wheel` à (-0,35 ; 0,80 ; -0,35),
+      // auquel s'appliquent le demi-tour du pivot puis l'échelle 0,962. Le
+      // nœud n'est PAS enfant de `main`, sa rotation ne le concerne donc pas.
+      // Le côté est certain sans supposition : `wheel_fl` est à x = -0,84 et
+      // `wheel_fr` à x = +0,83 dans le modèle, donc x négatif y est la gauche,
+      // et le demi-tour l'envoie sur le +X local du châssis. Conduite à
+      // gauche, confirmée. L'œil se tient juste au-dessus de la jante.
+      car.root.getDirectionToRef(OEIL_LOCAL, oeilMonde);
       desiredCamera.set(
-        car.root.position.x + forward.x * .3 - Math.cos(car.heading) * .28,
-        car.root.position.y + 1.14,
-        car.root.position.z + forward.z * .3 + Math.sin(car.heading) * .28,
+        car.root.position.x + oeilMonde.x,
+        car.root.position.y + oeilMonde.y,
+        car.root.position.z + oeilMonde.z,
       );
+      // Le regard part de l'œil et file droit devant DANS L'AXE DE LA CAISSE,
+      // en suivant donc le tangage lui aussi : viser un point calculé sur le
+      // seul cap redressait l'horizon et annulait l'effet de plongée.
+      car.root.getDirectionToRef(REGARD_LOCAL, regardMonde);
       cameraTarget.set(
-        car.root.position.x + forward.x * 16,
-        car.root.position.y + 1.05,
-        car.root.position.z + forward.z * 16,
+        desiredCamera.x + regardMonde.x,
+        desiredCamera.y + regardMonde.y,
+        desiredCamera.z + regardMonde.z,
       );
     } else {
       desiredCamera.set(
@@ -1028,10 +1086,24 @@ async function start(): Promise<void> {
       );
       cameraTarget.set(car.root.position.x + forward.x * 5, car.root.position.y + 1, car.root.position.z + forward.z * 5);
     }
-    const cameraLerp = 1 - Math.exp(-dt * (cameraMode === 0 ? 7.5 : cameraMode === 1 ? 15 : 5));
-    Vector3.LerpToRef(cameraPosition, desiredCamera, cameraLerp, cameraPosition);
+    // La vue conducteur ne s'interpole PAS : elle est solidaire de la caisse,
+    // comme une caméra vissée au tableau de bord. Le lissage qui adoucit les
+    // caméras extérieures y produisait l'effet inverse de celui recherché,
+    // l'habitacle dérivant à chaque accélération et chaque freinage.
+    if (cameraMode === 1) {
+      cameraPosition.copyFrom(desiredCamera);
+    } else {
+      const cameraLerp = 1 - Math.exp(-dt * (cameraMode === 0 ? 7.5 : 5));
+      Vector3.LerpToRef(cameraPosition, desiredCamera, cameraLerp, cameraPosition);
+    }
     camera.position.copyFrom(cameraPosition);
     camera.setTarget(cameraTarget);
+    // Plan proche rapproché en vue conducteur : le volant se tient à environ
+    // 35 cm de l'œil, soit exactement sur le plan de 0,35 m des vues
+    // extérieures, qui le tranchait en deux. 0,08 m le laisse entier sans
+    // dégrader sensiblement la précision du tampon de profondeur.
+    const minZVoulu = cameraMode === 1 ? .08 : .35;
+    if (camera.minZ !== minZVoulu) camera.minZ = minZVoulu;
     if (regardDebug) camera.setTarget(camera.position.add(regardDebug));
     // Flou de mouvement : nul sous 12 m/s (43 km/h), plein vers 60 m/s ; la
     // vue capot en reçoit moins, l'œil y est déjà dans le mouvement.

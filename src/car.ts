@@ -82,6 +82,15 @@ export class ArcadeCar {
 
   private readonly start: SpawnPoint;
   private readonly wheels: TransformNode[] = [];
+  // Pièces d'habitacle masquées en vue conducteur. Le siège du conducteur se
+  // tient forcément entre l'œil et le pare-brise dès que la caméra recule
+  // assez pour dégager le volant : son dossier bouchait alors tout le centre
+  // de l'image. Aucun jeu de course n'affiche le dossier du joueur.
+  private readonly piecesCabine: AbstractMesh[] = [];
+  // Contrepartie des précédentes : affichées SEULEMENT en vue conducteur, ce
+  // sont les morceaux de garniture conservés quand la pièce entière s'efface.
+  private readonly piecesCabineAvant: AbstractMesh[] = [];
+  private cabineMasquee = false;
   private lastX: number;
   private lastZ: number;
   private visualRoll = 0;
@@ -166,8 +175,13 @@ export class ArcadeCar {
 
   async loadModel(): Promise<void> {
     try {
-      const result = await SceneLoader.ImportMeshAsync('', '/models/', 'AudiR8-babylon.glb', this.scene);
-      const pivot = new TransformNode('audi-r8-pivot', this.scene);
+      // Ferrari 458 Italia, le modèle de l'exemple `webgl_materials_car` de
+      // three.js (auteur vicent091036). Il remplace l'Audi R8 : 1,68 Mo contre
+      // 4,4 Mo, aucune texture (tout est porté par 17 matériaux de couleur),
+      // et un intérieur complet avec volant, sièges et tableau de bord, là où
+      // le modèle précédent n'avait qu'un habitacle sommaire.
+      const result = await SceneLoader.ImportMeshAsync('', '/models/', 'ferrari.glb', this.scene);
+      const pivot = new TransformNode('ferrari-pivot', this.scene);
       const roots = result.meshes.filter((mesh) => !mesh.parent);
       for (const root of roots) root.parent = pivot;
 
@@ -178,38 +192,204 @@ export class ArcadeCar {
       const center = bounds.min.add(bounds.max).scale(.5);
       pivot.scaling.setAll(scale);
       pivot.position.set(-center.x * scale, -bounds.min.y * scale + .04, -center.z * scale);
+      // Le modèle regarde -Z (roues avant à z = -1,16, arrière à +1,50), la
+      // scène attend l'inverse. Sans ce demi-tour, la voiture roule en marche
+      // arrière et ses phares éclairent derrière elle.
+      pivot.rotation.y = Math.PI;
       pivot.parent = this.root;
 
       for (const mesh of result.meshes) {
         mesh.receiveShadows = true;
         if (mesh instanceof Mesh) this.shadow?.addShadowCaster(mesh, false);
         const material = mesh.material;
-        if (material instanceof PBRMaterial) {
-          material.environmentIntensity = 1;
-          material.directIntensity = 1;
-          // Vernis sur la peinture rouge (les deux matériaux de carrosserie
-          // du modèle) : la couche brillante qui reflète le ciel HDR, ce qui
-          // fait lire une voiture de course et non un objet en plastique.
-          const c = material.albedoColor;
-          if (c.r > .3 && c.g < .05 && c.b < .05) {
+        if (!(material instanceof PBRMaterial)) continue;
+        material.environmentIntensity = 1;
+        material.directIntensity = 1;
+
+        switch (material.name) {
+          // Carrosserie : vernis épais sur peinture. C'est la couche brillante
+          // qui reflète le ciel HDR et fait lire une carrosserie plutôt qu'un
+          // volume de plastique mat.
+          case 'Body_Color':
+            material.albedoColor = new Color3(.62, .02, .03);
+            material.metallic = .25;
+            material.roughness = .28;
             material.clearCoat.isEnabled = true;
             material.clearCoat.intensity = 1;
-            material.clearCoat.roughness = .06;
-            material.metallic = Math.min(material.metallic ?? 0, .35);
-          }
+            material.clearCoat.roughness = .05;
+            break;
+          // Vitrage teinté : le modèle le donne en gris opaque, ce qui bouche
+          // l'habitacle qu'il vient justement de modéliser.
+          case 'Glass_Gray':
+            material.alpha = .32;
+            material.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
+            material.albedoColor = new Color3(.08, .09, .11);
+            material.metallic = .1;
+            material.roughness = .06;
+            break;
+          // Jantes et chrome : métal poli, la seule surface franchement
+          // métallique de la voiture.
+          case 'metal_chrome':
+          case 'metal_gray':
+            material.metallic = 1;
+            material.roughness = .18;
+            break;
+          // Pneus : caoutchouc mat, jamais métallique. Laissés au réglage du
+          // modèle, ils accrochaient la lumière comme du vinyle.
+          case 'Tires':
+            material.metallic = 0;
+            material.roughness = .95;
+            material.albedoColor = new Color3(.045, .045, .05);
+            break;
+          default:
+            break;
         }
       }
       this.buildContactShadow();
 
+      // Roues : le modèle three.js les nomme `wheel_fl`, `wheel_fr`,
+      // `wheel_rl`, `wheel_rr`. L'ancien motif visait le nommage de l'Audi
+      // (`wheelFrontL`) et ne trouvait plus rien, les roues restaient figées.
       const candidates = [...result.transformNodes, ...result.meshes]
-        .filter((node) => /wheel(front|rear)[lr]$/i.test(node.name));
+        .filter((node) => /^wheel_(fl|fr|rl|rr)$/i.test(node.name));
       for (const node of candidates) {
         if (node instanceof TransformNode && !this.wheels.includes(node)) this.wheels.push(node);
       }
+
+      // Diagnostic depuis la console : `__cabine()` liste les pièces de la
+      // voiture qui se tiennent devant l'œil en vue conducteur, classées par
+      // l'angle qu'elles occupent. `__cabine('nom')` en masque une pour voir
+      // l'effet. C'est ainsi qu'on identifie ce qui bouche, au lieu de le
+      // deviner d'après les bornes du glTF, qui sont exprimées avant les
+      // transformations de nœud et ne disent rien de la position réelle.
+      (window as unknown as Record<string, unknown>).__cabine = (nom?: string) => {
+        if (nom) {
+          const m = this.scene.getMeshByName(nom);
+          if (!m) return `aucun maillage nommé ${nom}`;
+          m.setEnabled(!m.isEnabled());
+          return `${nom} ${m.isEnabled() ? 'affiché' : 'masqué'}`;
+        }
+        const cam = this.scene.activeCamera;
+        if (!cam) return 'pas de caméra';
+        const dansVoiture = (m: AbstractMesh) => {
+          let p = m.parent;
+          while (p) { if (p === this.root) return true; p = p.parent; }
+          return false;
+        };
+        const lignes: { nom: string; distance: number; angle: number }[] = [];
+        for (const m of this.scene.meshes) {
+          if (!m.isEnabled() || !dansVoiture(m)) continue;
+          const bb = m.getBoundingInfo().boundingBox;
+          const d = Vector3.Distance(bb.centerWorld, cam.position);
+          if (d > 3) continue;
+          const vers = bb.centerWorld.subtract(cam.position).normalize();
+          if (Vector3.Dot(vers, cam.getForwardRay().direction) < .3) continue;
+          const taille = bb.maximumWorld.subtract(bb.minimumWorld).length();
+          lignes.push({ nom: m.name, distance: +d.toFixed(2), angle: +(taille / d).toFixed(2) });
+        }
+        lignes.sort((a, b) => b.angle - a.angle);
+        return lignes.slice(0, 12);
+      };
+
+      // Pièces masquées en vue conducteur : tout ce qui compose les sièges.
+      //
+      // `leather` seul ne suffisait pas, la capture montrait encore un dossier
+      // gris clair. Sa couleur (#bababa, presque blanc) ne correspond pas au
+      // matériau `Leather` (#6e6e72, gris-mauve foncé) mais aux garnitures
+      // `Interior_light` et `Carpet`. Le siège de ce modèle est donc assemblé
+      // à partir de plusieurs meshes, coquille et garniture séparées.
+      //
+      // Les noms visés sont exacts : `steering_leather`, `steering_carbon` et
+      // les autres pièces en `steering_*` appartiennent au volant et doivent
+      // rester à l'écran.
+      // Le tri se fait sur l'ÉTENDUE des meshes, seule mesure fiable ici (le
+      // modèle est compressé en Draco, sa géométrie n'est pas lisible hors
+      // navigateur, mais les bornes des accesseurs le restent) :
+      //
+      //   leather        z[-0,41 ; 1,08]   sièges
+      //   trim           z[-0,35 ; 1,08]   surpiqûres des sièges
+      //   carpet         z[-0,56 ; 1,10]   moquette
+      //   interior_dark  z[-2,16 ; 2,16]   garniture de TOUTE la voiture
+      //   interior_light z[-2,16 ; 2,15]   idem
+      //
+      // Les deux derniers courent sur les 4,3 m du véhicule : ce sont les
+      // garnitures générales, planche de bord comprise. Les avoir masqués
+      // trouait le tableau de bord, la console centrale laissant voir la rue
+      // au travers et la casquette d'instruments flottant en arche isolée.
+      const PIECES_SIEGE = ['leather', 'trim', 'carpet'];
+      for (const mesh of result.meshes) {
+        if (PIECES_SIEGE.includes(mesh.name.toLowerCase())) this.piecesCabine.push(mesh);
+      }
+
+      // `interior_dark` est le cas difficile : UNE SEULE primitive de 20 563
+      // sommets couvrant les 4,5 m du véhicule, qui porte à la fois la coque
+      // des sièges ET la planche de bord. La masquer entière ramène le
+      // dossier devant l'œil ; la garder troue le tableau de bord. Aucun tri
+      // par nom ne peut départager.
+      //
+      // On la coupe donc en deux à l'exécution : un clone dont on retire les
+      // triangles situés DEVANT le seuil (la planche) sert en vue conducteur,
+      // l'original restant pour les vues extérieures. Le seuil est posé à
+      // z = 0 dans le repère LOCAL du modèle, qui sépare l'avant (négatif, la
+      // planche) de l'arrière (positif, les sièges).
+      const garniture = result.meshes.find((m) => /^interior_dark$/i.test(m.name));
+      if (garniture instanceof Mesh) {
+        const avant = this.decouperCabine(garniture, 0);
+        if (avant) {
+          // La partie AVANT (planche de bord) reste seule visible en vue
+          // conducteur ; l'original, qui contient aussi les sièges, s'efface.
+          this.piecesCabine.push(garniture);
+          this.piecesCabineAvant.push(avant);
+        }
+      }
+
+      // Réapplique l'état courant : le modèle peut finir de charger alors que
+      // le joueur est déjà passé en vue conducteur.
+      this.setVueCabine(this.cabineMasquee);
     } catch (error) {
-      console.warn('Modèle Audi indisponible, voiture de secours utilisée.', error);
+      console.warn('Modèle Ferrari indisponible, voiture de secours utilisée.', error);
       this.buildFallback();
     }
+  }
+
+  // Copie d'un maillage ne gardant que les triangles situés en deçà de `seuil`
+  // sur l'axe Z local, c'est-à-dire vers l'AVANT du véhicule : dans le repère
+  // du modèle, l'avant est en z négatif (les roues avant sont à -1,16, les
+  // arrière à +1,49), c'est le demi-tour du pivot qui remet l'ensemble à
+  // l'endroit. Sert à séparer la planche de bord des sièges quand les deux
+  // partagent une même primitive.
+  //
+  // Le tri se fait sur le CENTRE de chaque triangle : découper au sommet près
+  // laisserait des trous sur les faces à cheval sur le seuil.
+  private decouperCabine(source: Mesh, seuil: number): Mesh | null {
+    const positions = source.getVerticesData('position');
+    const indices = source.getIndices();
+    if (!positions || !indices) return null;
+
+    const gardes: number[] = [];
+    for (let i = 0; i < indices.length; i += 3) {
+      let z = 0;
+      for (let k = 0; k < 3; k++) z += positions[indices[i + k] * 3 + 2];
+      if (z / 3 < seuil) gardes.push(indices[i], indices[i + 1], indices[i + 2]);
+    }
+    if (!gardes.length || gardes.length === indices.length) return null;
+
+    const copie = source.clone(`${source.name}-avant`, source.parent);
+    if (!copie) return null;
+    // `clone` partage la géométrie : il faut la rendre unique avant d'y
+    // toucher, sinon la découpe s'applique aussi à l'original.
+    copie.makeGeometryUnique();
+    copie.setIndices(gardes);
+    copie.setEnabled(false);
+    return copie;
+  }
+
+  // Vue conducteur : masque les sièges, qui se trouvent entre l'œil et la
+  // route. Appelée à chaque changement de caméra depuis la boucle de jeu.
+  setVueCabine(masquee: boolean): void {
+    this.cabineMasquee = masquee;
+    for (const mesh of this.piecesCabine) mesh.setEnabled(!masquee);
+    for (const mesh of this.piecesCabineAvant) mesh.setEnabled(masquee);
   }
 
   update(dt: number, input: KeyboardInput): void {

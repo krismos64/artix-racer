@@ -106,6 +106,12 @@ export const BATIMENTS_MODELISES = new Set([
   1492,   // McDonald's de la zone est : pavillon à toit asymétrique, reconstruit à la main
   979,    // gendarmerie : pavillon bas au grand toit à croupes, reconstruit à la main
   2013,   // crèche + Bibliothèque Pour Tous : pavillon à pans crème et brique, à la main
+  535,    // groupe scolaire Jean Moulin : 5 856 m² d'un seul tenant, extrudés
+          //   en bloc plein de 8,1 m. L'orthophoto montre un peigne d'ailes
+          //   étroites autour de deux cours : reconstruit dans landmarks.js
+  534,    // école maternelle Jean Moulin : plain-pied tuile, bandeau bleu
+  2208,   // école maternelle Jean Sarrailh : pignon sur rue et panneaux colorés
+  2209,   // école élémentaire Jean Sarrailh : barre blanche à menuiseries turquoise
 ]);
 
 export function parseBDTopo(raw, toitures = null, facades = null, panoramax = null) {

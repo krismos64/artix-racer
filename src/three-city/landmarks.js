@@ -4274,6 +4274,480 @@ function construireDevantureCommerce({ nom, sous, fond, encre, largeur }) {
   return g;
 }
 
+
+// ---- Groupes scolaires d'Artix ------------------------------------------
+//
+// Cinq établissements, relevés sur Street View (imagerie mai 2026 pour Jean
+// Moulin, avril 2016 pour Jean Sarrailh où le bâti n'a pas changé) et
+// recoupés sur l'orthophoto IGN pour l'implantation au sol.
+//
+// Ce sont des bâtiments d'après-guerre à ossature poteaux-poutres, très
+// différents du pavillon béarnais qui peuple le reste de la commune : longues
+// barres de plain-pied, toit à faible pente débordant, façade rythmée par des
+// poteaux verticaux et un bandeau continu de baies. C'est ce rythme, et non le
+// volume, qui les identifie depuis la rue.
+
+// Toiture à deux pentes débordante, la couverture commune à ces écoles.
+//
+// Le comble est construit face par face plutôt qu'en déformant un cylindre :
+// les cotes de débord doivent être exactes, c'est l'ombre portée de la rive
+// sur la façade qui donne l'échelle du bâtiment.
+function toitureEcole(longueur, profondeur, hauteurMur, {
+  tuile = 0x8c4a33, pente = 0.30, debord = 0.85, rive = 0xf4f2ec, bandeau = null,
+} = {}) {
+  const g = new THREE.Group();
+  const L = longueur + debord * 2, P = profondeur + debord * 2;
+  const hy = (P / 2) * pente;
+  const toitMat = new THREE.MeshStandardMaterial({
+    color: tuile, roughness: 0.92, side: THREE.DoubleSide, flatShading: true,
+  });
+
+  const p = [];
+  const quad = (a, b, c, d) => { p.push(...a, ...b, ...c, ...a, ...c, ...d); };
+  const hx = L / 2, hz = P / 2;
+  quad([-hx, 0, hz], [hx, 0, hz], [hx, hy, 0], [-hx, hy, 0]);          // pan avant
+  quad([-hx, 0, -hz], [-hx, hy, 0], [hx, hy, 0], [hx, 0, -hz]);        // pan arrière
+  p.push(-hx, 0, hz, -hx, hy, 0, -hx, 0, -hz);                         // pignons
+  p.push(hx, 0, -hz, hx, hy, 0, hx, 0, hz);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  const toit = new THREE.Mesh(geo, toitMat);
+  toit.position.y = hauteurMur;
+  toit.castShadow = true;
+  g.add(toit);
+
+  // Planche de rive claire sous le débord : elle souligne la ligne de toiture
+  // et porte l'ombre sur la façade.
+  const riveMat = new THREE.MeshStandardMaterial({ color: rive, roughness: 0.8 });
+  for (const s of [1, -1]) {
+    const pl = new THREE.Mesh(new THREE.BoxGeometry(L, 0.22, 0.1), riveMat);
+    pl.position.set(0, hauteurMur - 0.02, s * (P / 2 - 0.05));
+    g.add(pl);
+  }
+  // Bandeau de couleur sous la gouttière : bleu à la maternelle Jean Moulin,
+  // vert à l'élémentaire. Un simple filet, mais très identifiant.
+  if (bandeau != null) {
+    const bMat = new THREE.MeshStandardMaterial({ color: bandeau, roughness: 0.7 });
+    for (const s of [1, -1]) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(L, 0.16, 0.08), bMat);
+      b.position.set(0, hauteurMur - 0.22, s * (P / 2 - 0.02));
+      g.add(b);
+    }
+  }
+  return g;
+}
+
+// Barre d'école à ossature : le motif commun aux quatre écoles.
+//
+// La barre se développe le long de son axe X local, la façade principale
+// regardant +Z. L'appelant l'oriente par `rotation.y = atan2(-uz, ux)` pour
+// aligner X sur (ux, uz), la convention du projet pour étendre une boîte.
+//
+// `teinte` colore les menuiseries, seul élément qui distingue vraiment les
+// groupes à l'oeil : turquoise à l'élémentaire Jean Sarrailh, store beige
+// baissé à l'élémentaire Jean Moulin.
+function construireBarreEcole({
+  longueur, profondeur, hauteurMur = 3.1, teinte = 0x9fd0cc,
+  mur = 0xf1efe7, storeBaisse = false, deuxFaces = false,
+}) {
+  const g = new THREE.Group();
+  const murMat = new THREE.MeshStandardMaterial({ color: mur, roughness: 0.86 });
+  const menuiserie = new THREE.MeshStandardMaterial({ color: teinte, roughness: 0.62 });
+  // Vitrage des écoles : DIÉLECTRIQUE et clair, à l'inverse du réflexe
+  // habituel. Ces façades regardent le nord ; un verre sombre et métallique
+  // (0x2b3238, metalness 0,12) y rendait des trous noirs, et le rendre plus
+  // métallique aggravait le défaut, un métal ne renvoyant que ce qu'il a en
+  // face, c'est-à-dire ici le sol sombre. Le gris-bleu clair d'un vitrage vu
+  // de l'extérieur par ciel couvert donne la bonne lecture.
+  const vitre = new THREE.MeshStandardMaterial({
+    color: 0x8fa2b0, roughness: 0.28, metalness: 0.04,
+  });
+  // Store toile baissé : rue du Galupe, presque toutes les baies en portent,
+  // et c'est cette bande claire continue qui se lit depuis la rue, pas le
+  // vitrage sombre.
+  const store = new THREE.MeshStandardMaterial({ color: 0xded0a8, roughness: 0.9 });
+
+  const corps = new THREE.Mesh(new THREE.BoxGeometry(longueur, hauteurMur, profondeur), murMat);
+  corps.position.y = hauteurMur / 2;
+  corps.castShadow = true;
+  corps.receiveShadow = true;
+  g.add(corps);
+
+  // Trame : un poteau tous les 3,4 m, relevé sur les photos. Le pas est ajusté
+  // pour tomber juste aux deux extrémités.
+  const nb = Math.max(2, Math.round(longueur / 3.4));
+  const pas = longueur / nb;
+  const POT = 0.26;
+  const faces = deuxFaces ? [1, -1] : [1];
+
+  for (const f of faces) {
+    for (let i = 0; i <= nb; i++) {
+      const px = -longueur / 2 + i * pas;
+      const pot = new THREE.Mesh(new THREE.BoxGeometry(POT, hauteurMur, 0.16), murMat);
+      pot.position.set(px, hauteurMur / 2, f * (profondeur / 2 + 0.08));
+      g.add(pot);
+    }
+    // Baies entre poteaux, en léger retrait derrière le nu des poteaux : à
+    // fleur, la façade se lit comme un aplat.
+    for (let i = 0; i < nb; i++) {
+      const cx = -longueur / 2 + (i + 0.5) * pas;
+      const larg = pas - POT - 0.18;
+      if (larg < 0.5) continue;
+      const cadre = new THREE.Mesh(new THREE.BoxGeometry(larg, 1.62, 0.1), menuiserie);
+      cadre.position.set(cx, hauteurMur * 0.58, f * (profondeur / 2 + 0.05));
+      g.add(cadre);
+      const remp = new THREE.Mesh(new THREE.PlaneGeometry(larg - 0.16, 1.42),
+        storeBaisse ? store : vitre);
+      remp.position.set(cx, hauteurMur * 0.58, f * (profondeur / 2 + 0.11));
+      if (f < 0) remp.rotation.y = Math.PI;
+      g.add(remp);
+    }
+    // Allège pleine sous les baies : le soubassement est aveugle sur toutes
+    // les photos, la baie ne descend jamais au sol.
+    const allege = new THREE.Mesh(new THREE.BoxGeometry(longueur, hauteurMur * 0.34, 0.12), murMat);
+    allege.position.set(0, hauteurMur * 0.17, f * (profondeur / 2 + 0.06));
+    g.add(allege);
+  }
+  return g;
+}
+
+
+// Ailes ordinaires du groupe scolaire Jean Moulin.
+//
+// L'emprise 535 de la BD TOPO couvre 5856 m² d'un seul tenant, avec 47
+// sommets : extrudée telle quelle, elle donne un BLOC PLEIN de 8,1 m qui
+// avale les corps modélisés et ne ressemble à rien. L'orthophoto montre en
+// réalité un peigne d'ailes étroites (10 à 13 m de profondeur) refermé sur
+// deux cours, la disposition classique d'un groupe scolaire des années 1950.
+//
+// Les ailes sont donc reconstruites depuis les ARÊTES MESURÉES du contour,
+// chacune extrudée vers l'intérieur de l'emprise. Le collège rénové et
+// l'élémentaire, modélisés à part, se posent sur deux de ces arêtes.
+//
+// Chaque entrée : arête (x1,z1)-(x2,z2), profondeur, hauteur, et la teinte de
+// couverture (ardoise pour le collège au nord-ouest, tuile pour les ailes
+// d'enseignement au sud-est, conformément à l'orthophoto).
+const AILES_JEAN_MOULIN = [
+  // Aile nord-est, le long de la rue des Écoles : couverture tuile.
+  { a: [-64, -27], b: [-35, -60], prof: 12.5, h: 3.6, tuile: 0x8f5137 },
+  { a: [-17, -57], b: [-36, -74], prof: 11.0, h: 3.4, tuile: 0x8f5137 },
+  // Ailes centrales en redents, autour de la cour intérieure.
+  { a: [-52, -84], b: [-41, -95], prof: 10.0, h: 3.4, tuile: 0x8f5137 },
+  { a: [-31, -87], b: [-20, -99], prof: 10.0, h: 3.4, tuile: 0x8f5137 },
+  // Aile ouest, la plus longue : corps principal du collège, ardoise.
+  { a: [-112, -79], b: [-81, -51], prof: 13.0, h: 6.6, tuile: 0x4d5057 },
+  { a: [-93, -40], b: [-75, -24], prof: 12.0, h: 6.2, tuile: 0x4d5057 },
+  // Retour sud-ouest fermant la cour du collège. Profondeur limitée à 6 m :
+  // la rue du Galoupé longe cette arête de très près, et à 12 m la face
+  // arrière débordait sur la chaussée (mesuré avec `world.isOnRoad`, la
+  // profondeur maximale tenable est 6,5 m débord de toiture compris).
+  { a: [-102, -125], b: [-86, -110], prof: 6.0, h: 5.4, tuile: 0x4d5057 },
+  // Ailes sud, entre la cour du collège et celle de l'élémentaire : sans
+  // elles le bas de l'emprise reste vide alors que l'orthophoto y montre du
+  // bâti continu jusqu'à la rue du Galupe.
+  { a: [-20, -99], b: [-30, -107], prof: 10.0, h: 3.4, tuile: 0x8f5137 },
+  { a: [-30, -107], b: [-38, -115], prof: 10.0, h: 3.4, tuile: 0x8f5137 },
+  { a: [-43, -110], b: [-50, -116], prof: 9.5, h: 3.3, tuile: 0x8f5137 },
+  { a: [-35, -75], b: [-47, -85], prof: 10.5, h: 3.5, tuile: 0x8f5137 },
+];
+
+// Une aile : boîte posée le long de l'arête, extrudée vers l'INTÉRIEUR de
+// l'emprise (le centroïde), coiffée d'un comble à deux pentes.
+function construireAileScolaire({ a, b, prof, h, tuile }, centroide) {
+  const g = new THREE.Group();
+  const [x1, z1] = a, [x2, z2] = b;
+  const dx = x2 - x1, dz = z2 - z1;
+  const L = Math.hypot(dx, dz);
+  const ux = dx / L, uz = dz / L;
+  // Normale dirigée vers l'intérieur : l'aile occupe le bord de l'emprise,
+  // pas son extérieur, sinon elle déborde sur la rue et la cour.
+  let nx = -uz, nz = ux;
+  const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+  if ((mx - centroide[0]) * nx + (mz - centroide[1]) * nz > 0) { nx = -nx; nz = -nz; }
+
+  const mur = new THREE.MeshStandardMaterial({ color: 0xe8e4da, roughness: 0.88 });
+  const corps = new THREE.Mesh(new THREE.BoxGeometry(L, h, prof), mur);
+  corps.castShadow = true;
+  corps.receiveShadow = true;
+  g.add(corps);
+  corps.position.y = h / 2;
+  g.add(toitureEcole(L, prof, h, { tuile, pente: 0.28, debord: 0.7 }));
+
+  // Bandeau de fenêtres sur la face intérieure (côté cour), la seule vue
+  // depuis l'enceinte. Les faces extérieures donnent sur les rues et sont
+  // traitées par les corps modélisés qui se posent devant.
+  const vitre = new THREE.MeshStandardMaterial({
+    color: 0x8fa2b0, roughness: 0.28, metalness: 0.04,
+  });
+  const nb = Math.max(2, Math.round(L / 3.4));
+  for (let i = 0; i < nb; i++) {
+    const cx = -L / 2 + (i + 0.5) * (L / nb);
+    const v = new THREE.Mesh(new THREE.PlaneGeometry((L / nb) * 0.62, 1.35), vitre);
+    v.position.set(cx, h * 0.58, prof / 2 + 0.02);
+    g.add(v);
+  }
+
+  // Position : l'aile est centrée sur l'arête, décalée d'une demi-profondeur
+  // vers l'intérieur pour que sa face extérieure tombe SUR l'arête.
+  g.position.set(mx + nx * prof / 2, 0, mz + nz * prof / 2);
+  // Convention du projet : pour étendre une boîte le long de (ux, uz) par son
+  // axe X, la rotation est atan2(-uz, ux).
+  g.rotation.y = Math.atan2(-uz, ux);
+  return g;
+}
+
+// Le peigne complet, hors corps modélisés à part.
+function construireAilesJeanMoulin(solE) {
+  const g = new THREE.Group();
+  const CENTROIDE = [-66.5, -88.0];   // centroïde mesuré de l'emprise 535
+  for (const aile of AILES_JEAN_MOULIN) {
+    const m = construireAileScolaire(aile, CENTROIDE);
+    const [x1, z1] = aile.a, [x2, z2] = aile.b;
+    // Assise au point le plus bas de l'arête : sur 40 m, une aile posée sur
+    // l'altitude de son centre décolle franchement d'un bout.
+    m.position.y = Math.min(solE(x1, z1), solE(x2, z2));
+    g.add(m);
+  }
+  return g;
+}
+
+// Collège Jean Moulin, rue du Galupe (relevé mai 2026).
+//
+// Le seul des cinq à ne pas être une barre de plain-pied : corps R+1 rénové,
+// bardage gris anthracite à l'étage et surtout de LARGES ENCADREMENTS DE BAIES
+// BLEU VIF, qui font sa signature depuis la rue. Rez-de-chaussée en béton
+// clair, cage d'escalier en avant-corps gris foncé, garde-corps métallique en
+// terrasse. Toiture-terrasse, pas de comble.
+function construireCollegeJeanMoulin() {
+  const g = new THREE.Group();
+  const L = 46, PROF = 13.5, H_RDC = 3.4, H_ET = 3.3;
+  const beton = new THREE.MeshStandardMaterial({ color: 0xdedad0, roughness: 0.88 });
+  const bardage = new THREE.MeshStandardMaterial({ color: 0x6f7478, roughness: 0.7 });
+  const anthracite = new THREE.MeshStandardMaterial({ color: 0x4a4f53, roughness: 0.68 });
+  const bleu = new THREE.MeshStandardMaterial({ color: 0x1064c0, roughness: 0.55 });
+  const vitre = new THREE.MeshStandardMaterial({
+    color: 0x8fa2b0, roughness: 0.28, metalness: 0.04,
+  });
+  const acier = new THREE.MeshStandardMaterial({
+    color: 0x8d949a, roughness: 0.42, metalness: 0.45,
+  });
+
+  const rdc = new THREE.Mesh(new THREE.BoxGeometry(L, H_RDC, PROF), beton);
+  rdc.position.y = H_RDC / 2;
+  rdc.castShadow = true; rdc.receiveShadow = true;
+  g.add(rdc);
+  const etage = new THREE.Mesh(new THREE.BoxGeometry(L, H_ET, PROF), bardage);
+  etage.position.y = H_RDC + H_ET / 2;
+  etage.castShadow = true;
+  g.add(etage);
+
+  // Baies du rez-de-chaussée : grandes vitrines en retrait sous la dalle.
+  const NB = 12, pas = L / NB;
+  for (let i = 0; i < NB; i++) {
+    const cx = -L / 2 + (i + 0.5) * pas;
+    const v = new THREE.Mesh(new THREE.PlaneGeometry(pas * 0.72, 1.9), vitre);
+    v.position.set(cx, H_RDC * 0.52, PROF / 2 + 0.02);
+    g.add(v);
+  }
+  // Encadrements bleus de l'étage : c'est LE motif du collège rénové. Le cadre
+  // déborde largement la baie, il fait presque bandeau d'un poteau à l'autre.
+  for (let i = 0; i < NB; i++) {
+    const cx = -L / 2 + (i + 0.5) * pas;
+    const cadre = new THREE.Mesh(new THREE.BoxGeometry(pas * 0.86, 2.15, 0.12), bleu);
+    cadre.position.set(cx, H_RDC + H_ET * 0.52, PROF / 2 + 0.06);
+    g.add(cadre);
+    const v = new THREE.Mesh(new THREE.PlaneGeometry(pas * 0.62, 1.55), vitre);
+    v.position.set(cx, H_RDC + H_ET * 0.52, PROF / 2 + 0.13);
+    g.add(v);
+  }
+  // Bandeau d'allège blanc entre les deux niveaux : la dalle est apparente.
+  const dalle = new THREE.Mesh(new THREE.BoxGeometry(L + 0.3, 0.34, PROF + 0.3),
+    new THREE.MeshStandardMaterial({ color: 0xeeece4, roughness: 0.8 }));
+  dalle.position.y = H_RDC;
+  g.add(dalle);
+
+  // Avant-corps de la cage d'escalier, gris foncé, saillant et plus haut.
+  const cage = new THREE.Mesh(new THREE.BoxGeometry(6.2, H_RDC + H_ET + 0.9, PROF * 0.45), anthracite);
+  cage.position.set(L * 0.17, (H_RDC + H_ET + 0.9) / 2, PROF / 2 + PROF * 0.22 - 0.2);
+  cage.castShadow = true;
+  g.add(cage);
+  // Fenêtre verticale étroite de la cage, seule ouverture de ce volume.
+  const jour = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 2.6), vitre);
+  jour.position.set(L * 0.17 - 1.9, H_RDC + 1.2, PROF / 2 + PROF * 0.45 - 0.18);
+  g.add(jour);
+
+  // Garde-corps de terrasse : une lisse haute et une basse sur poteaux, le
+  // dessin métallique qui court sur toute la façade.
+  for (const y of [H_RDC + H_ET + 0.42, H_RDC + H_ET + 0.86]) {
+    const lisse = new THREE.Mesh(new THREE.BoxGeometry(L, 0.06, 0.06), acier);
+    lisse.position.set(0, y, PROF / 2 - 0.12);
+    g.add(lisse);
+  }
+  for (let i = 0; i <= 14; i++) {
+    const pot = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.95, 0.05), acier);
+    pot.position.set(-L / 2 + (i / 14) * L, H_RDC + H_ET + 0.48, PROF / 2 - 0.12);
+    g.add(pot);
+  }
+
+  // Acrotère : le bord relevé d'une toiture-terrasse, sans lui le volume se
+  // termine par une arête nue qui ne ressemble à rien.
+  const acrotere = new THREE.Mesh(new THREE.BoxGeometry(L + 0.24, 0.4, PROF + 0.24),
+    new THREE.MeshStandardMaterial({ color: 0xd6d2c8, roughness: 0.85 }));
+  acrotere.position.y = H_RDC + H_ET + 0.2;
+  g.add(acrotere);
+
+  return g;
+}
+
+// École élémentaire Jean Moulin, rue du Galupe (relevé mai 2026).
+//
+// Longue barre de plain-pied à toit de tuile rouge-brun, façade crème rythmée
+// de poteaux blancs, baies occultées par des stores toile beige et bandeau de
+// rive VERT sous la gouttière.
+function construireElementaireJeanMoulin() {
+  const g = new THREE.Group();
+  const L = 44, PROF = 11, H = 3.15;
+  g.add(construireBarreEcole({
+    longueur: L, profondeur: PROF, hauteurMur: H,
+    teinte: 0xe8e4d6, mur: 0xefe9db, storeBaisse: true,
+  }));
+  g.add(toitureEcole(L, PROF, H, {
+    tuile: 0x9a5138, pente: 0.26, debord: 0.9, bandeau: 0x3f7a52,
+  }));
+  return g;
+}
+
+// École maternelle Jean Moulin, rue des Écoles (relevé août 2013, bâti
+// inchangé sur l'imagerie récente).
+//
+// Plain-pied à toit de tuile rouge-orangé, façade BLANCHE, bandeau BLEU sous
+// la gouttière et bande continue de fenêtres hautes à stores beiges. La cour
+// porte des jeux : portique rouge et cabane bleue, très visibles depuis la rue.
+function construireMaternelleJeanMoulin() {
+  const g = new THREE.Group();
+  const L = 38, PROF = 12, H = 3.05;
+  g.add(construireBarreEcole({
+    longueur: L, profondeur: PROF, hauteurMur: H,
+    teinte: 0xe4dfcf, mur: 0xf6f5f0, storeBaisse: true,
+  }));
+  g.add(toitureEcole(L, PROF, H, {
+    tuile: 0xb05a33, pente: 0.24, debord: 0.8, bandeau: 0x2f6ba8,
+  }));
+
+  // Jeux de cour : le portique rouge et la cabane à toit bleu, posés devant
+  // la façade côté cour. Ce sont eux qui disent « maternelle » de loin, bien
+  // avant le bâtiment.
+  const rouge = new THREE.MeshStandardMaterial({ color: 0xc23a2f, roughness: 0.72 });
+  const bleuJeu = new THREE.MeshStandardMaterial({ color: 0x2f5ea8, roughness: 0.72 });
+  const bois = new THREE.MeshStandardMaterial({ color: 0xc9a877, roughness: 0.88 });
+
+  const portique = new THREE.Group();
+  for (const s of [-1, 1]) {
+    for (const t of [-1, 1]) {
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.3, 6), rouge);
+      p.position.set(s * 1.5, 1.15, t * 0.55);
+      portique.add(p);
+    }
+  }
+  const barre = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.2, 6), rouge);
+  barre.rotation.z = Math.PI / 2;
+  barre.position.y = 2.3;
+  portique.add(barre);
+  portique.position.set(-L * 0.28, 0, PROF / 2 + 5.5);
+  g.add(portique);
+
+  const cabane = new THREE.Group();
+  const caisse = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.1, 1.4), bois);
+  caisse.position.y = 0.55;
+  cabane.add(caisse);
+  const toitCab = new THREE.Mesh(new THREE.ConeGeometry(1.35, 0.7, 4), bleuJeu);
+  toitCab.rotation.y = Math.PI / 4;
+  toitCab.position.y = 1.45;
+  cabane.add(toitCab);
+  cabane.position.set(-L * 0.06, 0, PROF / 2 + 6.2);
+  g.add(cabane);
+
+  return g;
+}
+
+// École maternelle Jean Sarrailh, route de Pardies (relevé avril 2016).
+//
+// Se distingue des autres par son PIGNON à deux pentes tourné vers la rue,
+// avec l'enseigne et le drapeau, et par un corps latéral à toiture inclinée
+// simple (appentis) couvert de panneaux colorés.
+function construireMaternelleJeanSarrailh() {
+  const g = new THREE.Group();
+  const L = 42, PROF = 15, H = 3.1;
+  g.add(construireBarreEcole({
+    longueur: L, profondeur: PROF, hauteurMur: H,
+    teinte: 0xd8dbd2, mur: 0xf7f6f2,
+  }));
+  g.add(toitureEcole(L, PROF, H, { tuile: 0x8f9499, pente: 0.34, debord: 0.75 }));
+
+  // Panneaux colorés de la façade d'entrée : vert, rose et bleu, relevés sur
+  // la photo. Ils tiennent lieu de signalétique et se voient de la route.
+  // Panneaux presque carrés et jointifs : sur la photo ils forment une frise
+  // continue, pas trois bandes verticales isolées.
+  const couleurs = [0x4f9b52, 0xc7568c, 0x3f74b8];
+  couleurs.forEach((c, i) => {
+    const pan = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 2.1),
+      new THREE.MeshStandardMaterial({ color: c, roughness: 0.7 }));
+    pan.position.set(-L * 0.30 + i * 2.6, 1.7, PROF / 2 + 0.14);
+    g.add(pan);
+  });
+
+  // Appentis d'entrée : auvent incliné sur poteaux, devant le pignon.
+  const auventMat = new THREE.MeshStandardMaterial({
+    color: 0xb9bdb8, roughness: 0.7, side: THREE.DoubleSide,
+  });
+  const auvent = new THREE.Mesh(new THREE.BoxGeometry(9, 0.12, 3.4), auventMat);
+  auvent.position.set(L * 0.24, 2.95, PROF / 2 + 1.7);
+  auvent.rotation.x = -0.14;
+  g.add(auvent);
+  // Poteaux de l'auvent : arrêtés SOUS la sous-face, pas à hauteur du mur.
+  // À 2,9 m ils traversaient l'auvent et ressortaient au-dessus.
+  for (const s of [-1, 1]) {
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.75, 8),
+      new THREE.MeshStandardMaterial({ color: 0xe8e6e0, roughness: 0.7 }));
+    p.position.set(L * 0.24 + s * 4, 1.38, PROF / 2 + 3.2);
+    g.add(p);
+  }
+
+  // Mât et drapeau français : un établissement public en porte un, et la
+  // photo le montre au pignon.
+  const mat = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 5.4, 6),
+    new THREE.MeshStandardMaterial({ color: 0xd8d8d4, roughness: 0.5, metalness: 0.3 }));
+  mat.position.set(L * 0.24 + 5.2, 2.7, PROF / 2 + 2.4);
+  g.add(mat);
+  const bandes = [0x1c3f94, 0xf2f2f0, 0xc8102e];
+  bandes.forEach((c, i) => {
+    const b = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.62),
+      new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, side: THREE.DoubleSide }));
+    b.position.set(L * 0.24 + 5.42 + i * 0.3, 4.85, PROF / 2 + 2.4);
+    g.add(b);
+  });
+
+  return g;
+}
+
+// École élémentaire Jean Sarrailh, rue Fourticot (relevé avril 2016).
+//
+// Longue barre blanche de plain-pied, toit à très faible pente en gris
+// ardoise. Sa signature est le bandeau CONTINU de menuiseries TURQUOISE, qui
+// court sur toute la façade entre des poteaux blancs.
+function construireElementaireJeanSarrailh() {
+  const g = new THREE.Group();
+  const L = 62, PROF = 8.6, H = 3.2;
+  g.add(construireBarreEcole({
+    longueur: L, profondeur: PROF, hauteurMur: H,
+    teinte: 0x63b5b0, mur: 0xf4f3ef, deuxFaces: true,
+  }));
+  g.add(toitureEcole(L, PROF, H, { tuile: 0x7d8288, pente: 0.20, debord: 1.0 }));
+  return g;
+}
+
 export function buildLandmarks(data, relief, roadY) {
   const group = new THREE.Group();
   const traites = [];   // emprises à retirer des bâtiments ordinaires
@@ -5260,6 +5734,81 @@ export function buildLandmarks(data, relief, roadY) {
       dc.position.set(92.2, solDc, -86.5);
       dc.rotation.y = Math.atan2(-0.99, -0.16);
       group.add(dc);
+    }
+
+    // ---- Groupes scolaires, relevés sur Street View ----------------------
+    {
+      const solE = (x, z) => (relief ? relief.hauteurRoute(x, z) : 0) + roadY;
+
+      // Ailes ordinaires du groupe : elles remplacent l'extrusion de
+      // l'emprise 535, retirée du bâti automatique. Sans elles, le groupe
+      // scolaire est un bloc plein de 8,1 m sur 5 856 m² qui avale les corps
+      // modélisés ; avec elles, il retrouve ses cours ouvertes.
+      group.add(construireAilesJeanMoulin(solE));
+
+      // Collège Jean Moulin. L'emprise 535 est un grand ensemble en peigne de
+      // 47 sommets : une boîte orientée par PCA n'y donne aucun cap fiable
+      // (le piège documenté). Le corps rénové est posé sur son ARÊTE MESURÉE,
+      // le segment 34 (27,9 m, milieu (-90,9, -100,0), normale extérieure
+      // (-0,75, -0,66)), qui est la façade photographiée depuis la rue du
+      // Galupe : à 28 m du panorama, vue sous un cap de 71 degrés.
+      //
+      // Recul mesuré, pas déduit. La rue du Galoupé longe l'arête du côté de
+      // la normale extérieure : balayée de -16 à +16 m avec `world.isOnRoad`,
+      // la façade n'est complètement dégagée qu'à partir d'un décalage de
+      // -4 m (centre (-88, -97)). Un recul dans le sens de la normale, lui,
+      // enfonçait le bâtiment dans la chaussée.
+      {
+        const nx = -0.75, nz = -0.66, RECUL = -4;
+        const college = construireCollegeJeanMoulin();
+        const cx = -90.9 + nx * RECUL, cz = -100.0 + nz * RECUL;
+        college.position.set(cx, solE(cx, cz), cz);
+        college.rotation.y = Math.atan2(nx, nz);
+        group.add(college);
+      }
+
+      // École élémentaire Jean Moulin : aile sud du même ensemble, posée sur
+      // le segment 23 (37,3 m, milieu (-70,7, -129,3), normale (0,66, -0,75)),
+      // la barre basse à toit de tuile vue depuis la rue du Galupe.
+      {
+        const nx = 0.66, nz = -0.75, PROF = 11;
+        const elem = construireElementaireJeanMoulin();
+        const cx = -70.7 + nx * PROF / 2, cz = -129.3 + nz * PROF / 2;
+        elem.position.set(cx, solE(cx, cz), cz);
+        elem.rotation.y = Math.atan2(nx, nz);
+        group.add(elem);
+      }
+
+      // École maternelle Jean Moulin, rue des Écoles. Bâtiment 534, boîte
+      // orientée 53,4 x 24,9 m centrée (-10,70, -137,89). Le modèle est plus
+      // court que l'emprise (qui inclut un préau et des annexes) : centré sur
+      // la boîte, il occupe la partie bâtie côté cour.
+      {
+        const maternelle = construireMaternelleJeanMoulin();
+        maternelle.position.set(-10.70, solE(-10.70, -137.89), -137.89);
+        maternelle.rotation.y = 0.6581;
+        group.add(maternelle);
+      }
+
+      // École maternelle Jean Sarrailh, route de Pardies. Bâtiment 2208,
+      // boîte orientée 66,5 x 18,6 m centrée (328,29, -610,73).
+      {
+        const matSarrailh = construireMaternelleJeanSarrailh();
+        matSarrailh.position.set(328.29, solE(328.29, -610.73), -610.73);
+        matSarrailh.rotation.y = -0.1974;
+        group.add(matSarrailh);
+      }
+
+      // École élémentaire Jean Sarrailh, rue Fourticot. Bâtiment 2209 : une
+      // barre très étroite, 65,5 x 8,9 m centrée (356,34, -694,30). Les deux
+      // longues façades sont traitées, elle est vue des deux côtés (parking
+      // arboré à l'ouest, cour à l'est).
+      {
+        const elemSarrailh = construireElementaireJeanSarrailh();
+        elemSarrailh.position.set(356.34, solE(356.34, -694.30), -694.30);
+        elemSarrailh.rotation.y = 1.3625;
+        group.add(elemSarrailh);
+      }
     }
 
     // Préaux : écoles élémentaires Jean Moulin et Jean Sarrailh, posés côté
