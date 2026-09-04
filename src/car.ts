@@ -2,6 +2,7 @@ import {
   AbstractMesh,
   Axis,
   Color3,
+  DynamicTexture,
   Mesh,
   MeshBuilder,
   PBRMaterial,
@@ -184,10 +185,21 @@ export class ArcadeCar {
         if (mesh instanceof Mesh) this.shadow?.addShadowCaster(mesh, false);
         const material = mesh.material;
         if (material instanceof PBRMaterial) {
-          material.environmentIntensity = .7;
-          material.directIntensity = 1.1;
+          material.environmentIntensity = 1;
+          material.directIntensity = 1;
+          // Vernis sur la peinture rouge (les deux matériaux de carrosserie
+          // du modèle) : la couche brillante qui reflète le ciel HDR, ce qui
+          // fait lire une voiture de course et non un objet en plastique.
+          const c = material.albedoColor;
+          if (c.r > .3 && c.g < .05 && c.b < .05) {
+            material.clearCoat.isEnabled = true;
+            material.clearCoat.intensity = 1;
+            material.clearCoat.roughness = .06;
+            material.metallic = Math.min(material.metallic ?? 0, .35);
+          }
         }
       }
+      this.buildContactShadow();
 
       const candidates = [...result.transformNodes, ...result.meshes]
         .filter((node) => /wheel(front|rear)[lr]$/i.test(node.name));
@@ -278,6 +290,37 @@ export class ArcadeCar {
 
   forward(target = new Vector3()): Vector3 {
     return target.set(Math.sin(this.heading), 0, Math.cos(this.heading));
+  }
+
+  // Ombre de contact : dégradé radial sombre couché sous le châssis. L'ombre
+  // en cascade du soleil s'arrête au bas de caisse et laisse la voiture
+  // flotter sur l'enrobé ; ce voile assoit les pneus au sol sous tous les
+  // éclairages, y compris la nuit où le soleil ne projette plus rien.
+  private buildContactShadow(): void {
+    const taille = 128;
+    const texture = new DynamicTexture('ombre-contact', { width: taille, height: taille }, this.scene, false);
+    const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+    const grad = ctx.createRadialGradient(taille / 2, taille / 2, 6, taille / 2, taille / 2, taille / 2);
+    grad.addColorStop(0, 'rgba(0,0,0,0.62)');
+    grad.addColorStop(.55, 'rgba(0,0,0,0.30)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, taille, taille);
+    texture.update(false);
+    texture.hasAlpha = true;
+    const materiau = new StandardMaterial('ombre-contact-materiau', this.scene);
+    materiau.diffuseColor = Color3.Black();
+    materiau.emissiveColor = Color3.Black();
+    materiau.specularColor = Color3.Black();
+    materiau.opacityTexture = texture;
+    materiau.disableLighting = true;
+    materiau.disableDepthWrite = true;
+    const voile = MeshBuilder.CreateGround('ombre-contact-plan', { width: 2.7, height: 5.1 }, this.scene);
+    voile.material = materiau;
+    voile.position.y = .05;
+    voile.isPickable = false;
+    voile.receiveShadows = false;
+    voile.parent = this.root;
   }
 
   private buildFallback(): void {

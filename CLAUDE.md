@@ -91,7 +91,25 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 - Un élément de FOND (backdrop) doit échapper au brouillard
   (`applyFog = false`) ET tenir sous `camera.maxZ` : les Pyrénées ont vécu
   des mois dans la scène sans jamais être visibles, clippées par le plan
-  lointain et noyées par le fog.
+  lointain et noyées par le fog. Même piège pour le ciel : une BOÎTE de
+  2 900 m a ses coins à 2 500 m, au-delà du plan lointain ; le ciel est une
+  SPHÈRE.
+- Ciel HDR : le disque solaire doit être PLAFONNÉ dans le fichier
+  (`scripts/ciel-soleil.mjs`, plafond 12), sinon il entre dans l'IBL et
+  éclaire tout sans ombre. Babylon projette la colonne u du panorama sur
+  l'angle (u - 0,75) × 2π de +X vers +Z (mesuré en jeu, pas (u - 0,5)).
+  `__regarder(x, y, z)` dans la console force la caméra vers une direction.
+- Le coût dominant est le NOMBRE D'APPELS DE DESSIN de la passe principale
+  (14 µs de JS par maillage PBR, cascades d'ombre comprises), pas la
+  résolution : `ThreeCityConverter.fusionner` regroupe les petits maillages
+  statiques par matériau et cellule de 300 m. Tout maillage retrouvé par son
+  nom après conversion doit être dans `PROTEGES_FUSION`. SSAO et flou de
+  mouvement exigent une pré-passe qui redessine la ville : profil Qualité
+  seulement.
+- Les textures de fichier passent par `textureFichier`/`matiere`
+  (textures.js) : le pont ne lit que `image.src`, jamais les pixels ; ne pas
+  leur appliquer `carteRelief` (canvas vide). Cartes de normales OpenGL :
+  `invertNormalMapY = true` en repère main droite.
 
 ## Sources de données (`public/data/`)
 
@@ -106,6 +124,9 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 | `artix-facades-centre.json` + `textures/facades-centre-*` | 109 façades HD du corridor | `fetch-centre` |
 | `artix-sols.json` | enrobé par type de voie, parkings, usure des passages, relevés locaux | `fetch-sols` |
 | `artix-poteaux.json` | 357 poteaux triangulés | `fetch-poteaux` |
+| `textures/ciel/*.hdr` | 3 panoramas Poly Haven plafonnés (jour, soir, nuit) | `scripts/ciel-soleil.mjs` |
+| `textures/sols/*.jpg` | matières ambientCG (enrobé, herbe, béton, pavés, grave, écorce) | `scripts/preparer-textures.mjs` |
+| `models/flotte/*.glb` | 5 voitures Kenney Car Kit + palette | copie du kit |
 
 Caches locaux (gitignorés) : `.panoramax-cache/` (1 Go, photos SD),
 `.panoramax-cache-hd/` (246 Mo, photos HD), `data/panoramax-inventaire.json`

@@ -536,8 +536,10 @@ export class VoituresGarees {
   // `supplement` : places venues d'ailleurs (parkings en épi notamment), qui
   // partagent le même rendu instancié plutôt que d'ouvrir un second lot de
   // maillages pour les mêmes véhicules.
+  // `flotte` : modèles low-poly chargés par flotte.js ; sans elle, les
+  // silhouettes en boîte de `construireGeometrie` restent le repli.
   constructor(scene, data, relief, roadY, passages = [], spawn = null,
-    supplement = [], maximum = 880) {
+    supplement = [], maximum = 880, flotte = null) {
     this.group = new THREE.Group();
     // Les places d'appoint n'apportent que leur position : type et teinte
     // sont tirés au rendu, avec la même distribution que le reste du parc.
@@ -652,7 +654,24 @@ export class VoituresGarees {
     const parType = {};
     for (const p of places) parType[p.type] = (parType[p.type] ?? 0) + 1;
     this.caisses = {};
+    // Flotte low-poly : la carrosserie (blanche, teintée par instance) et
+    // les détails (palette du kit, jamais teintés) sont deux InstancedMesh
+    // qui partagent les mêmes matrices. Peinture vernie : c'est la couche
+    // brillante qui fait lire « voiture » et non « jouet mat ».
+    this.details = {};
+    const peintureMat = new THREE.MeshPhysicalMaterial({
+      roughness: 0.38, metalness: 0.12, clearcoat: 1, clearcoatRoughness: 0.08,
+    });
+    const detailsMat = flotte
+      ? new THREE.MeshStandardMaterial({ map: flotte.palette, roughness: 0.55, metalness: 0.05 })
+      : null;
     for (const [nom, n] of Object.entries(parType)) {
+      const modele = nom !== 'scooter' ? flotte?.[nom] : null;
+      if (modele) {
+        this.caisses[nom] = new THREE.InstancedMesh(modele.peinture, peintureMat, n);
+        this.details[nom] = new THREE.InstancedMesh(modele.details, detailsMat, n);
+        continue;
+      }
       this.caisses[nom] = nom === 'scooter'
         ? new THREE.InstancedMesh(construireScooter(), [caisseMat, sombreMat], n)
         : new THREE.InstancedMesh(construireGeometrie(GABARITS[nom]),
@@ -682,9 +701,15 @@ export class VoituresGarees {
       // exactement identiques.
       const e1 = 0.96 + hash((p.graine ?? 0) + 3.1) * 0.08;
 
+      const modele = scooter ? null : flotte?.[type];
       // Demi-dimensions du volume de collision, reprises par la physique.
       if (scooter) {
         p.demiL = 0.95; p.demiW = 0.35; p.demiH = 0.55; p.centreH = 0.65;
+      } else if (modele) {
+        p.demiL = modele.demiL * e1;
+        p.demiW = modele.demiW * e1;
+        p.demiH = modele.hauteur / 2 * e1;
+        p.centreH = modele.hauteur / 2 * e1;
       } else {
         p.demiL = gab.L * e1;
         p.demiW = gab.W * e1;
@@ -698,10 +723,36 @@ export class VoituresGarees {
       const j = idx[type] ?? 0;
       idx[type] = j + 1;
       this.caisses[type].setMatrixAt(j, m);
+      this.details[type]?.setMatrixAt(j, m);
       col.setHex(p.couleur);
       // Légère variation de clarté : casse les doublons de teinte exacte.
       col.multiplyScalar(0.94 + hash((p.graine ?? 0) + 9.4) * 0.1);
       this.caisses[type].setColorAt(j, col);
+
+      if (modele) {
+        // Roues : les cylindres instanciés, posés aux moyeux du modèle et
+        // à son rayon. Feux et rétroviseurs font partie du modèle : leurs
+        // maillages annexes sont masqués par une matrice nulle, seule
+        // l'ombre de contact reste posée aux cotes du modèle.
+        const rayon = modele.rayonRoue / 0.31 * e1;
+        const echRoue = new THREE.Vector3(rayon, e1, rayon);
+        const qRoue = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, p.cap, Math.PI / 2, 'YXZ'));
+        modele.roues.forEach((r, n2) => {
+          const dr = new THREE.Vector3(r.x * e1, r.y * e1, r.z * e1).applyQuaternion(q);
+          m.compose(pos.clone().add(dr), qRoue, echRoue);
+          this.roues.setMatrixAt(i * 4 + n2, m);
+        });
+        for (let n2 = modele.roues.length; n2 < 4; n2++) this.roues.setMatrixAt(i * 4 + n2, zero);
+        for (let f = 0; f < 2; f++) {
+          this.feuxAr.setMatrixAt(i * 2 + f, zero);
+          this.feuxAv.setMatrixAt(i * 2 + f, zero);
+          this.retros.setMatrixAt(i * 2 + f, zero);
+        }
+        m.compose(new THREE.Vector3(p.x, p.y + 0.03, p.z), q,
+          new THREE.Vector3(modele.demiW / 0.87 * e1 * 1.08, 1, modele.demiL / 2.15 * e1 * 1.04));
+        this.ombres.setMatrixAt(i, m);
+        return;
+      }
 
       const qr = new THREE.Quaternion().setFromEuler(
         new THREE.Euler(0, p.cap, Math.PI / 2, 'YXZ'),
@@ -769,6 +820,7 @@ export class VoituresGarees {
 
     const tousLesMeshes = [
       ...Object.values(this.caisses),
+      ...Object.values(this.details),
       this.roues, this.feuxAr, this.feuxAv, this.retros, this.ombres,
     ];
     for (const mesh of tousLesMeshes) mesh.instanceMatrix.needsUpdate = true;

@@ -5,7 +5,7 @@ import { couleurMur, couleurToit } from './bdtopo.js';
 import { ecarterDeChaussee } from './osm.js';
 import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce, texturerGalets, texturerFeuilles,
   texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage, texturerDamierPlace,
-  texturerNormalesEau, bruit,
+  texturerNormalesEau, bruit, matiere, textureFichier, texturerMacroHerbe,
   relief as carteRelief, anisotropie } from './textures.js';
 import { TAILLE as TERRAIN_TAILLE, RESOLUTION as TERRAIN_RES } from './terrain.js';
 
@@ -310,9 +310,16 @@ function construireTrottoirs(data, relief, group) {
     g.setAttribute('color', new THREE.Float32BufferAttribute(platCol, 3));
     g.computeVertexNormals();
     g.computeBoundingSphere();
+    // Béton balayé photographique (ambientCG Concrete034) : le maillage n'a
+    // pas d'UV, le pont Three→Babylon en projette depuis le dessus, avec une
+    // tuile de 1,6 m (voir `uvPlanaires`). C'est ce qui sépare enfin le
+    // trottoir de la chaussée, les deux étant auparavant du même gris.
+    const beton = matiere('beton', 1);
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0x8f8d85, vertexColors: true, roughness: 0.96, side: THREE.DoubleSide,
+      color: 0xc8c4b8, vertexColors: true, roughness: 0.96, side: THREE.DoubleSide,
+      map: beton.map, normalMap: beton.normalMap, normalScale: new THREE.Vector2(0.5, 0.5),
     }));
+    m.userData.uvPlanaires = 1.6;
     m.name = 'trottoirs';
     m.receiveShadow = true;
     group.add(m);
@@ -564,10 +571,20 @@ function grassTexture() {
 export function buildWorld(scene, data) {
   const group = new THREE.Group();
   const collisionTris = []; // triangles envoyés au moteur physique
-  const asphalt = texturerEnrobe(512);
+  // Enrobé photographique (ambientCG Asphalt012, CC0) : couleur, normales et
+  // rugosité. Les UV des rubans sont en mètres divisés par 4 : une
+  // répétition de 1,15 donne une tuile de 3,5 m, l'échelle d'un gravillon
+  // d'enrobé vu depuis la voiture. Le grain de canvas d'avant
+  // (`texturerEnrobe`) ne portait aucun relief : la chaussée, surface la plus
+  // regardée du jeu, restait un aplat gris à contre-jour.
+  const enrobe = matiere('enrobe', 1.15);
+  const asphalt = enrobe.map;
+  const asphaltNormales = enrobe.normalMap;
   // Rugosité variable de la chaussée, partagée par tous les maillages
   // d'enrobé : une seule texture en mémoire.
-  const asphaltRug = texturerRugositeEnrobe(256);
+  const asphaltRug = textureFichier('/textures/sols/enrobe_rugosite.jpg', { repeat: 1.15, couleur: false });
+  void texturerEnrobe;
+  void texturerRugositeEnrobe;
   // Usure de la peinture routière, partagée par le marquage et les places.
   const usureMarquage = texturerUsureMarquage(128);
   usureMarquage.repeat.set(1, 1);
@@ -591,14 +608,22 @@ export function buildWorld(scene, data) {
   // grossier que le heightfield rebomberait entre deux nœuds terrassés et
   // ramènerait l'herbe par-dessus la chaussée que le terrassement venait de
   // dégager.
+  // Herbe photographique (ambientCG Grass004, CC0) : le plan couvre 3 600 m
+  // pour des UV de 0 à 1, une répétition de 1 440 donne une tuile de 2,5 m.
+  // La répétition d'une si petite tuile se verrait de loin : une lightmap
+  // multiplicative (`texturerMacroHerbe`, tuile de 60 m) pose par-dessus
+  // des plaques jaunies et des creux sombres qui cassent le motif.
+  const herbe = matiere('herbe', 1440);
+  const macroHerbe = texturerMacroHerbe(256);
+  macroHerbe.repeat.set(60, 60);
+  void grassTexture;
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(TERRAIN_TAILLE, TERRAIN_TAILLE, TERRAIN_RES, TERRAIN_RES),
     new THREE.MeshStandardMaterial({
-      map: grassTexture(), color: 0xb8cf94, roughness: 1,
-      // Micro-relief du couvert herbeux, presque invisible de face mais qui
-      // supprime l'aspect « nappe » du sol au soleil rasant.
-      bumpMap: (() => { const t = grassTexture(); t.colorSpace = THREE.NoColorSpace; return t; })(),
-      bumpScale: 0.3,
+      map: herbe.map, normalMap: herbe.normalMap, normalScale: new THREE.Vector2(0.7, 0.7),
+      lightMap: macroHerbe,
+      // Teinte légèrement chaude : la prairie béarnaise de fin d'été a jauni.
+      color: 0xd8d4b4, roughness: 1,
       side: THREE.DoubleSide,
     }),
   );
@@ -635,14 +660,19 @@ export function buildWorld(scene, data) {
   group.add(ground);
 
   // ---- Zones (forêts, champs, parcs) ------------------------------------
+  // Teintes appliquées PAR-DESSUS la photo d'herbe (multiplicateur) : elles
+  // restent proches du blanc et ne portent que la nuance d'usage, sous-bois
+  // plus sombre et froid, champ fauché plus jaune, pelouse de stade plus vive.
+  // Les anciens verts pleins (0x5f8e43…) multipliaient la photo et la
+  // rendaient noire.
   const zoneColors = {
-    forest: 0x35572d, grass: 0x5f8e43, meadow: 0x6f984b, farmland: 0x8f9250,
+    forest: 0x9cb08c, grass: 0xe8ecd8, meadow: 0xeee8c4, farmland: 0xe6d8a4,
     // Les parcelles résidentielles d'Artix sont majoritairement des jardins,
     // pas des dalles minérales. Le gris précédent produisait les grands aplats
     // blancs visibles entre toutes les maisons.
-    residential: 0x5c8248, industrial: 0x6d6c66, cemetery: 0x507848,
-    vineyard: 0x7d8a45, orchard: 0x6b8a45,
-    park: 0x548a40, pitch: 0x417c38, garden: 0x5d9145, sports_centre: 0x4f863e,
+    residential: 0xe0e8d0, industrial: 0x6d6c66, cemetery: 0xd4dcc4,
+    vineyard: 0xdcd8ac, orchard: 0xd8e4bc,
+    park: 0xe0f0cc, pitch: 0xc8f0b8, garden: 0xe4ecd4, sports_centre: 0xd4e8c4,
   };
   // Les zones se posent juste au-dessus du sol, bien sous la chaussée : ce sont
   // des couvertures de terrain, elles ne doivent jamais mordre sur la voie.
@@ -699,6 +729,7 @@ export function buildWorld(scene, data) {
   })();
   const VEGETAL = new Set(['forest', 'grass', 'meadow', 'farmland', 'residential',
     'cemetery', 'vineyard', 'orchard', 'park', 'pitch', 'garden', 'sports_centre']);
+  const herbeZones = matiere('herbe', 34 / 2.5);
   for (const [kind, pos] of Object.entries(zonePos)) {
     if (!pos.length) continue;
     const g = new THREE.BufferGeometry();
@@ -707,9 +738,16 @@ export function buildWorld(scene, data) {
       g.setAttribute('uv', new THREE.Float32BufferAttribute(zoneUv[kind], 2));
     }
     g.computeVertexNormals();
+    // Zones végétales : même photo d'herbe que le sol (UV en mètres divisés
+    // par 34, donc répétition 13,6 pour la tuile de 2,5 m), la texture de
+    // variation servant de lightmap multiplicative sur sa tuile de 34 m.
+    const vegetal = VEGETAL.has(kind);
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: zoneColors[kind] ?? 0x6f8f4a, roughness: 1, side: THREE.DoubleSide,
-      map: VEGETAL.has(kind) ? texVegetation : null,
+      color: zoneColors[kind] ?? 0xe4ead0, roughness: 1, side: THREE.DoubleSide,
+      map: vegetal ? herbeZones.map : null,
+      normalMap: vegetal ? herbeZones.normalMap : null,
+      normalScale: new THREE.Vector2(0.7, 0.7),
+      lightMap: vegetal ? texVegetation : null,
       polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 8,
     }));
     m.receiveShadow = true;
@@ -1096,8 +1134,9 @@ export function buildWorld(scene, data) {
       map: asphalt, roughnessMap: asphaltRug, roughness: 1, vertexColors: true,
       // Relief du gravillon : c'est lui qui fait accrocher la lumière rasante
       // sur la chaussee vue en fuyante, la surface la plus regardee du jeu.
-      bumpMap: carteRelief(asphalt), bumpScale: 0.22,
-      color: 0xaaa8a4, side: THREE.DoubleSide,
+      normalMap: asphaltNormales, normalScale: new THREE.Vector2(0.85, 0.85),
+      // La photo porte déjà sa clarté : plus de teinte d'assombrissement.
+      color: 0xffffff, side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
     }));
   roadMesh.geometry.setAttribute('color', new THREE.Float32BufferAttribute(roadCol, 3));
@@ -1108,16 +1147,13 @@ export function buildWorld(scene, data) {
   // plus chaude. Rugosité plus forte que l'enrobé : un pavage ne luit pas.
   let paveMesh = null;
   if (pavePos.length) {
-    const pave = texturerPave(256);
-    const paveRelief = texturerPave(256);
-    paveRelief.colorSpace = THREE.NoColorSpace;
-    // Un pavé fait environ 20 cm : la texture porte 6 pavés en largeur, donc
-    // un motif de 1,2 m. Les UV sont en mètres divisés par 4 dans `ribbon`,
-    // d'où cette répétition.
-    pave.repeat.set(3.4, 3.4);
+    // Pavés photographiques (ambientCG PavingStones067) : la tuile couvre
+    // environ 2 m de pavage, les UV sont en mètres divisés par 4 dans
+    // `ribbon`, d'où la répétition de 2.
+    const paves = matiere('paves', 2);
     const paveMat = new THREE.MeshStandardMaterial({
-        map: pave, bumpMap: paveRelief, bumpScale: 0.16,
-        roughness: 0.97, color: 0xa69a8f, side: THREE.DoubleSide,
+        map: paves.map, normalMap: paves.normalMap, normalScale: new THREE.Vector2(0.8, 0.8),
+        roughness: 0.97, color: 0xe8e2d8, side: THREE.DoubleSide,
         polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
       });
     paveMat.name = 'paves-centre-artix';
@@ -1516,7 +1552,8 @@ export function buildWorld(scene, data) {
         // Un peu plus clair que la chaussée : l'enrobé d'un parking est moins
         // circulé, donc moins noirci par la gomme et les hydrocarbures.
         map: asphalt, roughnessMap: asphaltRug, roughness: 1,
-        color: 0x696a6c, side: THREE.DoubleSide,
+        normalMap: asphaltNormales, normalScale: new THREE.Vector2(0.7, 0.7),
+        color: 0xd0d0d0, side: THREE.DoubleSide,
         polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
       }));
     parkMesh.renderOrder = 1;
@@ -1540,11 +1577,12 @@ export function buildWorld(scene, data) {
     // Rosace centrale de la place : cercle pavé mesuré sur l'orthophoto
     // (centre (-1, -4), une dizaine de mètres), posé juste au-dessus de la
     // dalle du damier.
-    const rosaceTex = texturerPave(256);
-    rosaceTex.repeat.set(8.3, 8.3);
+    // Disque de 10 m pour des UV de 0 à 1 : cinq tuiles de pavés de 2 m.
+    const rosaceMat = matiere('paves', 5);
     const rosace = new THREE.Mesh(new THREE.CircleGeometry(5, 36),
       new THREE.MeshStandardMaterial({
-        map: rosaceTex, roughness: 0.97, color: 0xa69a8f, side: THREE.DoubleSide,
+        map: rosaceMat.map, normalMap: rosaceMat.normalMap,
+        roughness: 0.97, color: 0xe8e2d8, side: THREE.DoubleSide,
         polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
       }));
     rosace.rotation.x = -Math.PI / 2;
@@ -1557,12 +1595,13 @@ export function buildWorld(scene, data) {
   if (stabPos.length) {
     // Grave compactée claire : teinte relevée sur les panoramiques, grain
     // d'enduit resserré pour le granulat.
-    const grave = texturerEnduit(256);
-    grave.repeat.set(2.5, 2.5);
+    // Grave photographique (ambientCG Ground037) : tuile de 2,5 m sur des UV
+    // en mètres divisés par 4.
+    const grave = matiere('stabilise', 1.6);
     const stabMesh = meshFromArrays(stabPos, stabUv, stabNrm,
       new THREE.MeshStandardMaterial({
-        map: grave, bumpMap: carteRelief(grave), bumpScale: 0.3,
-        color: 0xb3a790, roughness: 1, side: THREE.DoubleSide,
+        map: grave.map, normalMap: grave.normalMap, normalScale: new THREE.Vector2(0.6, 0.6),
+        color: 0xe4dcc8, roughness: 1, side: THREE.DoubleSide,
         polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
       }));
     stabMesh.renderOrder = 1;
@@ -3602,12 +3641,14 @@ function plantTrees(data, relief = null) {
   })();
   // Couleur blanche : la teinte vient de la couleur d'instance de chaque
   // arbre, que le matériau multiplie. Un brun ici les assombrirait toutes.
-  const ecorce = texturerEcorce();
-  // Répétition serrée autour du tronc, lâche en hauteur : c'est ce qui garde
-  // les cannelures verticales. Répéter en Y les recouperait en tronçons.
-  ecorce.repeat.set(3, 1);
+  // Écorce photographique (ambientCG Bark012) : le fût unitaire fait un tour
+  // en U et toute sa hauteur en V, soit environ 2 m sur 5 m une fois
+  // instancié ; deux tuiles autour, quatre en hauteur.
+  const ecorce = matiere('ecorce', [2, 4]);
+  void texturerEcorce;
   const trunkMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff, map: ecorce, bumpMap: carteRelief(ecorce), bumpScale: 0.6, roughness: 1,
+    color: 0xffffff, map: ecorce.map, normalMap: ecorce.normalMap,
+    normalScale: new THREE.Vector2(0.8, 0.8), roughness: 1,
   });
   // Feuillage découpé par test alpha : la texture d'amas de feuilles dentelle
   // la silhouette des lobes et rend le houppier poreux, le ciel passant par
@@ -3616,7 +3657,10 @@ function plantTrees(data, relief = null) {
   const feuilles = texturerFeuilles(256);
   feuilles.repeat.set(2, 2);
   const leafMat = new THREE.MeshStandardMaterial({
-    color: 0x3f6b30, roughness: 1, flatShading: true,
+    // Teinte relevée avec le ciel HDR : sous l'ancien éclairage plat, un
+    // vert sombre passait ; sous un vrai soleil et ses ombres, les couronnes
+    // ressortaient en masses noires. Albédo visé d'un feuillage : 0,1 linéaire.
+    color: 0x78a864, roughness: 1, flatShading: true,
     map: feuilles, alphaTest: 0.5, side: THREE.DoubleSide,
   });
 
@@ -3700,9 +3744,12 @@ function plantTrees(data, relief = null) {
     // Mesuré sur capture : le platane clair ressortait à 0,67 de la clarté
     // d'une façade en enduit blanc, là où une écorce (réflectance 0,15 contre
     // 0,75 pour l'enduit) doit tomber vers 0,25. Ramené en conséquence.
+    // Avec la photo d'écorce (clarté moyenne 0,5 déjà portée par la
+    // texture), la couleur d'instance n'est plus qu'une nuance : gris
+    // clair du platane, brun du feuillu.
     const e = hash(i * 8.3);
-    if (e > 0.62) col.setHSL(0.11, 0.05 + e * 0.04, 0.13 + e * 0.04);
-    else col.setHSL(0.08, 0.18 + e * 0.10, 0.09 + e * 0.05);
+    if (e > 0.62) col.setHSL(0.11, 0.06 + e * 0.04, 0.62 + e * 0.10);
+    else col.setHSL(0.07, 0.22 + e * 0.10, 0.42 + e * 0.10);
     trunks.setColorAt(i, col);
     branches.setColorAt(i, col);
     const r = h * (aligne ? 0.42 : saule ? 0.52 : peuplier ? 0.14 : 0.34);
@@ -3738,16 +3785,16 @@ function plantTrees(data, relief = null) {
       col.setHSL(0.23, 0.14 + t * 0.08, 0.46 + t * 0.10);
     } else if (peuplier) {
       // Vert profond et mat du peuplier noir.
-      col.setHSL(0.27, 0.30 + t * 0.10, 0.26 + t * 0.07);
+      col.setHSL(0.27, 0.30 + t * 0.10, 0.36 + t * 0.08);
     } else if (t > 0.82) {
       // Conifère bleuté : le cèdre du carrefour est un repère du bourg.
       col.setHSL(0.34, 0.14 + t * 0.08, 0.44 + t * 0.10);
     } else if (t > 0.55) {
       // Feuillu clair, feuillage d'alignement.
-      col.setHSL(0.24 + t * 0.03, 0.32 + t * 0.10, 0.34 + t * 0.08);
+      col.setHSL(0.24 + t * 0.03, 0.32 + t * 0.10, 0.44 + t * 0.08);
     } else {
       // Feuillu dense, vert soutenu.
-      col.setHSL(0.26 + t * 0.04, 0.36 + t * 0.14, 0.25 + t * 0.09);
+      col.setHSL(0.26 + t * 0.04, 0.36 + t * 0.14, 0.36 + t * 0.09);
     }
     leaves.setColorAt(i, col);
   });

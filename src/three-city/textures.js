@@ -591,3 +591,70 @@ export function relief(tex) {
   r.needsUpdate = true;
   return r;
 }
+
+// ---- Matières photographiques ---------------------------------------------
+// Les grandes surfaces vues de près en conduite (enrobé, herbe, béton de
+// trottoir, pavés, grave) passent par de vraies photos de matière répétables
+// (ambientCG, licence CC0), avec leur carte de normales : c'est le relief de
+// la normale qui accroche la lumière rasante, ce qu'un grain de canvas ne
+// pouvait pas rendre. Les fichiers sont dans public/textures/sols/ et
+// préparés par scripts/preparer-textures.mjs.
+//
+// L'image n'est PAS attendue ici : le pont Three→Babylon ne lit que `src`
+// et laisse Babylon charger le fichier lui-même.
+export function textureFichier(url, { repeat = 1, couleur = true, flipY = true } = {}) {
+  const img = new Image();
+  img.src = url;
+  const t = new THREE.Texture(img);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  if (Array.isArray(repeat)) t.repeat.set(repeat[0], repeat[1]);
+  else t.repeat.set(repeat, repeat);
+  t.colorSpace = couleur ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.flipY = flipY;
+  t.anisotropy = anisotropie();
+  return t;
+}
+
+// Couleur + normales d'une matière de public/textures/sols/. `repeat` est
+// commun aux deux cartes : elles décrivent la même surface.
+export function matiere(nom, repeat = 1) {
+  return {
+    map: textureFichier(`/textures/sols/${nom}_couleur.jpg`, { repeat }),
+    normalMap: textureFichier(`/textures/sols/${nom}_normales.jpg`, { repeat, couleur: false }),
+  };
+}
+
+// Variation à grande échelle de l'herbe : multiplicateur proche du blanc,
+// avec des plaques chaudes (herbe jaunie d'été) et des creux un peu plus
+// sombres (humidité, piétinement). Appliquée en lightmap multiplicative sur
+// une tuile de plusieurs dizaines de mètres, elle casse la répétition de la
+// photo d'herbe, dont la tuile fait 2,5 m, sans en changer la teinte moyenne.
+export function texturerMacroHerbe(taille = 256) {
+  const c = canvas(taille);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(taille, taille);
+  const d = img.data;
+  const plaques = bruit(taille, taille, 6, 59);
+  const lent = bruit(taille, taille, 3, 89);
+  const fin = bruit(taille, taille, 22, 37);
+  for (let y = 0; y < taille; y++) {
+    for (let x = 0; x < taille; x++) {
+      const i = (y * taille + x) * 4;
+      const v = (plaques(x, y) - 0.5) * 0.36 + (lent(x, y) - 0.5) * 0.26 + (fin(x, y) - 0.5) * 0.10;
+      // Clarté moyenne 0,9 : les plaques claires montent au blanc, les creux
+      // descendent vers 0,7. Les zones claires tirent vers le jaune paille.
+      const clair = Math.max(0, Math.min(1, 0.9 + v));
+      const sec = Math.max(0, (clair - 0.9) / 0.12);
+      d[i] = Math.round(255 * Math.min(1, clair * (1 + sec * 0.06)));
+      d[i + 1] = Math.round(255 * clair);
+      d[i + 2] = Math.round(255 * Math.min(1, clair * (1 - sec * 0.18)));
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = anisotropie();
+  return t;
+}

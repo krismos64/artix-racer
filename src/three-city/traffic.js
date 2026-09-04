@@ -57,7 +57,10 @@ function reseauRoutier(data) {
 }
 
 export class Circulation {
-  constructor(data, relief, roadY, effectif = 12) {
+  // `flotte` : modèles low-poly de flotte.js ; sans elle, silhouettes en
+  // boîte de parkedcars.js.
+  constructor(data, relief, roadY, effectif = 12, flotte = null) {
+    this.flotte = flotte;
     this.relief = relief;
     this.roadY = roadY;
     this.noeuds = reseauRoutier(data);
@@ -88,8 +91,23 @@ export class Circulation {
     });
     const plaqueMat = new THREE.MeshStandardMaterial({ color: 0xdfe3e6, roughness: 0.35 });
     this.caisses = {};
+    this.details = {};
     const idxDepart = {};
+    // Même montage que le parc garé : carrosserie vernie teintée par
+    // instance, détails (vitres, roues, feux) à la palette du kit.
+    const peintureMat = new THREE.MeshPhysicalMaterial({
+      roughness: 0.38, metalness: 0.12, clearcoat: 1, clearcoatRoughness: 0.08,
+    });
+    const detailsMat = flotte
+      ? new THREE.MeshStandardMaterial({ map: flotte.palette, roughness: 0.55, metalness: 0.05 })
+      : null;
     for (const [nom, n] of Object.entries(parType)) {
+      const modele = flotte?.[nom];
+      if (modele) {
+        this.caisses[nom] = new THREE.InstancedMesh(modele.peinture, peintureMat, n);
+        this.details[nom] = new THREE.InstancedMesh(modele.details, detailsMat, n);
+        continue;
+      }
       this.caisses[nom] = new THREE.InstancedMesh(
         construireGeometrie(GABARITS[nom]), [caisseMat, vitreMat, plaqueMat], n);
     }
@@ -133,7 +151,10 @@ export class Circulation {
     this._ech = new THREE.Vector3(1, 1, 1);
     this._pos = new THREE.Vector3();
     this._tmp = new THREE.Vector3();
-    this._tous = [...Object.values(this.caisses), this.roues, this.feuxAr, this.feuxAv];
+    this._zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    this._echRoue = new THREE.Vector3(1, 1, 1);
+    this._tous = [...Object.values(this.caisses), ...Object.values(this.details),
+      this.roues, this.feuxAr, this.feuxAv];
     for (const m of this._tous) {
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       m.frustumCulled = false;
@@ -190,6 +211,14 @@ export class Circulation {
         const venantDe = a.noeud;
         a.noeud = a.cible;
         const arete = this.choisirVoisin(a.noeud, venantDe);
+        // Cul-de-sac en sens unique : le nœud atteint n'a aucune arête
+        // sortante. Le véhicule fait demi-tour vers son nœud d'origine ;
+        // sans ce garde-fou, l'exception tuait la boucle de rendu entière.
+        if (!arete) {
+          a.cible = venantDe;
+          a.avance = 0;
+          continue;
+        }
         a.cible = arete.vers;
         a.kind = arete.kind;
         a.largeur = arete.largeur;
@@ -210,6 +239,26 @@ export class Circulation {
       pos.set(px, sol, pz);
       m.compose(pos, q, this._ech);
       this.caisses[a.type].setMatrixAt(a.indexType, m);
+      if (this.details[a.type]) {
+        // Modèle complet : roues et feux sont dans le maillage de détails,
+        // les annexes de la silhouette en boîte restent masquées.
+        this.details[a.type].setMatrixAt(a.indexType, m);
+        const modele = this.flotte[a.type];
+        const rayon = modele.rayonRoue / 0.31;
+        this._echRoue.set(rayon, 1, rayon);
+        qr.setFromEuler(new THREE.Euler(0, a.capLisse, Math.PI / 2, 'YXZ'));
+        modele.roues.forEach((r, n2) => {
+          tmp.set(r.x, r.y, r.z).applyQuaternion(q);
+          m.compose(tmp.add(pos), qr, this._echRoue);
+          this.roues.setMatrixAt(i * 4 + n2, m);
+        });
+        for (let n2 = modele.roues.length; n2 < 4; n2++) this.roues.setMatrixAt(i * 4 + n2, this._zero);
+        for (let f = 0; f < 2; f++) {
+          this.feuxAr.setMatrixAt(i * 2 + f, this._zero);
+          this.feuxAv.setMatrixAt(i * 2 + f, this._zero);
+        }
+        continue;
+      }
 
       const gab = GABARITS[a.type];
       qr.setFromEuler(new THREE.Euler(0, a.capLisse, Math.PI / 2, 'YXZ'));

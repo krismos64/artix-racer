@@ -69,3 +69,17 @@ enregistrement.
 - **Three.js**, licence MIT, © Three.js authors
 - **Rapier**, licence Apache 2.0, © Dimforge
 - **Vite**, licence MIT, © Evan You et les contributeurs Vite
+
+## Ressources visuelles CC0 (chantier de septembre 2026)
+
+**Poly Haven** : `public/textures/ciel/jour.hdr` (kloofendal_48d_partly_cloudy_puresky),
+`soir.hdr` (qwantani_sunset_puresky), `nuit.hdr` (kloppenheim_02_puresky).
+Panoramas HDR sous licence CC0 1.0, réduits en 2k et plafonnés en luminance par
+`scripts/ciel-soleil.mjs`. https://polyhaven.com/hdris
+
+**ambientCG** : `public/textures/sols/*` (Asphalt012, Grass004, Concrete034,
+PavingStones067, Ground037, Bark012). Photos de matière sous licence CC0 1.0,
+converties en JPG 1K par `scripts/preparer-textures.mjs`. https://ambientcg.com
+
+**Kenney Car Kit** : `public/models/flotte/*.glb` et `Textures/colormap.png`.
+Modèles low-poly sous licence CC0 1.0. https://kenney.nl/assets/car-kit

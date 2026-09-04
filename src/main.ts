@@ -12,8 +12,11 @@ import {
   MeshBuilder,
   PBRMaterial,
   PointLight,
-  ReflectionProbe,
-  RenderTargetTexture,
+  HDRCubeTexture,
+  Matrix,
+  MotionBlurPostProcess,
+  ColorCurves,
+  Texture,
   Scene,
   ShadowGenerator,
   SSAO2RenderingPipeline,
@@ -22,7 +25,6 @@ import {
   Vector3,
   VertexData,
 } from '@babylonjs/core';
-import { SkyMaterial } from '@babylonjs/materials';
 import './style.css';
 import { ArcadeAudio } from './audio';
 import { ArcadeCar, KeyboardInput } from './car';
@@ -80,40 +82,81 @@ async function loadJson<T>(name: string, required = false): Promise<T | null> {
   }
 }
 
-// Direction du soleil, partagée entre la lumière directionnelle, le ciel
-// analytique et la sonde d'environnement : les trois doivent raconter la même
-// heure, sans quoi les ombres contredisent le ciel.
-const SUN_DIRECTION = new Vector3(-.52, -.83, .34).normalize();
+// ---- Ciel HDRI et soleil ---------------------------------------------------
+// Panoramas Poly Haven (CC0) préparés par scripts/ciel-soleil.mjs, qui
+// plafonne le disque solaire (sinon il entre dans l'éclairage d'ambiance et
+// éclaire tout sans ombre, en doublant la lumière directionnelle) et mesure
+// sa position dans l'image. Le même panorama sert de fond (skybox) et
+// d'éclairage d'ambiance précalculé (IBL) : les nuages visibles sont ceux
+// qui se reflètent sur la carrosserie, et la lumière directionnelle est
+// posée exactement sous le soleil du panorama. L'ancien ciel analytique de
+// Preetham donnait un dégradé sans nuage, gris-beige sous ACES, et la sonde
+// d'environnement rendue depuis lui des reflets sans intérêt.
+interface CielHdr {
+  fichier: string;          // public/textures/ciel/<fichier>.hdr
+  taille: number;           // résolution du cube, par face
+  azimutImageDeg: number;   // colonne du soleil dans le panorama (0 à 360)
+  elevationDeg: number;     // hauteur du soleil dans le panorama
+}
+const CIELS: Record<string, CielHdr> = {
+  jour: { fichier: 'jour', taille: 1024, azimutImageDeg: 215.7, elevationDeg: 48.9 },
+  soir: { fichier: 'soir', taille: 512, azimutImageDeg: 215.9, elevationDeg: 6.2 },
+  nuit: { fichier: 'nuit', taille: 512, azimutImageDeg: 215.6, elevationDeg: 17.1 },
+};
+// Sens de rotation du panorama, MESURÉ en jeu (balayage du ciel à la
+// recherche du disque solaire, matrice identité puis rotation de 1 rad) :
+// une rotation de +1 rad déplace le soleil de +57° dans le sens +X vers +Z.
+const SENS_ROTATION_CIEL = 1;
 
-function createSky(scene: Scene): { sky: Mesh; skyMaterial: SkyMaterial } {
-  // Ciel analytique officiel (modèle de Preetham) plutôt qu'un gradient peint :
-  // la diffusion atmosphérique donne le voile de l'horizon, le bleu profond du
-  // zénith et le halo solaire au bon endroit, celui de la lumière qui projette
-  // les ombres. L'ancien shader avait un soleil peint en dur, déconnecté de la
-  // DirectionalLight.
-  const sky = MeshBuilder.CreateBox('sky', { size: 4200 }, scene);
-  const material = new SkyMaterial('sky-analytique', scene);
+// Position (unitaire) d'un astre depuis son azimut boussole (0 = nord,
+// 90 = est) et son élévation. Repère du jeu : +X est, +Z sud, Y haut.
+function positionAstre(azimutDeg: number, elevationDeg: number): Vector3 {
+  const a = azimutDeg * Math.PI / 180, e = elevationDeg * Math.PI / 180;
+  return new Vector3(Math.sin(a) * Math.cos(e), Math.sin(e), -Math.cos(a) * Math.cos(e));
+}
+
+// Rotation (autour de Y) qui amène le soleil du panorama à l'azimut voulu.
+// Babylon projette la colonne u du panorama sur l'angle (u - 0,75) × 2π
+// mesuré de +X vers +Z : MESURÉ en jeu (le soleil du ciel de jour, colonne
+// 0,599, apparaît à -54° sans rotation), et non les (u - 0,5) × 2π supposés
+// d'abord, qui décalaient le soleil de 90° par rapport aux ombres.
+function rotationCiel(ciel: CielHdr, azimutDeg: number): number {
+  const p = positionAstre(azimutDeg, 0);
+  const cible = Math.atan2(p.z, p.x);
+  const image = (ciel.azimutImageDeg / 360 - .75) * Math.PI * 2;
+  return SENS_ROTATION_CIEL * (cible - image);
+}
+
+function chargerCiel(scene: Scene, ciel: CielHdr): Promise<HDRCubeTexture> {
+  return new Promise((resolve, reject) => {
+    const texture = new HDRCubeTexture(
+      `/textures/ciel/${ciel.fichier}.hdr`, scene, ciel.taille,
+      false, true, false, true,
+      () => resolve(texture),
+      (message) => reject(new Error(message ?? `Ciel ${ciel.fichier} illisible`)),
+    );
+  });
+}
+
+// Sphère de ciel : PBR sans éclairage, qui affiche le panorama tel quel puis
+// passe par le même tone mapping que la scène, pour rester cohérent avec
+// l'éclairage qu'il produit. Rayon 1 450 m : au-delà du fond de Pyrénées
+// (1 380 m) et en deçà du plan lointain de la caméra (1 600 m). Une SPHÈRE
+// et non une boîte : les coins d'une boîte de même taille (2 500 m) passaient
+// derrière le plan lointain et le ciel s'y découpait en un grand trapèze de
+// couleur de fond.
+function createSkybox(scene: Scene): { mesh: Mesh; material: PBRMaterial } {
+  const mesh = MeshBuilder.CreateSphere('ciel', { diameter: 2900, segments: 24 }, scene);
+  const material = new PBRMaterial('ciel-materiau', scene);
   material.backFaceCulling = false;
-  material.disableDepthWrite = true;
-  material.useSunPosition = true;
-  material.sunPosition = SUN_DIRECTION.scale(-1000);
-  // Voile léger d'une journée d'été béarnaise : l'air n'y est jamais aussi sec
-  // qu'en montagne, l'horizon blanchit sensiblement. La luminance reste à sa
-  // valeur par défaut : en dessous de 1, le modèle de Preetham vire au
-  // vert-jaune sous le tone mapping ACES.
-  // Réglages calés en direct dans le navigateur : au-delà de 3 de turbidité,
-  // le voile vire au vert moutarde sous ACES ; en dessous de 2, le ciel
-  // devient gris de plomb.
-  material.turbidity = 2.6;
-  material.rayleigh = 1.4;
-  material.mieCoefficient = .004;
-  material.mieDirectionalG = .8;
-  material.luminance = 1;
-  sky.material = material;
-  sky.infiniteDistance = true;
-  sky.isPickable = false;
-  sky.applyFog = false;
-  return { sky, skyMaterial: material };
+  material.disableLighting = true;
+  material.twoSidedLighting = true;
+  material.microSurface = 1;
+  mesh.material = material;
+  mesh.infiniteDistance = true;
+  mesh.isPickable = false;
+  mesh.applyFog = false;
+  return { mesh, material };
 }
 
 function createBackdrop(scene: Scene): Mesh[] {
@@ -146,54 +189,11 @@ function createBackdrop(scene: Scene): Mesh[] {
   // entièrement un fond situé à 1 380 m : les Pyrénées existaient dans la
   // scène depuis le début mais ne se voyaient jamais.
   mountains.applyFog = false;
-
-  const cloudMaterial = new PBRMaterial('cloud-material', scene);
-  cloudMaterial.albedoColor = Color3.FromHexString('#f0eee6');
-  cloudMaterial.emissiveColor = Color3.FromHexString('#343a3b');
-  cloudMaterial.metallic = 0;
-  cloudMaterial.roughness = 1;
-  cloudMaterial.freeze();
-  const clouds = [
-    [-520, 245, 540, 1.2], [380, 285, 760, .95], [820, 220, 350, 1.1], [-960, 310, 920, .82],
-  ];
-  clouds.forEach(([x, y, z, scale], index) => {
-    for (let lobe = 0; lobe < 3; lobe++) {
-      const cloud = MeshBuilder.CreateSphere(`cloud-${index}-${lobe}`, { diameter: 55 + lobe * 13, segments: 8 }, scene);
-      cloud.position.set(x + lobe * 38, y + (lobe === 1 ? 14 : 0), z);
-      cloud.scaling.set(1.8 * scale, .38 * scale, .72 * scale);
-      cloud.material = cloudMaterial;
-      cloud.isPickable = false;
-      cloud.infiniteDistance = true;
-      cloud.applyFog = false;
-    }
-  });
+  // Les nuages sculptés en sphères ont disparu : ceux du panorama HDR les
+  // remplacent, avec leur vraie lumière.
   return [mountains];
 }
 
-function createEnvironment(scene: Scene, probeMeshes: Mesh[]): ReflectionProbe {
-  // L'éclairage d'ambiance PBR (IBL) est rendu depuis le vrai ciel plutôt que
-  // depuis trois gradients de 32 pixels : carrosseries, vitrages et toitures
-  // reflètent ainsi exactement le ciel affiché, avec le sol de prairie en
-  // contre-jour. Rendu une seule fois au démarrage, le soleil étant fixe.
-  //
-  // Contrainte GPU : les maillages rendus DANS la sonde ne doivent jamais
-  // échantillonner l'environnement qu'elle est en train d'écrire, sous peine
-  // de boucle de rétroaction (GL_INVALID_OPERATION). La sonde ne voit donc que
-  // le ciel analytique, dont la moitié basse (sous l'horizon) fournit la
-  // composante sombre du sol. Un disque de sol dédié a été essayé puis retiré :
-  // rendu dans la vue principale, il recouvrait le ciel selon l'angle de
-  // caméra, pour un gain d'IBL imperceptible.
-  const probe = new ReflectionProbe('environnement', 128, scene, true);
-  probe.position.set(0, 14, 0);
-  for (const mesh of probeMeshes) {
-    if (mesh.material && mesh.material instanceof PBRMaterial) continue;
-    probe.renderList!.push(mesh);
-  }
-  probe.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
-  scene.environmentTexture = probe.cubeTexture;
-  scene.environmentIntensity = .85;
-  return probe;
-}
 
 async function start(): Promise<void> {
   await progress(4, 'Initialisation de Babylon.js…');
@@ -223,46 +223,64 @@ async function start(): Promise<void> {
   scene.imageProcessingConfiguration.exposure = .94;
   scene.imageProcessingConfiguration.contrast = 1.18;
 
-  const { sky, skyMaterial } = createSky(scene);
-  const backdrop = createBackdrop(scene);
-  const probe = createEnvironment(scene, [sky, ...backdrop]);
+  createBackdrop(scene);
+  const skybox = createSkybox(scene);
+  // Textures de ciel chargées à la demande et gardées : le premier passage
+  // dans une ambiance coûte le chargement et le préfiltrage (une seconde),
+  // les suivants sont immédiats.
+  const cielsCharges = new Map<string, Promise<HDRCubeTexture>>();
+  const obtenirCiel = (nom: string): Promise<HDRCubeTexture> => {
+    let promesse = cielsCharges.get(nom);
+    if (!promesse) {
+      promesse = chargerCiel(scene, CIELS[nom]);
+      cielsCharges.set(nom, promesse);
+    }
+    return promesse;
+  };
+  let cielGeneration = 0;
 
+  // Ambiante hémisphérique très basse : c'est le panorama (IBL) qui porte la
+  // lumière du ciel, avec ses couleurs (bleu du zénith, sol en contre-jour).
+  // À 0,72 elle éclairait toutes les faces pareil et aplatissait la ville.
   const ambient = new HemisphericLight('ambient', new Vector3(.15, 1, .1), scene);
   ambient.diffuse = new Color3(.76, .84, .92);
   ambient.groundColor = new Color3(.28, .31, .25);
-  ambient.intensity = .72;
+  ambient.intensity = .25;
 
-  const sun = new DirectionalLight('sun', SUN_DIRECTION.clone(), scene);
-  sun.diffuse = new Color3(1, .92, .8);
-  sun.intensity = 1.28;
-  const shadow = new CascadedShadowGenerator(1536, sun);
-  shadow.numCascades = 2;
+  const sun = new DirectionalLight('sun', positionAstre(205, 49).scale(-1), scene);
+  sun.diffuse = new Color3(1, .95, .88);
+  sun.intensity = 2.0;
+  const shadow = new CascadedShadowGenerator(QUALITY[DEFAULT_QUALITY].shadowMap, sun);
+  shadow.numCascades = QUALITY[DEFAULT_QUALITY].cascades;
   shadow.lambda = .72;
   shadow.shadowMaxZ = 330;
   shadow.stabilizeCascades = true;
   shadow.filter = ShadowGenerator.FILTER_PCF;
-  shadow.filteringQuality = ShadowGenerator.QUALITY_LOW;
+  shadow.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
   shadow.bias = .0025;
   shadow.normalBias = .035;
-  shadow.setDarkness(.24);
+  shadow.setDarkness(.3);
 
   // ---- Ambiances d'éclairage (touche L) ----------------------------------
-  // Le ciel analytique, la lumière directionnelle, le brouillard et la sonde
-  // d'environnement dérivent tous de la même direction de soleil : changer
-  // d'heure revient à re-régler ce petit jeu de paramètres puis à re-rendre
-  // la sonde une fois. La fin de journée est l'ambiance la plus payante :
-  // le soleil rasant allonge les ombres des bâtiments dans les rues.
+  // Chaque ambiance a son panorama HDR : le fond, l'éclairage d'ambiance et
+  // la lumière directionnelle en dérivent ensemble. Changer d'heure revient
+  // à charger le ciel correspondant et à re-régler ce petit jeu de
+  // paramètres. La fin de journée est l'ambiance la plus payante : le soleil
+  // rasant allonge les ombres des bâtiments dans les rues.
   interface Ambiance {
     nom: string;
-    sunDir: Vector3;
+    ciel: keyof typeof CIELS;
+    azimut: number;        // azimut boussole du soleil (ou de la lune)
+    elevationMin: number;  // plancher pour la lumière : un soleil à 6° donne des ombres inexploitables
     sunDiffuse: Color3;
     sunIntensity: number;
+    envIntensity: number;  // poids de l'éclairage d'ambiance du panorama
+    cielNiveau: number;    // clarté du fond de ciel affiché
     ambientIntensity: number;
     ambientDiffuse: Color3;
     ambientGround: Color3;
     fog: Color3;
     clear: Color4;
-    turbidity: number;
     exposure: number;
     darkness: number;
     fenetres: number;      // intensité d'émission des vitrages
@@ -270,51 +288,62 @@ async function start(): Promise<void> {
   const AMBIANCES: Ambiance[] = [
     {
       nom: 'Midi',
-      sunDir: SUN_DIRECTION.clone(),
-      sunDiffuse: new Color3(1, .92, .8),
-      sunIntensity: 1.28,
-      ambientIntensity: .72,
+      ciel: 'jour',
+      // Début d'après-midi d'été : soleil haut au sud-sud-ouest.
+      azimut: 205,
+      elevationMin: 0,
+      sunDiffuse: new Color3(1, .95, .88),
+      sunIntensity: 2.0,
+      envIntensity: 1.5,
+      cielNiveau: 1,
+      ambientIntensity: .25,
       ambientDiffuse: new Color3(.76, .84, .92),
       ambientGround: new Color3(.28, .31, .25),
-      fog: new Color3(.64, .75, .83),
+      fog: new Color3(.70, .78, .86),
       clear: new Color4(.55, .70, .84, 1),
-      turbidity: 2.6,
-      exposure: .94,
-      darkness: .24,
+      exposure: 1,
+      darkness: .3,
       fenetres: 0,
     },
     {
       nom: 'Fin de journée',
-      // Soleil à une douzaine de degrés au-dessus de l'horizon, côté ouest.
-      sunDir: new Vector3(-.82, -.22, .52).normalize(),
-      sunDiffuse: new Color3(1, .68, .42),
-      sunIntensity: 1.35,
-      ambientIntensity: .42,
+      ciel: 'soir',
+      // Soleil couchant à l'ouest-sud-ouest ; le panorama le met à 6° au-dessus
+      // de l'horizon, la lumière est relevée à 9° pour garder des ombres nettes.
+      azimut: 255,
+      elevationMin: 9,
+      // Panorama pâle et très lumineux (moyenne 0,86, plus que le jour) :
+      // dosé bas et exposé sous le jour, sinon la fin de journée ressort
+      // plus blanche que midi. Le soleil porte l'orangé.
+      sunDiffuse: new Color3(1, .66, .40),
+      sunIntensity: 1.7,
+      envIntensity: .7,
+      cielNiveau: .8,
+      ambientIntensity: .15,
       ambientDiffuse: new Color3(.72, .62, .66),
       ambientGround: new Color3(.30, .25, .22),
-      fog: new Color3(.76, .62, .52),
+      fog: new Color3(.74, .60, .50),
       clear: new Color4(.72, .58, .48, 1),
-      // Le voile chaud du soir : la turbidité élevée qui verdit le plein midi
-      // donne ici l'orangé attendu, le soleil étant bas.
-      turbidity: 4.6,
-      exposure: .9,
-      darkness: .17,
+      exposure: .82,
+      darkness: .28,
       fenetres: .12,
     },
     {
       nom: 'Nuit',
-      // Clair de lune : mêmes ombres douces, lumière froide très faible. Le
-      // soleil du ciel analytique passe SOUS l'horizon, qui vire au bleu nuit.
-      sunDir: new Vector3(-.35, -.72, .42).normalize(),
-      sunDiffuse: new Color3(.5, .6, .82),
-      sunIntensity: .16,
-      ambientIntensity: .14,
+      ciel: 'nuit',
+      // Clair de lune : lune au sud-est, lumière froide très faible.
+      azimut: 150,
+      elevationMin: 0,
+      sunDiffuse: new Color3(.55, .65, .9),
+      sunIntensity: .35,
+      envIntensity: .25,
+      cielNiveau: .55,
+      ambientIntensity: .05,
       ambientDiffuse: new Color3(.32, .38, .55),
       ambientGround: new Color3(.08, .09, .13),
-      fog: new Color3(.06, .08, .13),
-      clear: new Color4(.05, .07, .12, 1),
-      turbidity: 2,
-      exposure: .85,
+      fog: new Color3(.05, .07, .12),
+      clear: new Color4(.04, .06, .11, 1),
+      exposure: .8,
       darkness: .5,
       fenetres: .85,
     },
@@ -332,7 +361,9 @@ async function start(): Promise<void> {
   let lampesTimer = 9;
   const applyAmbiance = (index: number): void => {
     const a = AMBIANCES[index];
-    sun.direction.copyFrom(a.sunDir);
+    const ciel = CIELS[a.ciel];
+    const astre = positionAstre(a.azimut, Math.max(ciel.elevationDeg, a.elevationMin));
+    sun.direction.copyFrom(astre.scale(-1));
     sun.diffuse.copyFrom(a.sunDiffuse);
     sun.intensity = a.sunIntensity;
     ambient.intensity = a.ambientIntensity;
@@ -341,12 +372,8 @@ async function start(): Promise<void> {
     scene.fogColor.copyFrom(a.fog);
     scene.clearColor.copyFrom(a.clear);
     scene.imageProcessingConfiguration.exposure = a.exposure;
+    scene.environmentIntensity = a.envIntensity;
     shadow.setDarkness(a.darkness);
-    skyMaterial.turbidity = a.turbidity;
-    // La nuit, le « soleil » du ciel passe sous l'horizon indépendamment de la
-    // direction de la lumière de lune.
-    const cielDir = a.nom === 'Nuit' ? new Vector3(-.35, .1, .42).normalize() : a.sunDir;
-    skyMaterial.sunPosition = cielDir.scale(-1000);
     // Vitrages : leur émission raconte les pièces éclairées à la tombée du
     // jour. Le matériau vient de la conversion Three, retrouvé par son mesh.
     const vitrages = scene.getMeshByName('vitrages');
@@ -368,10 +395,25 @@ async function start(): Promise<void> {
     for (const lampe of lampesPool) lampe.setEnabled(nuitActive);
     lampesGlow?.setEnabled(nuitActive);
     lampesTimer = 9;
-    // La sonde d'environnement se re-rend une fois avec le nouveau ciel.
-    probe.cubeTexture.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
+    // Panorama : tourné pour que son soleil tombe à l'azimut de la lumière,
+    // posé en éclairage d'ambiance et, en copie non préfiltrée, en fond.
+    const rotation = rotationCiel(ciel, a.azimut);
+    const generation = ++cielGeneration;
+    obtenirCiel(a.ciel).then((texture) => {
+      if (generation !== cielGeneration) return;
+      texture.setReflectionTextureMatrix(Matrix.RotationY(rotation));
+      scene.environmentTexture = texture;
+      const fond = texture.clone();
+      fond.coordinatesMode = Texture.SKYBOX_MODE;
+      fond.setReflectionTextureMatrix(Matrix.RotationY(rotation));
+      fond.level = a.cielNiveau;
+      const ancien = skybox.material.reflectionTexture;
+      skybox.material.reflectionTexture = fond;
+      if (ancien && ancien !== fond) ancien.dispose();
+    }).catch((error) => console.warn('Ciel indisponible :', error));
     console.info(`Ambiance : ${a.nom}`);
   };
+
 
   const camera = new UniversalCamera('camera', new Vector3(0, 8, -12), scene);
   camera.fov = 1.03;
@@ -387,9 +429,49 @@ async function start(): Promise<void> {
   pipeline.sharpen.edgeAmount = .18;
   pipeline.sharpen.colorAmount = .92;
   scene.imageProcessingConfiguration.vignetteEnabled = true;
-  scene.imageProcessingConfiguration.vignetteWeight = 1.1;
+  // Vignette allégée : à 1,1 elle assombrissait tout le pourtour de l'image
+  // et se lisait comme un défaut d'optique plutôt qu'un cadrage.
+  scene.imageProcessingConfiguration.vignetteWeight = .7;
   scene.imageProcessingConfiguration.vignetteStretch = .25;
   scene.imageProcessingConfiguration.vignetteColor = new Color4(.025, .035, .045, 1);
+  // Grain fin animé et légère aberration chromatique en bord de champ : les
+  // deux signatures d'une prise de vue réelle, dosées pour rester sous le
+  // seuil où on les remarque en roulant.
+  pipeline.grainEnabled = true;
+  pipeline.grain.intensity = 6;
+  pipeline.grain.animated = true;
+  pipeline.chromaticAberrationEnabled = true;
+  pipeline.chromaticAberration.aberrationAmount = 6;
+  pipeline.chromaticAberration.radialIntensity = .7;
+  // Étalonnage couleur (courbes) : ombres poussées vers le bleu, hautes
+  // lumières vers le chaud, saturation globale relevée d'un cran. C'est
+  // l'équivalent d'une LUT « film » sans fichier à charger.
+  const courbes = new ColorCurves();
+  courbes.globalSaturation = 10;
+  courbes.shadowsHue = 215;
+  courbes.shadowsSaturation = 8;
+  courbes.highlightsHue = 45;
+  courbes.highlightsSaturation = 5;
+  courbes.highlightsExposure = -3;
+  scene.imageProcessingConfiguration.colorCurves = courbes;
+  scene.imageProcessingConfiguration.colorCurvesEnabled = true;
+  // Flou de mouvement caméra (lu dans la profondeur de la pré-passe déjà
+  // rendue pour le SSAO), dosé par la vitesse dans la boucle de jeu. Il est
+  // ré-attaché par applyQuality pour rester APRÈS le pipeline, que Babylon
+  // reconstruit (et rattache en fin de liste) à chaque changement d'option.
+  // La caméra est obligatoire à la construction : sans elle, le post-process
+  // n'a pas de scène et ne trouve pas la pré-passe.
+  const flou = new MotionBlurPostProcess('flou-vitesse', scene, 1, camera);
+  flou.isObjectBased = false;
+  flou.motionBlurSamples = 10;
+  flou.motionStrength = 0;
+  // Diagnostic depuis la console : __regarder(x, y, z) force la caméra à
+  // viser cette direction (repérage du soleil du panorama), __regarder()
+  // rend la main.
+  let regardDebug: Vector3 | null = null;
+  (window as any).__regarder = (x?: number, y?: number, z?: number): void => {
+    regardDebug = x == null ? null : new Vector3(x, y ?? 0, z ?? 0);
+  };
 
   // Occlusion ambiante en profil Qualité : c'est elle qui assoit les bâtiments
   // au sol et creuse les angles de rue, la zone la plus « flottante » du rendu
@@ -551,17 +633,26 @@ async function start(): Promise<void> {
     // et Performance : les montagnes n'étaient JAMAIS visibles.
     camera.maxZ = Math.max(profile.fogEnd + 250, 1600);
     sun.shadowEnabled = profile.shadows;
+    shadow.numCascades = profile.cascades;
+    shadow.filteringQuality = profile.shadowFilter === 'high' ? ShadowGenerator.QUALITY_HIGH
+      : profile.shadowFilter === 'medium' ? ShadowGenerator.QUALITY_MEDIUM : ShadowGenerator.QUALITY_LOW;
     pipeline.bloomEnabled = next !== 'performance';
-    if (next === 'quality') {
+    if (profile.ssao) {
       scene.postProcessRenderPipelineManager.attachCamerasToRenderPipeline('ssao', camera);
     } else {
       scene.postProcessRenderPipelineManager.detachCamerasFromRenderPipeline('ssao', camera);
     }
+    // Le flou de mouvement se rattache en dernier, après la reconstruction
+    // du pipeline provoquée par le changement de bloom.
+    camera.detachPostProcess(flou);
+    if (profile.motionBlur) camera.attachPostProcess(flou);
     world.setQuality(profile.chunkRadius, profile.vegetationDensity);
     traffic.setDensity(next === 'performance' ? .5 : next === 'balanced' ? .78 : 1);
     qualityEl.textContent = profile.label;
   };
   applyQuality(DEFAULT_QUALITY);
+  // Ambiance de départ : charge le panorama de jour et pose la lumière.
+  applyAmbiance(ambianceIndex);
 
   const begin = (mode: GameMode): void => {
     playing = true;
@@ -678,6 +769,11 @@ async function start(): Promise<void> {
     Vector3.LerpToRef(cameraPosition, desiredCamera, cameraLerp, cameraPosition);
     camera.position.copyFrom(cameraPosition);
     camera.setTarget(cameraTarget);
+    if (regardDebug) camera.setTarget(camera.position.add(regardDebug));
+    // Flou de mouvement : nul sous 12 m/s (43 km/h), plein vers 60 m/s ; la
+    // vue capot en reçoit moins, l'œil y est déjà dans le mouvement.
+    const vitesseFlou = Math.max(0, Math.min(1, (Math.abs(car.speed) - 12) / 48));
+    flou.motionStrength = QUALITY[quality].motionBlur ? vitesseFlou * (cameraMode === 1 ? .5 : .85) : 0;
 
     scene.render();
 

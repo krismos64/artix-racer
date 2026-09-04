@@ -2,6 +2,73 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-09-04 : refonte visuelle (ciel HDR, sols photo, flotte, post-process)
+
+Constat de départ, capture à l'appui : lumière plate (ambiante hémisphérique
+à 0,72, ombres claires), ciel analytique gris-beige sans nuage, sols en
+aplats (herbe vert uni, enrobé et trottoir du même gris), voitures en
+boîtes, arbres en boules, image rendue en sous-résolution (1,18). Tout cela
+en un seul chantier, dans l'ordre du gain visuel.
+
+- **Ciel HDRI + IBL** (main.ts) : trois panoramas Poly Haven CC0
+  (`public/textures/ciel/jour|soir|nuit.hdr`, 2k) servent de fond (sphère
+  de 2 900 m) ET d'éclairage d'ambiance (HDRCubeTexture préfiltrée). Le
+  ciel analytique, la sonde d'environnement et les nuages sculptés sont
+  retirés. `scripts/ciel-soleil.mjs` repère le soleil de chaque panorama et
+  réécrit le fichier avec la luminance PLAFONNÉE à 12 : sans plafond, le
+  disque solaire (71 000) entre dans l'IBL et éclaire tout sans ombre, en
+  doublant la lumière directionnelle. Chaque ambiance donne un azimut
+  boussole ; `rotationCiel` tourne le panorama pour y amener son soleil et
+  la DirectionalLight suit.
+- **Pièges rencontrés** : (1) une BOÎTE de ciel de 2 900 m a ses coins à
+  2 500 m, au-delà de `camera.maxZ` (1 600) : le ciel se découpait en un
+  grand trapèze de couleur de fond ; une sphère règle le problème. (2) La
+  colonne u d'un panorama tombe sur l'angle (u - 0,75) × 2π mesuré de +X
+  vers +Z, et non (u - 0,5) × 2π : mesuré en jeu par balayage du ciel
+  (lecture des pixels rendus, matrice identité puis rotation de 1 rad,
+  fonction `__regarder` ajoutée en diagnostic). (3) `MotionBlurPostProcess`
+  exige une caméra à la construction, sinon pas de scène ni de pré-passe.
+- **Lumière rééquilibrée** : ambiante 0,25, soleil 2,0, `environmentIntensity`
+  1,5, ombres PCF medium sur 2 048, darkness 0,3, exposition 1. Les
+  matériaux convertis passent à `environmentIntensity = 1` (c'est la scène
+  qui dose).
+- **Sols photographiques** (world.js, textures.js, ambientCG CC0) : enrobé,
+  herbe, béton de trottoir, pavés, grave, écorce, avec cartes de normales.
+  `textureFichier`/`matiere` créent des textures Three dont seule l'URL
+  compte : le pont ne lit que `image.src`. Le pont convertit maintenant
+  `normalMap` (inversion Y en repère main droite, comme le chargeur glTF),
+  `roughnessMap` (canal vert seul), `aoMap`, `lightMap` (multiplicative,
+  UV0, propre répétition) et `clearcoat`. Les trottoirs, sans UV, reçoivent
+  des UV planaires monde (`userData.uvPlanaires`). Les teintes de zones
+  passent de verts pleins à des multiplicateurs proches du blanc.
+- **Flotte Kenney** (flotte.js, CC0) : cinq modèles low-poly (hatchback,
+  sedan, suv, van, delivery) chargés par GLTFLoader, fusionnés, mis à
+  l'échelle, puis SÉPARÉS par triangle en peinture (blanche, teintée par
+  instance, vernie) et détails (palette du kit), en lisant la couleur de
+  `colormap.png` au centre d'UV de chaque triangle. Les roues du kit
+  (4 000 indices par voiture) sont remplacées par les cylindres instanciés
+  existants, posés aux moyeux. parkedcars.js et traffic.js prennent
+  `flotte` en paramètre et gardent la boîte en repli.
+- **Voiture joueur** : vernis (`clearCoat`) sur les deux matériaux rouges
+  de l'Audi, ombre de contact sous le châssis.
+- **Post-process** : grain animé, aberration chromatique légère, courbes
+  couleur (ombres bleutées, hautes lumières chaudes), vignette 0,7, flou de
+  mouvement caméra dosé par la vitesse. Profils : Équilibré en résolution
+  native ; SSAO et flou (pré-passe) réservés au profil Qualité.
+- **Performance, la vraie découverte** : après tout cela, 52 fps. Le
+  profileur Chrome montre 11,7 ms de JS par image dans la passe principale :
+  818 maillages actifs à 14 µs l'appel de dessin (rebind PBR complet,
+  cascades comprises) contre 2 µs dans la passe d'ombre. La ville comptait
+  2 300 maillages de moins de 100 triangles. `ThreeCityConverter.fusionner`
+  fusionne les petits maillages statiques par matériau, ombre, attributs et
+  cellule de 300 m (1 486 fusionnés) : passe principale à 3,3 ms, 60 fps
+  en natif. Les maillages retrouvés par nom (vitrages, trottoirs, murs…)
+  restent hors fusion.
+- Bug corrigé au passage : `Circulation.update` plantait sur un cul-de-sac
+  en sens unique (`arete` indéfinie) et tuait la boucle de rendu.
+- Non fait : piétons (toujours des capsules) ; feuillages encore en lobes
+  d'icosaèdre, éclaircis pour le nouvel éclairage.
+
 ## 2026-08-26 (suite 16) : les Pyrénées enfin visibles à l'horizon sud
 
 Question de Christophe : peut-on voir la chaîne au loin ? Découverte : les

@@ -19,6 +19,8 @@ import { parseBDTopo } from './three-city/bdtopo.js';
 import { buildLandmarks } from './three-city/landmarks.js';
 import { findSpawn, parseOSM } from './three-city/osm.js';
 import { ParkingsEpi } from './three-city/parking.js';
+// @ts-ignore : module JS hérité, comme les autres imports three-city.
+import { chargerFlotte } from './three-city/flotte.js';
 import { VoituresGarees } from './three-city/parkedcars.js';
 import { parsePOI } from './three-city/poi.js';
 import { buildSignage } from './three-city/signage.js';
@@ -64,8 +66,16 @@ export interface FaithfulCityResult {
   materialCount: number;
 }
 
+// Maillages retrouvés par leur nom après conversion (émission des vitrages
+// la nuit, ombres nommées, UV planaires des trottoirs) : jamais fusionnés.
+const PROTEGES_FUSION = new Set([
+  'vitrages', 'murs', 'murs-pierre', 'toitures', 'cheminees', 'lucarnes',
+  'ventilations', 'trottoirs', 'bordures-trottoir',
+]);
+
 interface ConversionStats {
   meshes: number;
+  fusions: number;
   instances: number;
   materials: number;
 }
@@ -86,7 +96,8 @@ class ThreeCityConverter {
   private materialSerial = 0;
   private meshSerial = 0;
   private textureSerial = 0;
-  readonly stats: ConversionStats = { meshes: 0, instances: 0, materials: 0 };
+  readonly stats: ConversionStats = { meshes: 0, instances: 0, materials: 0, fusions: 0 };
+  private readonly fusionnables: Mesh[] = [];
 
   constructor(
     private readonly scene: Scene,
@@ -133,7 +144,11 @@ class ThreeCityConverter {
     }
     if (!url) return null;
 
-    const texture = new Texture(url, this.scene, false, true, Texture.TRILINEAR_SAMPLINGMODE);
+    // Retournement vertical : Three retourne ses images par défaut
+    // (`flipY = true`) et Babylon aussi (`invertY = true`). Les textures
+    // issues d'un glTF (palette de la flotte Kenney) sont déclarées non
+    // retournées des deux côtés : leurs UV ont l'origine en haut.
+    const texture = new Texture(url, this.scene, false, source.flipY !== false, Texture.TRILINEAR_SAMPLINGMODE);
     texture.name = `three-texture-${this.textureSerial++}`;
     texture.wrapU = source.wrapS === THREE.ClampToEdgeWrapping
       ? Texture.CLAMP_ADDRESSMODE
@@ -169,8 +184,11 @@ class ThreeCityConverter {
     material.albedoColor = color3(standard.color);
     material.metallic = Number.isFinite(standard.metalness) ? standard.metalness : 0;
     material.roughness = Number.isFinite(standard.roughness) ? standard.roughness : .88;
-    material.environmentIntensity = .72;
-    material.directIntensity = 1.08;
+    // Poids neutres : c'est `scene.environmentIntensity` (par ambiance) qui
+    // dose l'éclairage du panorama HDR, et la lumière directionnelle porte
+    // son intensité propre.
+    material.environmentIntensity = 1;
+    material.directIntensity = 1;
     material.alpha = source.opacity ?? 1;
     // La ville source est construite par Three.js puis convertie vers une
     // scène Babylon en repère main droite. Les volumes procéduraux simples
@@ -195,16 +213,59 @@ class ThreeCityConverter {
     }
     const normal = this.texture(standard.normalMap);
     const bump = this.texture(standard.bumpMap);
-    material.bumpTexture = normal ?? bump;
-    if (material.bumpTexture) {
-      material.bumpTexture.gammaSpace = false;
+    if (normal) {
+      // Vraie carte de normales (photos de matière, convention OpenGL : +Y
+      // vers le haut). En repère main droite, le chargeur glTF de Babylon
+      // inverse l'axe Y et pas l'axe X : même réglage ici, sinon le relief
+      // de la chaussée et de l'herbe ressort en creux.
+      material.bumpTexture = normal;
+      normal.gammaSpace = false;
+      material.invertNormalMapX = false;
+      material.invertNormalMapY = true;
+      material.bumpTexture.level = standard.normalScale?.x ?? 1;
+    } else if (bump) {
+      material.bumpTexture = bump;
+      bump.gammaSpace = false;
       if (standard.bumpScale != null) material.bumpTexture.level = standard.bumpScale;
     }
 
-    // Ne pas brancher directement roughnessMap sur metallicTexture. Les deux
-    // moteurs n'emploient pas la même convention de canaux : cette conversion
-    // rendait l'herbe et certains sols métalliques, presque blancs sous l'IBL.
-    // La rugosité scalaire Three.js, déjà copiée ci-dessus, reste fiable.
+    // Carte de rugosité : le canal vert seulement, en désactivant la lecture
+    // du métal dans le bleu. La conversion naïve (metallicTexture tel quel)
+    // lisait le bleu comme métal et rendait l'herbe et certains sols
+    // métalliques, presque blancs sous l'IBL.
+    const rugosite = this.texture(standard.roughnessMap);
+    if (rugosite) {
+      rugosite.gammaSpace = false;
+      material.metallicTexture = rugosite;
+      material.useRoughnessFromMetallicTextureAlpha = false;
+      material.useRoughnessFromMetallicTextureGreen = true;
+      material.useMetallnessFromMetallicTextureBlue = false;
+    }
+    const occlusion = this.texture(standard.aoMap);
+    if (occlusion) {
+      occlusion.gammaSpace = false;
+      material.ambientTexture = occlusion;
+      material.ambientTextureStrength = standard.aoMapIntensity ?? 1;
+      material.useAmbientInGrayScale = true;
+    }
+    // Lightmap Three → « shadowmap » Babylon : multiplie l'éclairage final.
+    // Sert de variation à grande échelle (plaques d'herbe jaunie) posée sur
+    // les mêmes UV que la couleur, avec sa propre répétition.
+    const lightmap = this.texture(standard.lightMap);
+    if (lightmap) {
+      lightmap.coordinatesIndex = 0;
+      material.lightmapTexture = lightmap;
+      material.useLightmapAsShadowmap = true;
+    }
+    // Vernis des carrosseries (MeshPhysicalMaterial.clearcoat) : la couche
+    // brillante par-dessus la peinture, ce qui distingue une voiture d'un
+    // objet en plastique mat.
+    const physique = source as THREE.MeshPhysicalMaterial;
+    if (physique.clearcoat > 0) {
+      material.clearCoat.isEnabled = true;
+      material.clearCoat.intensity = physique.clearcoat;
+      material.clearCoat.roughness = physique.clearcoatRoughness ?? .1;
+    }
 
     if (standard.emissive) material.emissiveColor = color3(standard.emissive, Color3.Black());
     if (standard.emissiveIntensity != null) material.emissiveIntensity = standard.emissiveIntensity;
@@ -233,7 +294,7 @@ class ThreeCityConverter {
     return material;
   }
 
-  private vertexData(geometry: THREE.BufferGeometry): { data: VertexData; vertices: number; indices: number } {
+  private vertexData(geometry: THREE.BufferGeometry, uvPlanaires = 0): { data: VertexData; vertices: number; indices: number } {
     const position = geometry.getAttribute('position');
     const normal = geometry.getAttribute('normal');
     const uv = geometry.getAttribute('uv');
@@ -247,6 +308,9 @@ class ThreeCityConverter {
       positions.push(position.getX(i), position.getY(i), position.getZ(i));
       if (normal) normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
       if (uv) uvs.push(uv.getX(i), uv.getY(i));
+      // UV planaires monde pour les nappes construites sans UV (trottoirs) :
+      // une tuile de `uvPlanaires` mètres, projetée depuis le dessus.
+      else if (uvPlanaires > 0) uvs.push(position.getX(i) / uvPlanaires, position.getZ(i) / uvPlanaires);
       if (color) colors.push(color.getX(i), color.getY(i), color.getZ(i), color.itemSize > 3 ? color.getW(i) : 1);
     }
 
@@ -269,7 +333,7 @@ class ThreeCityConverter {
     const position = geometry.getAttribute('position');
     if (!position?.count) return;
 
-    const converted = this.vertexData(geometry);
+    const converted = this.vertexData(geometry, Number(source.userData.uvPlanaires) || 0);
     const mesh = new Mesh(source.name || `artix-mesh-${this.meshSerial++}`, this.scene);
     converted.data.applyToMesh(mesh, false);
     mesh.isPickable = false;
@@ -341,9 +405,65 @@ class ThreeCityConverter {
     const shadowMeshes = new Set(['murs', 'murs-pierre', 'toitures', 'cheminees', 'lucarnes', 'ventilations']);
     const shouldCastShadow = source.castShadow || shadowMeshes.has(source.name)
       || source.name.startsWith('facades-photo');
-    if (shouldCastShadow && !source.userData.noShadowCast) this.shadows?.addShadowCaster(mesh, false);
-    mesh.freezeWorldMatrix();
+    const caster = shouldCastShadow && !source.userData.noShadowCast;
+    mesh.metadata = { caster };
+    // Candidats à la fusion (voir `fusionner`) : petits maillages statiques à
+    // matériau unique, hors thin instances et hors maillages retrouvés par
+    // leur nom après coup (vitrages, lanternes, trottoirs).
+    const fusionnable = !(source instanceof THREE.InstancedMesh)
+      && !Array.isArray(source.material)
+      && !mesh.alwaysSelectAsActiveMesh
+      && !PROTEGES_FUSION.has(mesh.name)
+      && !mesh.name.startsWith('facades-photo')
+      && converted.indices <= 6000;
+    if (fusionnable) {
+      this.fusionnables.push(mesh);
+    } else {
+      if (caster) this.shadows?.addShadowCaster(mesh, false);
+      mesh.freezeWorldMatrix();
+    }
     this.stats.meshes++;
+  }
+
+  // Fusion des petits maillages statiques par matériau, ombre et cellule de
+  // 300 m. Mesuré au profileur Chrome : la passe principale coûtait 11,7 ms
+  // de JS par image pour 818 maillages actifs, soit 14 µs par appel de dessin
+  // (rebind PBR complet à chaque changement de matériau, cascades d'ombre
+  // comprises), quand la passe d'ombre en coûtait 2 µs. La ville comptait
+  // 2 300 maillages de moins de 100 triangles (enseignes, poteaux, bordures,
+  // mobilier) : les fusionner ramène les appels de dessin à quelques
+  // centaines. La cellule spatiale garde un découpage utile au frustum.
+  fusionner(): void {
+    const groupes = new Map<string, Mesh[]>();
+    for (const mesh of this.fusionnables) {
+      mesh.computeWorldMatrix(true);
+      const centre = mesh.getBoundingInfo().boundingSphere.centerWorld;
+      const cle = [
+        mesh.material!.uniqueId,
+        mesh.metadata.caster ? 1 : 0,
+        mesh.getVerticesDataKinds().join(','),
+        Math.floor(centre.x / 300), Math.floor(centre.z / 300),
+      ].join('|');
+      let liste = groupes.get(cle);
+      if (!liste) groupes.set(cle, liste = []);
+      liste.push(mesh);
+    }
+    let serie = 0;
+    for (const liste of groupes.values()) {
+      const caster = liste[0].metadata.caster as boolean;
+      let resultat: Mesh | null = liste[0];
+      if (liste.length >= 2) {
+        resultat = Mesh.MergeMeshes(liste, true, true, undefined, false, false);
+        if (!resultat) continue;
+        resultat.name = `fusion-${serie++}`;
+        resultat.isPickable = false;
+        resultat.receiveShadows = true;
+        this.stats.fusions += liste.length - 1;
+      }
+      if (caster) this.shadows?.addShadowCaster(resultat, false);
+      resultat.freezeWorldMatrix();
+    }
+    this.fusionnables.length = 0;
   }
 }
 
@@ -486,6 +606,15 @@ export async function buildFaithfulArtix(
   spawn.z -= Math.sin(spawn.heading) * lane;
 
   const parkings = new ParkingsEpi(sourceScene, data, terrain, ROAD_Y);
+  // Flotte low-poly (Kenney) pour le parc garé et la circulation. En cas
+  // d'échec de chargement, les deux modules retombent sur leurs silhouettes
+  // en boîte : la ville se construit quand même.
+  let flotte: AnyRecord | null = null;
+  try {
+    flotte = await chargerFlotte();
+  } catch (error) {
+    console.warn('Flotte de véhicules indisponible, silhouettes en boîte :', error);
+  }
   new (VoituresGarees as any)(
     sourceScene,
     data,
@@ -494,6 +623,8 @@ export async function buildFaithfulArtix(
     data.poi?.passages ?? [],
     spawn,
     [...(parkings.places ?? []), ...(world.placesEpi ?? [])],
+    880,
+    flotte,
   );
 
   if (data.landmarkSources?.length) {
@@ -504,6 +635,8 @@ export async function buildFaithfulArtix(
   await progress?.(58, 'Conversion de la ville exacte vers Babylon.js…');
   const converter = new ThreeCityConverter(scene, shadows);
   converter.convert(sourceScene);
+  converter.fusionner();
+  console.info(`Ville convertie : ${converter.stats.meshes} maillages, ${converter.stats.fusions} fusionnés, ${converter.stats.materials} matériaux`);
 
   sourceScene.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
@@ -576,7 +709,7 @@ export async function buildFaithfulArtix(
     const touffes = new (Touffes as any)(groupeFactice, terrain, ROAD_Y, { estPlantable: herbePlantable });
     const pietons = new (Pietons as any)(data, terrain, ROAD_Y, 110);
     // Circulation légère : une douzaine de véhicules sur le graphe des voies.
-    const circulation = new (Circulation as any)(data, terrain, ROAD_Y, 12);
+    const circulation = new (Circulation as any)(data, terrain, ROAD_Y, 12, flotte);
     const live = new LiveInstancedBridge(scene, converter);
     live.adopter(touffes.mesh, 'touffes-herbe');
     if (pietons.effectif) {
@@ -586,6 +719,7 @@ export async function buildFaithfulArtix(
     }
     if (circulation.effectif) {
       const partiesCirc = [...Object.values(circulation.caisses),
+        ...Object.values(circulation.details ?? {}),
         circulation.roues, circulation.feuxAr, circulation.feuxAv];
       partiesCirc.forEach((im, i) => live.adopter(im as THREE.InstancedMesh, `circulation-${i}`));
     }
