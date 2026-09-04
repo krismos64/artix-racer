@@ -569,15 +569,19 @@ async function start(): Promise<void> {
       azimut: 150,
       elevationMin: 0,
       sunDiffuse: new Color3(.55, .65, .9),
-      sunIntensity: .35,
-      envIntensity: .25,
+      sunIntensity: .55,
+      envIntensity: .40,
       cielNiveau: .55,
-      ambientIntensity: .05,
-      ambientDiffuse: new Color3(.32, .38, .55),
-      ambientGround: new Color3(.08, .09, .13),
-      fog: new Color3(.05, .07, .12),
-      clear: new Color4(.04, .06, .11, 1),
-      exposure: .8,
+      // Une ville éclairée au sodium n'est jamais noire entre deux
+      // lampadaires : la lumière rebondit sur les façades et le ciel urbain
+      // lui-même est orangé. L'ambiante remonte donc nettement, avec un sol
+      // qui renvoie une teinte chaude plutôt que du bleu de nuit.
+      ambientIntensity: .22,
+      ambientDiffuse: new Color3(.42, .46, .62),
+      ambientGround: new Color3(.22, .17, .13),
+      fog: new Color3(.09, .10, .15),
+      clear: new Color4(.05, .07, .12, 1),
+      exposure: 1.05,
       darkness: .5,
       fenetres: .85,
       // La nuit, seule la neige capte encore un peu de clair de lune.
@@ -777,15 +781,19 @@ async function start(): Promise<void> {
   carNuit = car;
   lampesMateriau = faithful.lampMaterial;
   foyersLampes = faithful.foyers;
-  // Les halos au sol portent l'essentiel de l'éclairage public perçu ; le
-  // pool de vraies lumières n'est qu'un appoint volumétrique discret autour
-  // du joueur. Le doser bas rend invisible le recyclage des lampes d'un
-  // foyer à l'autre, qui se lisait comme un allumage au passage.
-  for (let i = 0; i < 8; i++) {
+  // Les vraies lumières portent l'éclairage des façades et de la chaussée ;
+  // les halos au sol assurent la continuité au loin. Douze sources plutôt
+  // que huit, et surtout une portée et une intensité franchement relevées :
+  // à 70 cd sur 30 m, seule une flaque au pied du mât s'allumait et la rue
+  // restait noire, alors qu'un bourg éclairé au sodium se traverse sans
+  // phares. Le plafond de lumières simultanées des matériaux convertis est
+  // à 10 (three-city-bridge), au-delà les lampes surnuméraires s'éteignent
+  // en silence : les douze du pool ne sont jamais toutes proches à la fois.
+  for (let i = 0; i < 12; i++) {
     const lampe = new PointLight(`lampe-rue-${i}`, new Vector3(0, -100, 0), scene);
-    lampe.diffuse = Color3.FromHexString('#ffc878');
-    lampe.intensity = 70;
-    lampe.range = 30;
+    lampe.diffuse = Color3.FromHexString('#ffcf92');
+    lampe.intensity = 260;
+    lampe.range = 62;
     lampe.setEnabled(false);
     lampesPool.push(lampe);
   }
@@ -800,7 +808,7 @@ async function start(): Promise<void> {
     const positions: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
-    const SEGMENTS = 10, RAYON = 7.5;
+    const SEGMENTS = 12, RAYON = 11.5;
     for (const f of foyersLampes) {
       const solY = f.y - 6.9 + .07;
       const base = positions.length / 3;
@@ -824,8 +832,9 @@ async function start(): Promise<void> {
     const tex = new DynamicTexture('halo-lampe', { width: taille, height: taille }, scene, false);
     const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
     const grad = ctx.createRadialGradient(taille / 2, taille / 2, 4, taille / 2, taille / 2, taille / 2);
-    grad.addColorStop(0, 'rgba(255,206,134,0.8)');
-    grad.addColorStop(.4, 'rgba(255,192,112,0.34)');
+    grad.addColorStop(0, 'rgba(255,214,150,0.95)');
+    grad.addColorStop(.35, 'rgba(255,198,122,0.58)');
+    grad.addColorStop(.7, 'rgba(255,186,104,0.22)');
     grad.addColorStop(1, 'rgba(255,180,100,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, taille, taille);
@@ -948,16 +957,17 @@ async function start(): Promise<void> {
           else lampe.position.y = -100;
         });
       }
-      // Intensité continue en fonction de la distance au joueur : pleine à
-      // moins de 18 m, nulle au-delà de 36 m. Une lampe du pool se
-      // repositionne donc toujours éteinte et monte en puissance à
-      // l'approche : c'est ce qui supprime l'allumage visible au passage,
-      // les halos au sol assurant la constance de l'éclairage perçu.
+      // Intensité continue en fonction de la distance au joueur : pleine
+      // jusqu'à 34 m, éteinte au-delà de 70 m. La fenêtre a été élargie avec
+      // la portée des lampes, sinon une source de 62 m de rayon s'éteignait
+      // avant même que son halo ne sorte du champ. L'extinction reste
+      // progressive (courbe au carré) pour que le recyclage d'une lampe d'un
+      // foyer à l'autre ne se lise pas comme un allumage au passage.
       const px = car.root.position.x, pz = car.root.position.z;
       for (const lampe of lampesPool) {
         const d = Math.hypot(lampe.position.x - px, lampe.position.z - pz);
-        const t = Math.max(0, Math.min(1, (36 - d) / 18));
-        lampe.intensity = 70 * t * t;
+        const t = Math.max(0, Math.min(1, (70 - d) / 36));
+        lampe.intensity = 260 * t * t;
       }
     }
 
