@@ -2,6 +2,61 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-09-04 (suite 2) : profilage, question DLSS tranchée par la mesure
+
+Christophe a demandé s'il serait envisageable d'intégrer DLSS de NVIDIA.
+Réponse courte : non, blocage structurel. DLSS est une bibliothèque native
+(`nvngx_dlss.dll`) qui s'intègre au pilote via Vulkan, DirectX 12 ou NGX, et
+réclame les buffers internes du rendu en mémoire GPU. Un jeu WebGL vit dans
+un bac à sable navigateur : aucune API web n'expose ces buffers, aucun
+navigateur n'expose NGX, il n'existe pas de portage web. S'y ajoutent deux
+verrous : le MacBook Air M4 n'a pas de GPU NVIDIA, et « DLSS 5 » n'existe pas
+à ce jour (la dernière génération publique est DLSS 4, début 2025).
+
+Plutôt que d'en rester à la théorie, la question sous-jacente a été mesurée :
+où passent réellement les millisecondes ? Module `src/profil.ts` ajouté, avec
+trois entrées console : `__profil()` (découpage CPU via SceneInstrumentation),
+`__repartition()` (appels de dessin classés par matériau) et `__comparer()`
+(coût réel par soustraction, hors vsync).
+
+**Le compteur GPU de Babylon m'a d'abord fait conclure l'inverse de la
+vérité.** `gpuFrameTimeCounter` annonçait 12,00 ms contre 4,59 ms de CPU, ce
+qui se lit « le GPU sature, baisser la résolution paierait ». Contrôle : en
+divisant les pixels par 4 (1440 × 683 vers 720 × 341) le compteur ne bougeait
+pas, 11,86 puis 12,02 ms. Test décisif en cachant TOUS les maillages : encore
+11,64 ms sur une scène vide. Le compteur mesure l'intervalle imposé par le
+vsync, pas le travail de rendu. Consigné dans CLAUDE.md.
+
+**Mesure valide, hors boucle d'affichage.** `__comparer()` arrête la boucle,
+dessine 60 images en rafale et pose une barrière `readPixels` 1 × 1 (WebGL
+étant asynchrone, sans elle on chronomètre l'empilement des commandes, pas
+leur exécution). Chaque poste est obtenu par soustraction. En conduite,
+1440 × 683, 303 maillages actifs, image complète à 8,81 ms :
+
+| Poste | Coût | Part |
+| --- | --- | --- |
+| Géométrie (appels de dessin) | 7,36 ms | 84 % |
+| Remplissage de pixels | 1,05 ms | 12 % |
+| Ombres cascadées | 0,25 ms | 3 % |
+| Post-process | 0,11 ms | 1 % |
+| Plancher (scène vide) | 1,45 ms | 16 % |
+
+La puce du CLAUDE.md sur le coût dominant est donc confirmée par la mesure,
+et la conclusion sur DLSS tient sans même le blocage technique : un upscaler
+attaque les 12 % de remplissage et laisse les 84 % de géométrie intacts.
+Diviser les pixels par 4 ne rend qu'une milliseconde.
+
+`__repartition()` montre par ailleurs qu'aucun matériau ne domine, le plus
+gros n'ayant que 13 maillages : `ThreeCityConverter.fusionner` a déjà fait
+son travail. Le gain restant se trouverait du côté du nombre d'objets soumis
+(distance de chargement, regroupement des poteaux et de la végétation),
+pas dans un traitement d'image.
+
+Piège d'instrumentation à retenir : `__comparer()` doit relancer les boucles
+de rendu d'origine récupérées dans `_activeRenderLoops`. Une première version
+relançait une boucle nue `scene.render()`, ce qui laissait le décor s'afficher
+mais figeait le véhicule et le HUD.
+
 ## 2026-09-04 (suite) : façades photo retirées, Pyrénées refaites, nuit éclairée
 
 Suite de la refonte, en réponse à des défauts signalés en jeu par

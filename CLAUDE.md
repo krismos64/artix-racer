@@ -105,7 +105,20 @@ Objectif unique : le meilleur rendu visuel possible, vite.
   statiques par matériau et cellule de 300 m. Tout maillage retrouvé par son
   nom après conversion doit être dans `PROTEGES_FUSION`. SSAO et flou de
   mouvement exigent une pré-passe qui redessine la ville : profil Qualité
-  seulement.
+  seulement. Mesuré le 4 septembre 2026 en conduite (1440 × 683, 303 maillages
+  actifs, image complète 8,81 ms) : géométrie 7,36 ms (84 %), remplissage de
+  pixels 1,05 ms (12 %), ombres 0,25 ms, post-process 0,11 ms. Diviser les
+  pixels par 4 ne rend que 1 ms : tout upscaler (FSR, TAA, et DLSS s'il était
+  possible sur le web) attaque les 12 % et laisse les 84 % intacts.
+- **Le compteur GPU de Babylon ment tant que le vsync cadence la boucle** :
+  `gpuFrameTimeCounter` mesure alors l'intervalle entre deux images, ~12 ms
+  quoi qu'on fasse. Scène entièrement vidée de ses maillages, il affichait
+  encore 11,64 ms, ce qui fait conclure à tort que le GPU sature. Pour un
+  chiffre décisionnel : `__comparer()` (src/profil.ts) sort de la boucle
+  d'affichage, dessine en rafale et pose une barrière `readPixels`. Elle
+  restaure les boucles d'origine à la fin, sinon la logique de jeu reste figée.
+  `__profil()` donne le découpage CPU, `__repartition()` classe les appels de
+  dessin par matériau.
 - **Une texture d'opacité ne suffit pas** : tant que le matériau reste en
   mode opaque (`transparencyMode` à null), Babylon ne lit JAMAIS le canal
   alpha et peint le quad entier. Poser `hasAlpha`,

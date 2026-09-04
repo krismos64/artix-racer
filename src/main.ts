@@ -773,6 +773,22 @@ async function start(): Promise<void> {
   await car.loadModel();
   // Accès de diagnostic : permet de téléporter le véhicule depuis la console.
   (window as any).__car = car;
+  // Profilage à la demande : `__profil()` découpe le temps de frame,
+  // `__repartition()` classe les appels de dessin par matériau. Chargés
+  // paresseusement pour ne rien coûter tant qu'on ne mesure pas.
+  (window as any).__profil = async (secondes?: number) => {
+    const { profiler } = await import('./profil');
+    return profiler(engine, scene, secondes);
+  };
+  (window as any).__repartition = async (sommet?: number) => {
+    const { repartition } = await import('./profil');
+    repartition(scene, sommet);
+  };
+  // Découpage du coût réel, hors vsync : le seul chiffre décisionnel.
+  (window as any).__comparer = async (echantillons?: number) => {
+    const { comparer } = await import('./profil');
+    return comparer(engine, scene, echantillons);
+  };
 
   // Éclairage public nocturne : un petit pool de lampes réelles suit le
   // véhicule et se pose sur les foyers de lampadaires les plus proches. Six
