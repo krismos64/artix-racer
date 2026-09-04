@@ -1809,10 +1809,25 @@ export function buildWorld(scene, data) {
       parArete.set(f.k, { ...f, a: f.a + base });
     }
   };
-  if (data.facadesPhoto?.atlas) {
+  // PLACAGE PHOTO DÉSACTIVÉ (septembre 2026). La rectification depuis les
+  // panoramiques était trop approximative : sur beaucoup de murs, la case
+  // d'atlas ne cadrait pas la façade mais ce qui se trouvait devant elle
+  // (haie, tas de gravier, voiture garée, bout de trottoir). Le résultat se
+  // lisait comme une capture d'écran collée sur le bâtiment, un défaut bien
+  // plus voyant que le mur procédural qu'il remplaçait.
+  //
+  // Les murs concernés repassent par l'enduit procédural, dont la TEINTE est
+  // elle aussi relevée sur Panoramax (artix-panoramax.json) : la fidélité de
+  // couleur est conservée, seul le placage d'image disparaît.
+  //
+  // Le mécanisme reste entier (`fusionner`, `chargerAtlas`, buffers par
+  // atlas) : réactiver revient à rétablir ces deux appels, une fois la
+  // rectification reprise avec un vrai contrôle de cadrage.
+  const PLACAGE_PHOTO = false;
+  if (PLACAGE_PHOTO && data.facadesPhoto?.atlas) {
     fusionner(data.facadesPhoto, chargerAtlas('facades-atlas', data.facadesPhoto.atlas));
   }
-  if (data.facadesCentre?.atlas) {
+  if (PLACAGE_PHOTO && data.facadesCentre?.atlas) {
     fusionner(data.facadesCentre, chargerAtlas('facades-centre', data.facadesCentre.atlas));
   }
   const roofPos = [], roofCol = [], roofUv = [];

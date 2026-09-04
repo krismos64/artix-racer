@@ -676,10 +676,16 @@ export function buildSignage(data, relief, roadY) {
   // dessus de la vitrine : c'est lui qu'on reconstitue, plaqué sur l'arête du
   // bâtiment la plus proche du point OSM du commerce.
   {
-    // Les façades couvertes par une photo rectifiée portent déjà leur vraie
-    // enseigne : ne pas la doubler d'un bandeau générique.
+    // Les façades couvertes par une photo rectifiée portaient déjà leur vraie
+    // enseigne : leur bandeau générique était donc supprimé pour éviter le
+    // doublon. Le placage photo étant désactivé (voir PLACAGE_PHOTO dans
+    // world.js), cette exclusion laisserait ces commerces muets : la carte
+    // reste vide tant que le placage n'est pas rétabli.
     const photoParGraine = new Map();
-    for (const f of data.facadesPhoto?.facades ?? []) photoParGraine.set(f.i, f.k);
+    const PLACAGE_PHOTO = false;
+    if (PLACAGE_PHOTO) {
+      for (const f of data.facadesPhoto?.facades ?? []) photoParGraine.set(f.i, f.k);
+    }
 
     const PALETTE_ENSEIGNE = [0x7a2430, 0x24493a, 0x1f2f45, 0x5c3a1e, 0x3a3a3e];
     const textureEnseigne = (nom, teinte) => {
