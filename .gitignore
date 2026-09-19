@@ -2,6 +2,10 @@ node_modules/
 dist/
 .DS_Store
 npm-debug.log*
+
+# Caches des pipelines Panoramax : volumineux, reconstructibles par
+# `npm run fetch-*`, jamais lus par le jeu.
 .panoramax-cache/
 .panoramax-cache-hd/
 .vues-panoramax/
+data/

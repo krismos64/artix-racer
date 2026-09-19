@@ -32,14 +32,28 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 2. **`src/three-city-bridge.ts`** : convertit meshes/matériaux Three → Babylon
    PBR. Contient aussi `LiveInstancedBridge` (contenu animé) et le calcul du
    contenu vivant.
-3. **`src/world.ts` + `src/materials.ts`** (Babylon natif) : `ArtixWorld` est
-   en mode **queryOnly** (altitudes, collisions, noms de rue). Il ne rend
-   presque rien : ne pas y chercher le visuel.
+3. **`src/world.ts`** (Babylon natif) : `ArtixWorld` est un pur INDEX SPATIAL.
+   Il ne dessine rien : il ne répond qu'aux quatre questions que la boucle de
+   jeu pose à chaque image (`surfaceY`, `isOnRoad`, `roadNameAt`,
+   `collidesBuilding`), via une grille de cellules de 256 m. Ne pas y chercher
+   le visuel, et ne rien y ajouter qui dessine.
 4. **`src/main.ts`** : scène, ciel, lumières, ombres CSM, ambiances, pipeline
    post-process, boucle de jeu, HUD.
+5. **`src/lieux.ts`** : table des lieux-dits affichés dans le HUD.
+
+Un seul moteur produit le visuel (la couche 1, convertie par la couche 2). Une
+version Babylon concurrente du rendu (chunks, bâtiments, mairie, église) a
+vécu des mois dans `world.ts` et `landmarks.ts` sans jamais être exécutée,
+`queryOnly` étant toujours vrai : 1 500 lignes qu'on débogue pour rien.
+Retirée le 19 septembre 2026.
 
 ## Pièges connus (coûteux à redécouvrir)
 
+- Le projet est un JEU LOCAL : `npm run dev` sert des fichiers statiques, rien
+  de plus. Il a traîné des mois un échafaudage de déploiement issu d'un
+  template (worker Cloudflare, `.openai/hosting.json`, `.wrangler/` versionné,
+  plugin `@cloudflare/vite-plugin`) qui construisait un bundle serveur inutile
+  à chaque build. Retiré le 19 septembre 2026 : ne pas le réintroduire.
 - Repère **main droite** (`scene.useRightHandedSystem = true`), hérité de
   Three.js. Z croît vers le sud. Ne jamais convertir les géométries.
 - Géoréférencement : `ORIGIN = { lat: 43.39743, lon: -0.57224 }` dans
@@ -66,8 +80,9 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 - Conventions de rotation : `rotation.y = atan2(nx, nz)` oriente +Z local ;
   pour étendre une boîte le long de (ux, uz) par son axe X, c'est
   `atan2(-uz, ux)` (un préau posé avec la première a enjambé l'avenue).
-- La grille spatiale (`spatial.js`) exige une instance par véhicule et par
-  mesh : un maillage réparti par silhouette n'y entre pas.
+- Une grille spatiale d'instances exige une instance par véhicule et par mesh :
+  un maillage réparti par silhouette n'y entre pas (leçon de `spatial.js`,
+  module de l'ancien moteur Three.js, supprimé).
 - `ecarterDeChaussee` (osm.js) : tout objet ponctuel posé près d'une voie
   (lampadaire, poteau) doit y passer, les positions OSM et les
   triangulations tombent parfois sur la chaussée.
@@ -234,7 +249,8 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 | `models/flotte/*.glb` | 5 voitures Kenney Car Kit + palette | copie du kit |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 
-Caches locaux (gitignorés) : `.panoramax-cache/` (1 Go, photos SD),
+Caches locaux (gitignorés, `data/` inclus depuis le 19 septembre 2026) :
+`.panoramax-cache/` (1 Go, photos SD),
 `.panoramax-cache-hd/` (246 Mo, photos HD), `data/panoramax-inventaire.json`
 (76 365 photos inventoriées).
 

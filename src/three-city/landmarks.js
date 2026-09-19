@@ -443,31 +443,6 @@ function construireAngleArrondi(boite, hauteur) {
   return g;
 }
 
-// Cyprès. Les photographies du centre-bourg en montrent plusieurs, élancés et
-// sombres, à côté des feuillus ronds que le jeu plantait partout : une
-// silhouette conique très reconnaissable, qui manquait à la végétation.
-export function construireCypres(hauteur = 8) {
-  const g = new THREE.Group();
-  const troncMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 1 });
-  const feuilleMat = new THREE.MeshStandardMaterial({
-    color: 0x24422a, roughness: 1, flatShading: true,
-  });
-  const tronc = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.16, 0.22, hauteur * 0.22, 6), troncMat);
-  tronc.position.y = hauteur * 0.11;
-  g.add(tronc);
-  // Trois cônes emboîtés : un seul cône donne une pointe trop régulière, trois
-  // suggèrent la masse dense et irrégulière d'un cyprès.
-  const etages = [[0.20, 0.62, 1.15], [0.48, 0.44, 0.85], [0.72, 0.30, 0.62]];
-  for (const [base, rayon, hauteurRel] of etages) {
-    const c = new THREE.Mesh(
-      new THREE.ConeGeometry(rayon, hauteur * hauteurRel * 0.55, 7), feuilleMat);
-    c.position.y = hauteur * base + hauteur * hauteurRel * 0.275;
-    g.add(c);
-  }
-  return g;
-}
-
 // Immeuble de rue à pignon central, type « Au Comptoir ».
 //
 // Long bâtiment de bourg (39 x 11 m dans la BD TOPO) abritant plusieurs

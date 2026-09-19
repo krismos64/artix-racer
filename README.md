@@ -448,7 +448,7 @@ l'asphalte), ce qui se sent immédiatement au volant.
 ### Son
 
 Tous les bruits sont synthétisés, aucun n'est un enregistrement. La musique,
-elle, est un fichier lu en boucle (`public/audio/music1.m4a`). La boucle
+elle, est un fichier lu en boucle (`public/audio/music1.mp3`). La boucle
 générative décrite plus bas reste dans le code et reprend la main si le
 fichier est absent ou illisible, plutôt que de laisser le jeu muet.
 
@@ -633,18 +633,19 @@ Les principales constantes sont regroupées et commentées :
 
 - `src/car.js` → `SPEC` : masse, empattement, suspensions, rapports de boîte,
   couple moteur, coefficients d'adhérence
-- `src/world.js` → `ROAD_Y`, `WALL_COLORS`, `ROOF_COLORS`, densité des arbres
-- `src/audio.js` → `bpm`, `progression` (accords), niveaux des bus audio
-- `src/osm.js` → `MAX_RADIUS` (rayon de ville chargé), largeurs de voies
-- `src/main.js` → `MODELE_VOITURE` (fichier du véhicule piloté), `GTAO_ECHELLE`
-  (résolution de l'occlusion ambiante)
-- `src/streetlights.js` → `POOL` (nombre de lampadaires calculés), `PORTEE`
-- `src/landmarks.js` → `ANGLES_ARRONDIS`, `IMMEUBLES_RUE` : les bâtiments
-  modélisés un par un depuis les photographies
-- `src/world.js` → `PLACETTES_PAVEES` (emprises pavées non cartographiées)
+- `src/three-city/world.js` → `ROAD_Y`, `GARDE_SOL`, densité des arbres,
+  `PLACETTES_PAVEES` (emprises pavées non cartographiées)
+- `src/three-city/osm.js` → `ORIGIN`, `ROAD_WIDTH` (largeurs de voies)
+- `src/three-city/landmarks.js` → les bâtiments modélisés un par un depuis les
+  photographies
+- `src/audio.ts` → `MUSIQUE`, niveaux des bus audio
+- `src/config.ts` → les trois profils de qualité (brouillard, ombres, SSAO)
+- `src/car.ts` → le modèle du véhicule piloté
 
-En développement, `window.__game` expose la scène, le renderer et
-`setHeure(h)`, qui saute à une heure du cycle jour/nuit sans attendre.
+Depuis la console du navigateur : `__profil()` découpe le temps de frame,
+`__repartition()` classe les appels de dessin par matériau, `__comparer()`
+mesure le GPU hors vsync, `__regarder(x, y, z)` oriente la caméra et `__car`
+donne la voiture (utile pour se téléporter).
 
 ## Le véhicule
 
@@ -708,8 +709,9 @@ Le pack **Kenney Car Kit** (CC0) sert au parc garé et à la circulation. Il
 avait été essayé pour le joueur, puis écarté pour son style franchement
 cartoon, trop contrasté avec une ville reconstituée au LiDAR.
 
-Un maillage procédural reste disponible dans `carmesh.js` : il sert de secours
-si le chargement du glTF échoue.
+Un maillage procédural de secours a existé dans `carmesh.js`, module de
+l'ancien moteur Three.js retiré le 19 septembre 2026 : le jeu charge
+aujourd'hui `ferrari.glb` sans repli.
 
 ## Limites connues
 

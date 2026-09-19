@@ -7,7 +7,6 @@ export type QualityName = 'performance' | 'balanced' | 'quality';
 export interface QualityProfile {
   label: string;
   hardwareScaling: number;
-  chunkRadius: number;
   fogStart: number;
   fogEnd: number;
   shadowMap: number;
@@ -21,14 +20,12 @@ export interface QualityProfile {
   ssao: boolean;
   // Flou de mouvement lié à la vitesse (post-process caméra).
   motionBlur: boolean;
-  vegetationDensity: number;
 }
 
 export const QUALITY: Record<QualityName, QualityProfile> = {
   performance: {
     label: 'Performance',
     hardwareScaling: 1.35,
-    chunkRadius: 2,
     fogStart: 320,
     fogEnd: 690,
     shadowMap: 1024,
@@ -37,14 +34,12 @@ export const QUALITY: Record<QualityName, QualityProfile> = {
     cascades: 2,
     ssao: false,
     motionBlur: false,
-    vegetationDensity: 0.35,
   },
   balanced: {
     // Rendu en résolution native : le facteur 1,18 d'avant étirait l'image
     // et floutait tout, alors que le M4 tient 60 fps en natif.
     label: 'Équilibré',
     hardwareScaling: 1,
-    chunkRadius: 3,
     fogStart: 520,
     fogEnd: 980,
     shadowMap: 2048,
@@ -57,12 +52,10 @@ export const QUALITY: Record<QualityName, QualityProfile> = {
     // 967 × 512 par l'échelle dynamique. Ils restent au profil Qualité.
     ssao: false,
     motionBlur: false,
-    vegetationDensity: 0.62,
   },
   quality: {
     label: 'Qualité',
     hardwareScaling: 1,
-    chunkRadius: 4,
     fogStart: 720,
     fogEnd: 1320,
     shadowMap: 2048,
@@ -71,7 +64,6 @@ export const QUALITY: Record<QualityName, QualityProfile> = {
     cascades: 3,
     ssao: true,
     motionBlur: true,
-    vegetationDensity: 1,
   },
 };
 

@@ -30,7 +30,7 @@ import { ArcadeAudio } from './audio';
 import { ArcadeCar, KeyboardInput } from './car';
 import { DEFAULT_QUALITY, QUALITY, type QualityName } from './config';
 import { GameSession, type GameMode } from './game';
-import { nearestArtixPlace } from './landmarks';
+import { nearestArtixPlace } from './lieux';
 import { Minimap } from './minimap';
 import { buildFaithfulArtix } from './three-city-bridge';
 import { TrafficSystem } from './traffic';
@@ -757,16 +757,11 @@ async function start(): Promise<void> {
   const terrain = faithful.terrain;
   const spawn = faithful.spawn;
 
-  await progress(72, 'Activation du rendu PBR Babylon.js…');
-  const world = new ArtixWorld(
-    scene,
-    terrain as any,
-    map,
-    faithful.altitudeReference,
-    shadow,
-    true,
-  );
-  world.setQuality(QUALITY[DEFAULT_QUALITY].chunkRadius, QUALITY[DEFAULT_QUALITY].vegetationDensity);
+  await progress(72, 'Indexation du sol et des collisions…');
+  // ArtixWorld ne dessine rien : le visuel vient de la couche Three.js
+  // convertie ci-dessus. Il n'indexe que les requêtes de la boucle de jeu
+  // (altitude, chaussée, nom de rue, collision).
+  const world = new ArtixWorld(terrain as any, map);
 
   await progress(82, 'Chargement du véhicule…');
   const car = new ArcadeCar(scene, world, spawn, shadow);
@@ -908,7 +903,6 @@ async function start(): Promise<void> {
     // du pipeline provoquée par le changement de bloom.
     camera.detachPostProcess(flou);
     if (profile.motionBlur) camera.attachPostProcess(flou);
-    world.setQuality(profile.chunkRadius, profile.vegetationDensity);
     traffic.setDensity(next === 'performance' ? .5 : next === 'balanced' ? .78 : 1);
     qualityEl.textContent = profile.label;
   };
@@ -1021,7 +1015,6 @@ async function start(): Promise<void> {
 
     if (playing && !paused) {
       car.update(dt, input);
-      world.update(car.root.position.x, car.root.position.z);
       // Passants et touffes d'herbe : logique Three animée, rendu Babylon.
       faithful.vivant?.update(dt, performance.now() / 1000, car.root.position.x, car.root.position.z);
       if (traffic.update(dt, car.root.position.x, car.root.position.z, performance.now() / 1000)) car.hitTraffic();

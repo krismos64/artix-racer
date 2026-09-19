@@ -23,7 +23,6 @@
     "three": "^0.170.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.37.1",
     "@types/earcut": "^3.0.0",
     "@types/three": "^0.170.0",
     "sharp": "^0.35.3",
