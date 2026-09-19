@@ -2,6 +2,68 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-09-19 : nettoyage du code mort et de l'architecture
+
+Aucun changement visuel : session de ménage. 7 400 lignes jamais exécutées
+retirées, trouvées en suivant le graphe d'imports depuis `index.html` plutôt
+qu'en lisant les fichiers un par un.
+
+**L'ancien moteur Three.js était encore là.** `three-city/main.js` (1 868
+lignes) et dix modules qui n'avaient plus que lui pour importateur : arcade,
+audio, car, carmesh, carmodel, contours, quality, spatial, streetlights,
+minimap. Signe qui ne trompe pas : il importe `@dimforge/rapier3d-compat`,
+absent du `package.json`. Le fichier ne pouvait plus s'exécuter depuis des
+mois, et `vite.config.ts` gardait pourtant un `optimizeDeps.exclude` pour ce
+paquet fantôme.
+
+**Un second rendu dormait dans la couche Babylon.** `ArtixWorld` est
+construit avec `queryOnly` à vrai, et lui seul : tout ce que protège ce
+drapeau (chunks, terrain, bâtiments, végétation, landmarks) était
+inatteignable. `landmarks.ts` construisait une mairie, une église et un
+Leclerc en Babylon que personne n'a jamais vus, les vrais venant de
+`three-city/landmarks.js`. C'est le piège coûteux de la session : deux
+implémentations concurrentes du même bâtiment, dont une seule est branchée,
+et rien dans le code ne le disait. `world.ts` tombe de 975 à 283 lignes et
+assume son rôle réel d'index spatial ; `landmarks.ts`, réduit à la table des
+lieux-dits du HUD, devient `lieux.ts` ; `materials.ts` et `mesh-builder.ts`
+disparaissent avec le rendu qu'ils servaient.
+
+**Des doublons de données avaient divergé en silence.** `src/data/*.ts`
+recopiait osm, terrain et bdtopo, mais figés à une version ancienne :
+palette de murs d'avant la refonte des teintes, et `BATIMENTS_MODELISES`
+amputé des quinze bâtiments modélisés depuis (gare, McDo, gendarmerie,
+écoles). Seul `bdtopo.ts` restait importé, par le code inerte de `world.ts`.
+`ORIGIN` et `project` n'ont plus qu'une définition.
+
+**Le projet traînait un déploiement qu'il n'aura jamais.** Worker
+Cloudflare, plugin `@cloudflare/vite-plugin`, `.openai/hosting.json`,
+`.wrangler/` versionné : échafaudage d'un template de départ, alors que le
+jeu est local et ne sera pas mis en ligne. Chaque build fabriquait un bundle
+serveur inutile. `node_modules` passe de 451 à 275 Mo, le lockfile perd
+1 038 lignes.
+
+Assets orphelins retirés : les deux AudiR8 (remplacés par la Ferrari),
+`music1.m4a` (lu par l'audio Three.js supprimé), une copie de `music1.mp3`
+de 8,4 Mo oubliée à la racine, un aperçu de ciel. `data/` rejoint le
+`.gitignore` comme les autres caches Panoramax : ses 11 Mo d'inventaire
+alourdissaient chaque clone alors que le CLAUDE.md le décrivait déjà comme
+un cache local.
+
+**Vérifié en jeu, pas seulement au type-check.** Chargement complet jusqu'à
+« Prêt à rouler », 60 fps, zéro erreur ni avertissement en console, 2 716
+maillages convertis. La voiture roule sur 16 m, l'altitude suit le terrain
+(`surfaceY`), le bandeau affiche « Avenue du 18e Régiment d'Infanterie »
+puis bascule en « HORS-PISTE » à la sortie de chaussée (`isOnRoad`,
+`roadNameAt`), la collision avec le bâti arrête la voiture
+(`collidesBuilding`), et `__profil`/`__repartition` répondent toujours.
+
+Piste laissée ouverte : le bundle principal pèse 6,1 Mo parce que Babylon et
+Three sont tous deux embarqués. Three ne sert plus qu'à construire la
+géométrie au chargement, avant conversion ; rien ne l'utilise pendant la
+partie. Le sortir du bundle principal demanderait de faire de la
+construction de ville un import dynamique, ce qui ne changerait pas le
+nombre d'appels de dessin, donc pas les fps.
+
 ## 2026-09-04 (suite 7) : panneaux de police à droite, et rendus en volume
 
 Christophe a signalé deux défauts sur les STOP et cédez-le-passage : posés à
