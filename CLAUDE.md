@@ -54,6 +54,20 @@ Retirée le 19 septembre 2026.
   template (worker Cloudflare, `.openai/hosting.json`, `.wrangler/` versionné,
   plugin `@cloudflare/vite-plugin`) qui construisait un bundle serveur inutile
   à chaque build. Retiré le 19 septembre 2026 : ne pas le réintroduire.
+- Personnage instancié : les PROPORTIONS priment sur le détail. Les passants
+  ont vécu des mois en capsule + sphère à 1,10 m de haut, plus petits que la
+  Ferrari (1,19 m) ; un rapport épaules/tête de 1,5 au lieu de 2,2 donne un
+  bonhomme de neige. Cotes utiles depuis la plante des pieds, pour 1,72 m :
+  entrejambe 0,83, épaules 1,41, menton 1,50, crâne 1,72. Faire pivoter un
+  membre à son ARTICULATION (hanche, épaule) en décalant sa géométrie vers le
+  bas, jamais sur son milieu : une capsule de bras centrée sur l'épaule monte
+  dans le cou et barre le torse.
+- Un membre symétrique ne mérite pas deux maillages : gauche et droite
+  partagent la couleur, seule la matrice diffère. Un seul InstancedMesh de
+  2n instances (gauche à i, droite à n + i) suffit, et `setVisibles` doit
+  alors borner ces maillages à `effectifMax + visibles`, sinon tous les
+  membres droits disparaissent. Mesuré sur les passants : neuf maillages
+  coûtaient 5,5 fps, six n'en coûtent que 0,4.
 - Repère **main droite** (`scene.useRightHandedSystem = true`), hérité de
   Three.js. Z croît vers le sud. Ne jamais convertir les géométries.
 - Géoréférencement : `ORIGIN = { lat: 43.39743, lon: -0.57224 }` dans

@@ -2,6 +2,63 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-09-19 (suite) : les passants cessent d'être des capsules
+
+Christophe a demandé de traiter les piétons, dernier point resté ouvert du
+chantier visuel. Une capture rapprochée a montré pire qu'annoncé : une grosse
+gélule de tronc surmontée d'une sphère presque aussi large, sans cou ni
+épaules, bras noyés dans la masse. Un bonhomme de neige.
+
+**Le défaut dominant n'était pas la forme, c'était la TAILLE.** Les cotes de
+placement donnaient un sommet de crâne à 1,095 m pour une échelle de 1, et la
+dispersion allait de 0,99 à 1,23 m. Mesuré en jeu contre la Ferrari (1,19 m) :
+les passants d'Artix étaient plus petits que la voiture. Rapport
+épaules/hauteur de tête : 1,48 quand un humain est à 2,2.
+
+Silhouette refaite sur des repères anatomiques, mesurés depuis la plante des
+pieds pour 1,72 m à l'échelle 1 : entrejambe 0,83, épaules 1,41, menton 1,50,
+crâne 1,72. Le buste devient un tronc à sections elliptiques empilées (0,42 m
+aux épaules, 0,29 m à la taille) qui s'arrête à la hanche comme un vêtement,
+plus un cou, une tête ovoïde, une chevelure en calotte et des chaussures. Les
+volumes sont FERMÉS par des disques aux deux bouts, le pont désactivant le
+back-face culling (même piège que les haies).
+
+**Trois bugs successifs, chacun trouvé en mesurant plutôt qu'en regardant.**
+D'abord la capsule de bras, centrée sur l'épaule, montait à 1,675 m : au-dessus
+du cou, elle barrait le torse en diagonale. Ensuite la chaussure, noyée sous le
+dôme de la capsule de jambe. Enfin, corrigée en trigonométrie séparée, elle
+partait à un mètre de son propriétaire : le déport d'avancée était appliqué
+deux fois, une fois en translation de hanche et une fois par la rotation. La
+parade est de faire subir au vecteur hanche-cheville la rotation de la cuisse,
+et de laisser le pied horizontal.
+
+**Le vrai enjeu était le nombre d'appels de dessin, comme toujours ici.** La
+silhouette détaillée est passée par neuf maillages, qui coûtaient 5,5 fps sur
+le parvis de la gare. Couper les parties une à une a montré un coût réparti
+uniformément (1 à 2,8 fps chacune), sans triangle coupable : le prix est celui
+de l'appel, pas de la géométrie. Le cou a donc rejoint la tête (même
+carnation, même mouvement) et chaque paire de membres tient désormais dans UN
+maillage de 2n instances, le gauche à l'indice i et le droit à n + i, les deux
+partageant leur couleur. Six maillages au total, soit un de MOINS qu'avant la
+refonte, pour un passant qui a gagné un cou et des chaussures. Coût retombé à
+0,4 fps.
+
+Piège au passage : `setVisibles` bornait tous les maillages à `visibles`, ce
+qui aurait effacé l'intégralité des membres droits, rangés au-delà de
+`effectifMax`.
+
+Vérifié en jeu contre la version d'origine, au même endroit : 52,3 fps avant,
+54,2 après, et 60 fps au centre-bourg avec un coût piétons nul. La marche
+s'anime (l'écart entre les pieds oscille de 0,21 à 0,61 m), les bras balancent
+et gesticulent en conversation, console vide. Les captures à 6 et 11 m
+montrent un adulte crédible à l'échelle des fenêtres et des volets.
+
+Méthode qui a payé : mesurer les cotes rendues (bounding box de chaque partie
+rapportée au sol) au lieu de juger à l'œil sur une capture rapprochée, dont la
+perspective exagère les jambes. Et comparer les fps à la version d'origine
+AU MÊME ENDROIT avant de conclure à une régression : les 53 fps du quartier de
+la gare y étaient déjà.
+
 ## 2026-09-19 : nettoyage du code mort et de l'architecture
 
 Aucun changement visuel : session de ménage. 7 400 lignes jamais exécutées

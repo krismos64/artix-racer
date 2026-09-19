@@ -198,7 +198,9 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
   sodium n'étant jamais noire entre deux lampadaires.
 - **Ville habitée** : 110 passants marchent sur les cheminements piétons
   réels, s'arrêtent pour discuter, traversent aux passages ; touffes d'herbe
-  3D sur les bas-côtés.
+  3D sur les bas-côtés. Silhouettes aux proportions d'adultes de 1,60 à
+  1,86 m (buste à épaules, cou, chevelure, chaussures), en six maillages
+  instanciés qui coûtent 0,4 fps pour 110 personnes.
 - **Haies de clôture** (`src/three-city/haies.js`) : quatre espèces relevées
   sur Street View, laurier-palme, cyprès de Leyland, troène doré et charmille
   sur tronc. Volumes à flancs dressés et crête dentelée, avec un grain de
@@ -723,8 +725,9 @@ aujourd'hui `ferrari.glb` sans repli.
   dans le code derrière le drapeau `PLACAGE_PHOTO`
 - les bâtiments en fond de parcelle gardent une teinte déduite de leur
   matériau BD TOPO : aucune photographie de rue ne les atteint
-- les **piétons sont des capsules** articulées : ils marchent, discutent et
-  gesticulent correctement, mais leur silhouette n'a pas été remodelée
+- les **piétons n'ont ni visage ni mains** : la silhouette est juste en
+  proportions et se tient à la distance de conduite, mais un arrêt sur image
+  à deux mètres montre des membres en capsules et une tête lisse
 - les **feuillages** sont des lobes d'icosaèdre dentelés par texture alpha,
   éclaircis pour le nouvel éclairage mais pas remodelés
 - l'ombre des **véhicules de la flotte** vient d'un voile de contact et non
