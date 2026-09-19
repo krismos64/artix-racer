@@ -4,6 +4,12 @@
 //
 // Le rendu se fait par InstancedMesh : quelques centaines de silhouettes
 // animées ne coûtent qu'une poignée d'appels de dessin.
+//
+// Proportions : un adulte de 1,72 m à l'échelle 1, mesuré depuis la plante
+// des pieds (entrejambe 0,83, épaules 1,41, sommet du crâne 1,72). La
+// première version empilait une capsule de tronc et une sphère de tête de
+// diamètre presque égal, pour un passant de 1,10 m : un bonhomme de neige
+// plus petit que la Ferrari (1,19 m).
 import * as THREE from 'three';
 
 // Palette de vêtements : teintes ordinaires d'un bourg béarnais, sans
@@ -15,6 +21,9 @@ const HAUTS = [
 const BAS = [0x2b3038, 0x3a3f47, 0x4a4034, 0x22262c, 0x5a4f42];
 const PEAU = [0xe8c4a0, 0xd9ae86, 0xc99a70, 0xa87550, 0x8a5f3e];
 const CHEVEUX = [0x2a1f18, 0x4a3524, 0x6b4a2f, 0x8a7250, 0x3a3a3a, 0x9c9184];
+// Chaussures : cuir sombre et baskets claires, comme dans n'importe quelle
+// rue. Des pieds tous noirs faisaient une rangée de points identiques.
+const CHAUSSURES = [0x1e1c1a, 0x2c2622, 0x3a3128, 0x4a4a4e, 0xb8b2a6, 0x6b3f2c];
 
 // Vitesse de marche : 1,2 m/s en moyenne, un peu plus vite pour certains.
 const VITESSE_BASE = 1.15;
@@ -22,6 +31,100 @@ const VITESSE_BASE = 1.15;
 function hash(n) {
   const s = Math.sin(n * 127.1) * 43758.5453;
   return s - Math.floor(s);
+}
+
+// Volume de révolution à sections elliptiques empilées, pour un buste qui
+// s'élargit aux épaules et se resserre au bassin. Chaque section donne
+// [demi-largeur X, demi-profondeur Z, hauteur Y]. Le volume est FERMÉ par un
+// disque en haut et en bas : le pont Three→Babylon désactive le back-face
+// culling sur tous les matériaux, un volume ouvert par une extrémité montre
+// son intérieur éclairé et ressort délavé.
+function tronc(sections, segments) {
+  const pos = [], idx = [];
+  for (const [rx, rz, y] of sections) {
+    for (let k = 0; k < segments; k++) {
+      const a = (k / segments) * Math.PI * 2;
+      pos.push(Math.cos(a) * rx, y, Math.sin(a) * rz);
+    }
+  }
+  // Bandes latérales entre sections consécutives.
+  for (let s = 0; s < sections.length - 1; s++) {
+    const b0 = s * segments, b1 = (s + 1) * segments;
+    for (let k = 0; k < segments; k++) {
+      const k2 = (k + 1) % segments;
+      idx.push(b0 + k, b1 + k, b0 + k2);
+      idx.push(b0 + k2, b1 + k, b1 + k2);
+    }
+  }
+  // Fermetures : un sommet central par extrémité.
+  const bas = pos.length / 3;
+  pos.push(0, sections[0][2], 0);
+  for (let k = 0; k < segments; k++) {
+    idx.push(bas, (k + 1) % segments, k);
+  }
+  const haut = pos.length / 3;
+  const dernier = (sections.length - 1) * segments;
+  pos.push(0, sections[sections.length - 1][2], 0);
+  for (let k = 0; k < segments; k++) {
+    idx.push(haut, dernier + k, dernier + (k + 1) % segments);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+// Concatène plusieurs géométries en une seule, pour épargner un appel de
+// dessin par partie. Trois.js fournit `mergeGeometries`, mais il exige des
+// jeux d'attributs identiques ; ici toutes les pièces n'ont que `position`,
+// les normales étant recalculées après coup.
+function fusionner(geometries) {
+  const pos = [], idx = [];
+  let decalage = 0;
+  for (const g of geometries) {
+    const p = g.attributes.position.array;
+    for (let i = 0; i < p.length; i++) pos.push(p[i]);
+    const ind = g.index ? g.index.array : null;
+    if (ind) {
+      for (let i = 0; i < ind.length; i++) idx.push(ind[i] + decalage);
+    } else {
+      for (let i = 0; i < p.length / 3; i++) idx.push(i + decalage);
+    }
+    decalage += p.length / 3;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setIndex(idx);
+  out.computeVertexNormals();
+  return out;
+}
+
+// Calotte sphérique refermée par un disque : la chevelure coiffe le crâne
+// sans laisser de bord ouvert.
+function calotte(rayon, fraction, segments) {
+  const g = new THREE.SphereGeometry(rayon, segments, 8, 0, Math.PI * 2, 0, Math.PI * fraction);
+  const pos = Array.from(g.attributes.position.array);
+  const idx = Array.from(g.index.array);
+  // Le dernier anneau de la sphère partielle borde l'ouverture : on le
+  // referme par un disque au niveau de son plan.
+  const yBord = Math.cos(Math.PI * fraction) * rayon;
+  const rBord = Math.sin(Math.PI * fraction) * rayon;
+  const centre = pos.length / 3;
+  pos.push(0, yBord, 0);
+  const premier = centre + 1;
+  for (let k = 0; k < segments; k++) {
+    const a1 = (k / segments) * Math.PI * 2;
+    const a2 = ((k + 1) / segments) * Math.PI * 2;
+    pos.push(Math.cos(a1) * rBord, yBord, Math.sin(a1) * rBord);
+    idx.push(centre, premier + k, premier + ((k + 1) % segments));
+    void a2;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setIndex(idx);
+  out.computeVertexNormals();
+  return out;
 }
 
 // Extrait le réseau de cheminements piétons : trottoirs, sentiers, places.
@@ -157,28 +260,88 @@ export class Pietons {
     this.peupler(effectif);
   }
 
-  // Silhouette humaine simplifiée : corps, tête, deux jambes, deux bras.
-  // Chaque partie est un InstancedMesh distinct, animé indépendamment pour
-  // que la marche se lise.
+  // Silhouette humaine simplifiée en SIX maillages : buste, tête (cou
+  // compris), chevelure, puis jambes, bras et chaussures, chacun de ces
+  // trois derniers réunissant le membre gauche et le droit dans un même
+  // maillage de 2n instances. Chaque partie est animée indépendamment pour
+  // que la marche se lise. Le nombre de maillages compte : à neuf, les
+  // passants coûtaient 5,5 fps ; à six, 0,4.
   construireMeshes(n) {
     const mat = (rough) => new THREE.MeshStandardMaterial({ roughness: rough });
 
-    const corpsGeo = new THREE.CapsuleGeometry(0.17, 0.42, 4, 8);
-    const teteGeo = new THREE.SphereGeometry(0.115, 10, 8);
-    const membreGeo = new THREE.CapsuleGeometry(0.058, 0.34, 3, 6);
-    const brasGeo = new THREE.CapsuleGeometry(0.048, 0.30, 3, 6);
-    const chevGeo = new THREE.SphereGeometry(0.121, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.62);
+    // Buste : tronc de pyramide à section elliptique, large aux épaules
+    // (0,42 m) et resserré au bassin (0,32 m). Une capsule donnait un
+    // cylindre de 0,34 m de diamètre constant, d'où la silhouette en gélule.
+    // Les sections sont EMPILÉES, épaules comprises, pour que le volume soit
+    // fermé : le pont désactive le back-face culling sur tous les matériaux,
+    // un volume ouvert ressort délavé (déjà vécu sur les haies).
+    // Sections mesurées depuis le bas du vêtement (hanches, 0,95 m du sol)
+    // jusqu'aux trapèzes. Hauteur totale 0,53 m : un veston s'arrête à la
+    // hanche. Descendre plus bas (l'essai à 0,84) habillait le haut des
+    // cuisses et effaçait l'articulation des jambes.
+    const bustGeo = tronc([
+      [0.150, 0.100, 0.000],   // bas du vêtement, sur les hanches
+      [0.146, 0.096, 0.055],   // taille, le point le plus étroit
+      [0.180, 0.112, 0.245],   // cage thoracique
+      [0.208, 0.122, 0.435],   // épaules, le point le plus large
+      [0.196, 0.114, 0.490],   // haut des épaules
+      [0.138, 0.094, 0.530],   // trapèzes, resserrés vers le cou
+    ], 12);
 
-    this.corps = new THREE.InstancedMesh(corpsGeo, mat(0.85), n);
-    this.tete = new THREE.InstancedMesh(teteGeo, mat(0.7), n);
+    // Tête ovoïde AVEC son cou, en un seul maillage : les deux portent la
+    // même carnation et ne bougent jamais l'un par rapport à l'autre, les
+    // séparer coûtait un appel de dessin pour rien (le coût dominant de la
+    // scène est le nombre d'appels, pas les triangles).
+    // Une sphère parfaite de 0,23 m lisait comme une boule de bonhomme de
+    // neige : elle est étirée en hauteur et aplatie en largeur.
+    const teteGeo = new THREE.SphereGeometry(0.098, 10, 8);
+    teteGeo.scale(0.86, 1.16, 0.94);
+    const couGeo = new THREE.CylinderGeometry(0.052, 0.064, 0.115, 7);
+    couGeo.translate(0, -0.145, 0);
+    const teteEtCou = fusionner([teteGeo, couGeo]);
+
+    // Chevelure : calotte posée sur le crâne, refermée par un disque pour
+    // que le volume reste clos (le pont désactive le back-face culling).
+    const chevGeo = calotte(0.103, 0.58, 9);
+    chevGeo.scale(0.88, 1.16, 0.96);
+
+    // Membres : plus fins et plus longs que les anciens. Jambe = cuisse +
+    // mollet (0,80 m), bras = 0,58 m épaule-poignet.
+    // Jambe : hanche 0,826 à cheville 0,095, soit 0,73 m entre les centres
+    // des deux calottes. Le pivot étant la hanche, on DÉCALE la géométrie
+    // vers le bas : ainsi une rotation de cuisse fait balancer la jambe au
+    // lieu de la faire tourner sur son milieu.
+    const membreGeo = new THREE.CapsuleGeometry(0.052, 0.645, 3, 6);
+    membreGeo.translate(0, -0.3765, 0);
+    // Bras : épaule 1,41 à poignet 0,68, soit 0,73 m. Même décalage, pivot
+    // à l'épaule. Sans lui, la capsule centrée sur l'épaule montait à
+    // 1,675 m, au-dessus du cou, et barrait le torse en diagonale.
+    const brasGeo = new THREE.CapsuleGeometry(0.040, 0.58, 3, 6);
+    brasGeo.translate(0, -0.365, 0);
+    // Chaussure : semelle au sol, chaussure décalée vers l'AVANT du pied
+    // (le pivot est la cheville, les orteils sont devant).
+    const chaussureGeo = new THREE.BoxGeometry(0.098, 0.068, 0.245);
+    // Semelle sous la cheville (la boîte descend de 0,068 depuis le pivot)
+    // et décalée vers l'AVANT : les orteils dépassent, le talon non.
+    chaussureGeo.translate(0, -0.034, 0.052);
+
+    this.corps = new THREE.InstancedMesh(bustGeo, mat(0.85), n);
+    this.tete = new THREE.InstancedMesh(teteEtCou, mat(0.7), n);
     this.cheveux = new THREE.InstancedMesh(chevGeo, mat(0.9), n);
-    this.jambeG = new THREE.InstancedMesh(membreGeo, mat(0.85), n);
-    this.jambeD = new THREE.InstancedMesh(membreGeo, mat(0.85), n);
-    this.brasG = new THREE.InstancedMesh(brasGeo, mat(0.85), n);
-    this.brasD = new THREE.InstancedMesh(brasGeo, mat(0.85), n);
+    // Membres pairs : UN SEUL maillage de 2n instances par type, le membre
+    // gauche du passant i à l'indice i, le droit à n + i. Gauche et droite
+    // partagent la même couleur (le haut, le bas, la chaussure), seule leur
+    // matrice diffère : les séparer coûtait trois appels de dessin par
+    // cascade d'ombre pour un résultat identique à l'image.
+    this.jambes = new THREE.InstancedMesh(membreGeo, mat(0.85), n * 2);
+    this.bras = new THREE.InstancedMesh(brasGeo, mat(0.85), n * 2);
+    // Chaussures : sans elles, la capsule de jambe se termine en dôme et le
+    // passant paraît flotter.
+    this.pieds = new THREE.InstancedMesh(chaussureGeo, mat(0.55), n * 2);
+    this.effectifMax = n;
 
     for (const m of [this.corps, this.tete, this.cheveux,
-      this.jambeG, this.jambeD, this.brasG, this.brasD]) {
+      this.jambes, this.bras, this.pieds]) {
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       m.frustumCulled = false;
       this.group.add(m);
@@ -194,11 +357,13 @@ export class Pietons {
     this._axeY = new THREE.Vector3(0, 1, 0);
     this._echelle = new THREE.Vector3(1, 1, 1);
     this._posTmp = new THREE.Vector3();
-    this._membres = [[this.jambeG, 1], [this.jambeD, -1]];
-    this._bras = [[this.brasG, 1], [this.brasD, -1]];
+    this._cheville = new THREE.Vector3();
+    // Chaque membre porte son signe (gauche 1, droite -1) et le décalage
+    // d'instance qui lui revient dans le maillage partagé.
+    this._membres = [[1, 0], [-1, n]];
     // Liste des maillages à marquer pour mise à jour, figée elle aussi.
     this._tousMaillages = [this.corps, this.tete, this.cheveux,
-      this.jambeG, this.jambeD, this.brasG, this.brasD];
+      this.jambes, this.bras, this.pieds];
   }
 
   peupler(n) {
@@ -212,8 +377,11 @@ export class Pietons {
         cible: this.choisirVoisin(depart, -1),
         avance: 0,
         // Chacun a sa taille et son allure : un groupe uniforme se repère
-        // immédiatement comme artificiel.
-        taille: 0.90 + t * 0.22,
+        // immédiatement comme artificiel. Les cotes de placement valent
+        // 1,72 m à T = 1, donc 1,60 m à 1,86 m : la dispersion réelle des
+        // adultes. L'ancienne plage (0,90 à 1,12 sur des cotes calées à
+        // 1,10 m) peuplait la ville de passants d'un mètre de haut.
+        taille: 0.93 + t * 0.15,
         vitesse: VITESSE_BASE * (0.78 + hash(i * 5.7) * 0.5),
         phase: hash(i * 11.3) * Math.PI * 2,
         // État : marche, arrêt, ou conversation avec un voisin.
@@ -226,20 +394,26 @@ export class Pietons {
       this.agents.push(agent);
 
       // Couleurs fixées une fois : elles ne changent pas d'une frame à l'autre.
+      // Les deux membres d'une paire vivent dans le même maillage, aux
+      // indices i et n + i : même teinte, matrices distinctes.
       col.setHex(HAUTS[Math.floor(hash(i * 13.7) * HAUTS.length)] || 0x3b5a6b);
       this.corps.setColorAt(i, col);
-      this.brasG.setColorAt(i, col);
-      this.brasD.setColorAt(i, col);
+      this.bras.setColorAt(i, col);
+      this.bras.setColorAt(n + i, col);
       col.setHex(BAS[Math.floor(hash(i * 17.1) * BAS.length)]);
-      this.jambeG.setColorAt(i, col);
-      this.jambeD.setColorAt(i, col);
+      this.jambes.setColorAt(i, col);
+      this.jambes.setColorAt(n + i, col);
+      // Le cou porte la même carnation que le visage : une teinte distincte
+      // trahirait le raccord entre les deux volumes.
       col.setHex(PEAU[Math.floor(hash(i * 19.3) * PEAU.length)]);
       this.tete.setColorAt(i, col);
       col.setHex(CHEVEUX[Math.floor(hash(i * 23.9) * CHEVEUX.length)]);
       this.cheveux.setColorAt(i, col);
+      col.setHex(CHAUSSURES[Math.floor(hash(i * 29.5) * CHAUSSURES.length)]);
+      this.pieds.setColorAt(i, col);
+      this.pieds.setColorAt(n + i, col);
     }
-    for (const m of [this.corps, this.tete, this.cheveux,
-      this.jambeG, this.jambeD, this.brasG, this.brasD]) {
+    for (const m of this._tousMaillages) {
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
   }
@@ -263,10 +437,10 @@ export class Pietons {
     const echelle = this._echelle;
     const axeY = this._axeY;
     const posTmp = this._posTmp;
+    const cheville = this._cheville;
     const qq = this._qq;
     const eulerTmp = this._euler;
     const membres = this._membres;
-    const bras = this._bras;
 
     for (let i = 0; i < this.agents.length; i++) {
       const a = this.agents[i];
@@ -384,50 +558,83 @@ export class Pietons {
       const bob = a.etat === 'discute' ? 0 : Math.abs(Math.sin(cadence)) * 0.022;
 
       echelle.set(T, T, T);
-      m.compose(posTmp.set(p.x, base + (0.62 + bob) * T, p.z), q, echelle);
+      // Cotes anatomiques d'un adulte de 1,72 m à T = 1, mesurées depuis la
+      // plante des pieds : entrejambe 0,83, épaules 1,41, menton 1,50,
+      // sommet du crâne 1,72. Les anciennes (buste à 0,62, tête à 0,98)
+      // donnaient un passant de 1,10 m, soit un enfant de six ans à côté de
+      // la Ferrari qui fait 1,19 m.
+      // Le buste est posé par son BASSIN : sa géométrie est empilée vers le
+      // haut depuis y = 0.
+      m.compose(posTmp.set(p.x, base + (0.945 + bob) * T, p.z), q, echelle);
       this.corps.setMatrixAt(i, m);
 
-      m.compose(posTmp.set(p.x, base + (0.98 + bob) * T, p.z), q, echelle);
+      // Tête et cou en un bloc, posés sur les trapèzes.
+      m.compose(posTmp.set(p.x, base + (1.605 + bob) * T, p.z), q, echelle);
       this.tete.setMatrixAt(i, m);
-      m.compose(posTmp.set(p.x, base + (0.995 + bob) * T, p.z), q, echelle);
+      m.compose(posTmp.set(p.x, base + (1.618 + bob) * T, p.z), q, echelle);
       this.cheveux.setMatrixAt(i, m);
 
-      // Jambes : décalage latéral et balancement en opposition de phase.
-      const latX = Math.cos(cap) * 0.075 * T;
-      const latZ = -Math.sin(cap) * 0.075 * T;
+      // Jambes : décalage latéral et balancement en opposition de phase. Le
+      // pivot est la HANCHE (0,83), la capsule descendant de là vers le sol.
+      // Écartement des hanches : 0,068 m de part et d'autre de l'axe, soit
+      // 2,6 cm de vide entre deux cuisses de 5,2 cm de rayon. À 0,088 les
+      // jambes bâillaient et le passant marchait en cow-boy.
+      const latX = Math.cos(cap) * 0.068 * T;
+      const latZ = -Math.sin(cap) * 0.068 * T;
       for (const paire of membres) {
-        const mesh = paire[0], signe = paire[1];
-        const av = Math.sin(cadence) * signe * 0.19 * T;
+        const signe = paire[0], base2 = paire[1], k = base2 + i;
         eulerTmp.set(swing * signe, cap, 0, 'YXZ');
         qq.setFromEuler(eulerTmp);
+        const hancheX = p.x + latX * signe;
+        const hancheZ = p.z + latZ * signe;
+        // Pivot à la HANCHE : la géométrie de la jambe est décalée vers le
+        // bas, la rotation la fait donc balancer comme une vraie cuisse.
+        // L'avancée du pied vient de CETTE rotation seule : l'ajouter aussi
+        // en translation (l'ancien `av`) déportait la jambe deux fois et
+        // laissait la chaussure à un mètre de son propriétaire.
+        m.compose(posTmp.set(hancheX, base + 0.826 * T, hancheZ), qq, echelle);
+        this.jambes.setMatrixAt(k, m);
+
+        // Chaussure : posée à l'extrémité de la capsule de jambe, obtenue en
+        // faisant subir au vecteur hanche->cheville la rotation de la cuisse.
+        // Le pied reste horizontal (quaternion `q`, cap seul) : une chaussure
+        // qui pivoterait avec la cuisse pointerait vers le ciel.
+        cheville.set(0, -0.751, 0).applyQuaternion(qq).multiplyScalar(T);
         m.compose(
           posTmp.set(
-            p.x + latX * signe + Math.sin(cap) * av,
-            base + 0.28 * T,
-            p.z + latZ * signe + Math.cos(cap) * av,
+            hancheX + cheville.x,
+            base + 0.826 * T + cheville.y,
+            hancheZ + cheville.z,
           ),
-          qq, echelle,
+          q, echelle,
         );
-        mesh.setMatrixAt(i, m);
+        this.pieds.setMatrixAt(k, m);
       }
 
       // Bras : balancement inverse des jambes, ou gesticulation en discussion.
-      for (const paire of bras) {
-        const mesh = paire[0], signe = paire[1];
+      for (const paire of membres) {
+        const signe = paire[0], k = paire[1] + i;
         const angle = a.etat === 'discute'
           ? -0.7 - a.geste * signe * 0.6
           : -swing * signe;
-        eulerTmp.set(angle, cap, 0, 'YXZ');
+        // Rentré de 7° vers le corps : le buste se resserre de 0,208 aux
+        // épaules à 0,146 à la taille, un bras strictement vertical laissait
+        // 4 cm de jour sous l'aisselle et donnait une posture de pingouin.
+        // En conversation le bras s'écarte, le geste doit rester lisible.
+        const rentre = a.etat === 'discute' ? -0.02 : 0.12;
+        eulerTmp.set(angle, cap, rentre * signe, 'YXZ');
         qq.setFromEuler(eulerTmp);
+        // Pivot à l'ÉPAULE (1,41), écarté de 0,205 m de l'axe : la
+        // demi-largeur d'épaules est 0,208, le bras affleure le buste.
         m.compose(
           posTmp.set(
-            p.x + Math.cos(cap) * 0.215 * T * signe,
-            base + (0.66 + bob) * T,
-            p.z - Math.sin(cap) * 0.215 * T * signe,
+            p.x + Math.cos(cap) * 0.205 * T * signe,
+            base + (1.405 + bob) * T,
+            p.z - Math.sin(cap) * 0.205 * T * signe,
           ),
           qq, echelle,
         );
-        mesh.setMatrixAt(i, m);
+        this.bras.setMatrixAt(k, m);
       }
     }
 
@@ -452,7 +659,14 @@ export class Pietons {
   // simple entier, là où reconstruire réallouerait sept géométries.
   setVisibles(n) {
     this.visibles = Math.max(0, Math.min(this.agents.length, n));
-    for (const m of this._tousMaillages ?? []) m.count = this.visibles;
+    // Les maillages pairs rangent le membre gauche du passant i à l'indice i
+    // et le droit à effectifMax + i : borner leur `count` à `visibles` comme
+    // les autres effacerait TOUS les membres droits. Le pool étant contigu,
+    // on prend l'intervalle qui couvre les deux moitiés.
+    for (const m of this._tousMaillages ?? []) {
+      const pair = m === this.jambes || m === this.bras || m === this.pieds;
+      m.count = pair ? this.effectifMax + this.visibles : this.visibles;
+    }
     return this.visibles;
   }
 

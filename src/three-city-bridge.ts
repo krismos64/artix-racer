@@ -722,7 +722,7 @@ export async function buildFaithfulArtix(
     live.adopter(touffes.mesh, 'touffes-herbe');
     if (pietons.effectif) {
       const parties = [pietons.corps, pietons.tete, pietons.cheveux,
-        pietons.jambeG, pietons.jambeD, pietons.brasG, pietons.brasD];
+        pietons.jambes, pietons.bras, pietons.pieds];
       parties.forEach((im, i) => live.adopter(im, `pietons-${i}`));
     }
     if (circulation.effectif) {
