@@ -94,9 +94,17 @@ d'Infanterie, Place du Général de Gaulle, Rue de la Patte d'Oie, La Pyrénéen
 Pour re-télécharger les données :
 
 ```bash
-npm run fetch-osm && npm run fetch-bdtopo && npm run fetch-poi
-npm run fetch-lidar && npm run fetch-facades
+npm run fetch-panoramax     # teinte, volets et grain des 2 869 façades
+npm run fetch-facades-photo # 254 façades rectifiées en atlas
+npm run fetch-centre        # 109 façades HD du corridor du bourg
+npm run fetch-sols          # enrobés, parkings, usure des passages
+npm run fetch-poteaux       # 357 poteaux triangulés
 ```
+
+Les fonds OSM, BD TOPO et LiDAR (`artix-osm.json`, `artix-bdtopo.json`,
+`artix-toits-lidar.json`) sont livrés avec le dépôt et n'ont pas de script de
+rafraîchissement : ils ont été constitués une fois par requêtes Overpass et
+WFS/WMS IGN.
 
 ### Signalisation et équipements
 
@@ -324,9 +332,9 @@ de mesures, assez pour retrouver sa pente, l'orientation de son faîtage et
 distinguer un deux-pans d'une couverture à pente unique.
 
 Les deux modèles sont servis en WMS par la Géoplateforme, en GeoTIFF 32 bits.
-On ne conserve pas la grille (576 Mo pour la zone de jeu) : `npm run fetch-lidar`
-échantillonne dans l'emprise de chaque bâtiment et n'en garde qu'une
-description compacte, 195 Ko pour la commune entière.
+On ne conserve pas la grille (576 Mo pour la zone de jeu) : l'échantillonnage
+se fait dans l'emprise de chaque bâtiment et n'en garde qu'une description
+compacte, 195 Ko pour la commune entière (`artix-toits-lidar.json`).
 
 **3 537 toitures sur 3 542 sont ainsi mesurées** (99,9 %), contre 80 % avec le
 relevé précédent : 519 couvertures plates, 1 561 à pente unique et 1 457 à deux
@@ -353,7 +361,7 @@ des données IGN et OSM.
 
 **Panoramax**, le service de photographies de rue de l'IGN, couvre Artix avec
 plus de 22 000 panoramiques 360° de janvier 2025, sous Licence Ouverte 2.0,
-plaques d'immatriculation et visages déjà floutés. `npm run fetch-facades` y
+plaques d'immatriculation et visages déjà floutés. `npm run fetch-panoramax` y
 relève la teinte réelle des façades. La source libre est ici techniquement
 supérieure, pas un pis-aller.
 
@@ -505,7 +513,7 @@ fichier est absent ou illisible, plutôt que de laisser le jeu muet.
   bâtiment : c'est ce qui distingue le plus nettement une façade d'un bloc
   coloré
 - ciel photographique HDR servant aussi d'éclairage d'ambiance
-- **140 passants** marchant sur les 11,6 km de cheminements piétons réellement
+- **110 passants** marchant sur les 11,6 km de cheminements piétons réellement
   cartographiés (153 trottoirs, sentiers et places). Ils s'arrêtent par deux
   pour discuter, gesticulent en parlant, se tournent vers leur interlocuteur,
   puis reprennent leur route. À l'approche de la voiture ils interrompent la
@@ -633,8 +641,10 @@ lumière se recouvrent au lieu de laisser la voie dans le noir entre deux mâts.
 
 Les principales constantes sont regroupées et commentées :
 
-- `src/car.js` → `SPEC` : masse, empattement, suspensions, rapports de boîte,
-  couple moteur, coefficients d'adhérence
+- `src/car.ts` → conduite arcade : accélération, traînée, adhérence, dérapage,
+  nitro, et le modèle du véhicule piloté. Le modèle physique détaillé (masse,
+  empattement, rapports de boîte) appartenait au moteur Three.js retiré le
+  19 septembre 2026 ; la conduite est aujourd'hui volontairement arcade
 - `src/three-city/world.js` → `ROAD_Y`, `GARDE_SOL`, densité des arbres,
   `PLACETTES_PAVEES` (emprises pavées non cartographiées)
 - `src/three-city/osm.js` → `ORIGIN`, `ROAD_WIDTH` (largeurs de voies)
