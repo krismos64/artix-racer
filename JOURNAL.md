@@ -85,9 +85,21 @@ cascade dans la passe d'ombre. Vérifié en vue plongeante, caméra posée à la
 main boucle figée : ardoises gris-bleu lisibles, grands toits plats en tôle
 nervurée.
 
-Défauts restants du diagnostic : soubassement et génoise absents, débords
-de toit couleur mur sur les toits à faible pente, pan gris sur l'horizon
-ouest (probablement un plan de montagnes). Nouveau, visible depuis que les
+**Soubassement et génoise (même jour).** Soubassement : bandeau de 55 cm en
+saillie de 3 cm au pied de tout mur enduit, prolongé de 3 cm aux bouts pour
+fermer les angles saillants. Versé dans le maillage des appuis, passé en
+couleur par sommet : à la teinte des tablettes (0xc8c4ba), il disparaissait
+sur l'enduit blanc ; ciment 0x8f8c86. Aucun appel de dessin en plus.
+Génoise : frise de 32 cm sous l'égout, en saillie de 12 cm, texture Codex
+(trois rangs de tuiles canal dans la chaux) accolée à son reflet pour se
+raccorder sans couture, seize tuiles sur 2 m. Posée seulement sous une
+couverture de tuile à pente, le long des égouts (arêtes parallèles au
+faîtage sur un deux-pans), jamais sur un côté mitoyen (débords nuls).
+Un appel de dessin de plus (`genoises`).
+
+Défauts restants du diagnostic : débords de toit couleur mur sur les toits
+à faible pente, pan gris sur l'horizon ouest (probablement un plan de
+montagnes), joints de mousse des pavés trop vifs. Nouveau, visible depuis que les
 pavés reçoivent la lumière : joints de mousse jaune-vert trop vifs.
 
 ## 2026-10-03 : motion design arcade

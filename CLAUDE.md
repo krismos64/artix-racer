@@ -289,7 +289,7 @@ Retirée le 19 septembre 2026.
 | `textures/ciel/*.hdr` | 3 panoramas Poly Haven plafonnés (jour, soir, nuit) | `scripts/ciel-soleil.mjs` |
 | `textures/sols/*.jpg` | matières ambientCG (enrobé, herbe, béton, pavés, grave, écorce) | `scripts/preparer-textures.mjs` |
 | `textures/bati/*.jpg` | crépi Plaster003, tuile canal RoofingTiles006, ardoise RoofingTiles003, bac acier CorrugatedSteel005 (ambientCG), en gris clair + normales | `scripts/preparer-bati.mjs` |
-| `textures/facades/*.jpg` | baie à la française, émission de nuit, vantail de volet | générées par Codex (fenêtre, volet) |
+| `textures/facades/*.jpg` | baie à la française, émission de nuit, vantail de volet, génoise | générées par Codex (fenêtre, volet, génoise accolée à son reflet pour se raccorder) |
 | `models/flotte/*.glb` | 5 voitures Kenney Car Kit + palette | copie du kit |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 

@@ -1903,7 +1903,20 @@ export function buildWorld(scene, data) {
   // Appuis de fenêtre : la tablette de pierre ou de béton sous chaque baie.
   // C'est un détail très présent sur le bâti du bourg, et il porte une ombre
   // horizontale qui donne du relief à une façade autrement plate.
-  const appuiPos = [];
+  const appuiPos = [], appuiCol = [];
+  // Teintes par sommet du maillage des appuis : tablettes en pierre claire,
+  // soubassements en ciment gris plus sombre. Même matériau, même appel de
+  // dessin ; à la même teinte, le soubassement disparaissait sur l'enduit.
+  const TEINTE_APPUI = new THREE.Color(0xc8c4ba);
+  const TEINTE_SOUB = new THREE.Color(0x8f8c86);
+  const teinterAppui = (c) => { for (let v = 0; v < 6; v++) appuiCol.push(c.r, c.g, c.b); };
+  // Génoises : frise de rangs de tuiles canal sous l'égout, la signature des
+  // maisons du Sud-Ouest. Un maillage pour toute la commune.
+  const genoisePos = [], genoiseUv = [];
+  // Largeur couverte par une tuile de texture : l'image générée (trois rangs
+  // de huit tuiles) est accolée à son reflet pour se raccorder sans couture,
+  // soit seize tuiles de 12,5 cm sur 2 m, à l'échelle d'une frise de 32 cm.
+  const REPET_G = 2.0;
 
   // Niveau d'assise des bâtiments, relatif au terrain.
   const BASE_OFFSET = ROAD_Y - 0.04;
@@ -2175,6 +2188,34 @@ export function buildWorld(scene, data) {
         mUv.push(0, va, len / 3, va, len / 3, vb, 0, va, len / 3, vb, 0, vb);
       }
 
+      // Soubassement : bandeau de ciment gris de 55 cm au pied du mur, en
+      // saillie de 3 cm, sur toute maison enduite. C'est la ligne qui assoit
+      // une façade béarnaise sur le trottoir ; sans elle, l'enduit plongeait
+      // dans le sol comme un décor posé. Versé dans le maillage des appuis
+      // (teinte par sommet, ciment 0x8f8c86) : aucun appel de dessin en plus.
+      // Prolongé de 3 cm à chaque bout, sinon chaque angle saillant
+      // laissait voir une encoche de la largeur de la saillie.
+      if (!b.leger && !enPierre && len > 1 && h > 2.2) {
+        const SOUB = 0.55, SAIL = 0.03;
+        const ex = (dx / len) * SAIL, ez = (dz / len) * SAIL;
+        const ax1 = x1 - ex + nx * SAIL, az1 = z1 - ez + nz * SAIL;
+        const ax2 = x2 + ex + nx * SAIL, az2 = z2 + ez + nz * SAIL;
+        const yS = BASE_Y + SOUB;
+        // Face avant.
+        appuiPos.push(
+          ax1, BASE_Y, az1, ax2, BASE_Y, az2, ax2, yS, az2,
+          ax1, BASE_Y, az1, ax2, yS, az2, ax1, yS, az1,
+        );
+        teinterAppui(TEINTE_SOUB);
+        // Glacis du dessus, du nu de la saillie au mur : il accroche la
+        // lumière et dessine la ligne horizontale du bandeau.
+        appuiPos.push(
+          ax1, yS, az1, ax2, yS, az2, x2 + ex, yS + 0.02, z2 + ez,
+          ax1, yS, az1, x2 + ex, yS + 0.02, z2 + ez, x1 - ex, yS + 0.02, z1 - ez,
+        );
+        teinterAppui(TEINTE_SOUB);
+      }
+
       // Mur = obstacle solide.
       collisionTris.push(x1, BASE_Y, z1, x2, BASE_Y, z2, x2, top, z2);
       collisionTris.push(x1, BASE_Y, z1, x2, top, z2, x1, top, z1);
@@ -2348,6 +2389,7 @@ export function buildWorld(scene, data) {
               cxw + ax3 + sx3, yB, czw + az3 + sz3,
               cxw - ax3 + sx3, yB, czw - az3 + sz3,
             );
+            teinterAppui(TEINTE_APPUI);
             // Chant, vu depuis la rue en contrebas.
             appuiPos.push(
               cxw - ax3 + sx3, yB, czw - az3 + sz3,
@@ -2357,6 +2399,7 @@ export function buildWorld(scene, data) {
               cxw + ax3 + sx3, yB - APPUI_EP, czw + az3 + sz3,
               cxw - ax3 + sx3, yB - APPUI_EP, czw - az3 + sz3,
             );
+            teinterAppui(TEINTE_APPUI);
 
             // Volets ouverts, un vantail de chaque côté du dormant, plaqués au
             // mur. Leur saillie (5 cm) reste entre la vitre et le dormant :
@@ -2557,6 +2600,44 @@ export function buildWorld(scene, data) {
     const deuxPans = lidar && lidar.t === 2
       ? rentrants <= 3 && forme.remplissage >= 0.55
       : formeSimple && !platte;
+
+    // Génoise sous l'égout. Seulement sous une couverture de tuile à pente,
+    // sur un bâtiment non léger et assez haut pour que la frise (32 cm) passe
+    // au-dessus des baies, déjà tenues à 45 cm sous l'égout. Sur un toit à
+    // deux pans, uniquement le long des égouts (arêtes parallèles au
+    // faîtage) : un pignon n'en porte pas. Jamais sur un côté mitoyen
+    // (débord quasi nul aux deux bouts), où la frise traverserait le voisin.
+    if (lot === lotsToit.tuile && !platte && !b.leger && h > 2.6) {
+      const HG = 0.32, SAIL_G = 0.12;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        if (debords[i] < 0.08 && debords[j] < 0.08) continue;
+        const [x1, z1] = b.pts[i], [x2, z2] = b.pts[j];
+        const dx = x2 - x1, dz = z2 - z1;
+        const len = Math.hypot(dx, dz);
+        if (len < 2) continue;
+        if (deuxPans && Math.abs((dx * ax + dz * az) / len) < 0.8) continue;
+        let nx = dz / len, nz = -dx / len;
+        if (nx * (cx - (x1 + x2) / 2) + nz * (cz - (z1 + z2) / 2) > 0) { nx = -nx; nz = -nz; }
+        const ox = nx * SAIL_G, oz = nz * SAIL_G;
+        const yG = top - HG;
+        // Face avant, texturée : u en mètres (une tuile de texture par
+        // REPET_G mètres), v de 0 en bas à 1 sous l'égout.
+        const u2 = len / REPET_G;
+        genoisePos.push(
+          x1 + ox, yG, z1 + oz, x2 + ox, yG, z2 + oz, x2 + ox, top, z2 + oz,
+          x1 + ox, yG, z1 + oz, x2 + ox, top, z2 + oz, x1 + ox, top, z1 + oz,
+        );
+        genoiseUv.push(0, 0, u2, 0, u2, 1, 0, 0, u2, 1, 0, 1);
+        // Dessous, du mur au nu de la frise : c'est lui, vu de la rue, qui
+        // donne l'épaisseur de la corniche. UV pris dans le rang du bas.
+        genoisePos.push(
+          x1, yG, z1, x2, yG, z2, x2 + ox, yG, z2 + oz,
+          x1, yG, z1, x2 + ox, yG, z2 + oz, x1 + ox, yG, z1 + oz,
+        );
+        genoiseUv.push(0, 0.02, u2, 0.02, u2, 0.1, 0, 0.02, u2, 0.1, 0, 0.1);
+      }
+    }
 
     // Dalle de sécurité, posée juste sous la couverture et sur toute l'emprise
     // débordée. Elle ne se voit jamais sur un toit correct : sa raison d'être
@@ -2971,15 +3052,34 @@ export function buildWorld(scene, data) {
     })));
   }
 
+  if (genoisePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(genoisePos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(genoiseUv, 2));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Texture générée par Codex (rangs de tuiles canal dans un mortier de
+    // chaux), rendue raccordable horizontalement. Un appel de dessin.
+    const texGenoise = textureFichier('/textures/facades/genoise.jpg');
+    texGenoise.wrapT = THREE.ClampToEdgeWrapping;
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      map: texGenoise, roughness: 0.9, side: THREE.DoubleSide,
+    }));
+    m.name = 'genoises';
+    m.receiveShadow = true;
+    group.add(m);
+  }
+
   if (appuiPos.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(appuiPos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(appuiCol, 3));
     g.computeVertexNormals();
     g.computeBoundingSphere();
     // Pierre ou béton de tablette : plus gris et plus mat que la menuiserie,
     // plus clair que l'enduit sali du pied de façade.
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0xc8c4ba, roughness: 0.88, side: THREE.DoubleSide,
+      vertexColors: true, roughness: 0.88, side: THREE.DoubleSide,
     }));
     m.receiveShadow = true;
     group.add(m);
