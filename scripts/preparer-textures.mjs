@@ -16,8 +16,13 @@ const jobs = [
   ['Bark012/Bark012_1K-JPG_Color.jpg', 'ecorce_couleur.jpg', 1024, 82],
   ['Bark012/Bark012_1K-JPG_NormalGL.jpg', 'ecorce_normales.jpg', 1024, 88],
 ];
+// Pavés : saturation ramenée à 40 %. La mousse jaune-vert des joints de
+// PavingStones067, invisible tant que le sol ne recevait pas le soleil,
+// ressortait en néon une fois l'éclairage des nappes rétabli (3 octobre 2026).
+const SATURATION = { 'paves_couleur.jpg': 0.4 };
 for (const [src, dst, size, q] of jobs) {
-  const img = sharp(`${A}/${src}`).resize(size, size);
+  let img = sharp(`${A}/${src}`).resize(size, size);
+  if (SATURATION[dst] != null) img = img.modulate({ saturation: SATURATION[dst] });
   const st = await sharp(`${A}/${src}`).stats();
   await img.jpeg({ quality: q, chromaSubsampling: '4:4:4' }).toFile(`${OUT}/${dst}`);
   console.log(dst, 'moyenne RGB', st.channels.map(c => Math.round(c.mean)).join(','));

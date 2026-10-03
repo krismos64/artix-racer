@@ -21,6 +21,7 @@ import {
   ShadowGenerator,
   SSAO2RenderingPipeline,
   StandardMaterial,
+  TransformNode,
   UniversalCamera,
   Vector3,
   VertexData,
@@ -206,6 +207,9 @@ interface CretePyrenees {
 // Trois plans, du plus lointain au plus proche. Les crêtes de l'arrière-plan
 // sont plus hautes et plus pâles : c'est ce recouvrement, plus le contraste
 // croissant vers l'avant, qui fait lire une chaîne et non une découpe.
+// Ouverture des arcs de crête, de part et d'autre du sud : 110°. La texture
+// s'y répartit linéairement en ANGLE (u = 0,5 au sud).
+const ARC_FOND = 110 * Math.PI / 180;
 const CRETES: CretePyrenees[] = [
   { profondeur: 1420, hauteur: 62, brume: .62, graine: 7.3, ossau: false },
   { profondeur: 1380, hauteur: 52, brume: .42, graine: 3.1, ossau: true },
@@ -251,8 +255,10 @@ function texturerCrete(scene: Scene, crete: CretePyrenees, largeur = 2048, haute
       // Silhouette de l'Ossau : deux dents séparées par la Fourche, 180 m
       // sous le Grand Pic. Le Petit Pic (2 812 m) est à peine plus bas et
       // se tient à l'est. Cotes ramenées à la largeur de la texture.
-      const centre = .5 + OSSAU.x / 3600;
-      const demi = OSSAU.demiLargeur * OSSAU.exagerationLargeur / 3600;
+      // Position et largeur en ANGLE depuis le sud, la texture couvrant
+      // l'arc linéairement : azimut 169,9° (x = -246 m à 1 380 m).
+      const centre = .5 + Math.atan2(OSSAU.x, OSSAU.distanceCamera) / ARC_FOND;
+      const demi = OSSAU.demiLargeur * OSSAU.exagerationLargeur / OSSAU.distanceCamera / ARC_FOND;
       const d = (u - centre) / demi;
       // Deux gaussiennes serrées et une brèche creusée entre elles.
       const grand = Math.exp(-((d + .45) ** 2) * 9);
@@ -348,8 +354,12 @@ function texturerCrete(scene: Scene, crete: CretePyrenees, largeur = 2048, haute
 // Plans de crêtes. Renvoie les matériaux, dont la teinte est recalée sur
 // chaque ambiance (`teinterBackdrop`) : une montagne bleutée à midi vire au
 // mauve au couchant et disparaît presque la nuit.
-function createBackdrop(scene: Scene): PBRMaterial[] {
+function createBackdrop(scene: Scene): { materiaux: PBRMaterial[]; noeud: TransformNode } {
   const materiaux: PBRMaterial[] = [];
+  // Les trois arcs suivent la caméra en plan (boucle de jeu), chacun à son
+  // rayon : l'étagement des couches est conservé, ce qu'`infiniteDistance`
+  // écrasait.
+  const noeud = new TransformNode('fond-pyrenees', scene);
   for (const crete of CRETES) {
     const texture = texturerCrete(scene, crete);
     const materiau = new PBRMaterial(`pyrenees-${crete.graine}`, scene);
@@ -372,30 +382,55 @@ function createBackdrop(scene: Scene): PBRMaterial[] {
     materiau.metadata = { brume: crete.brume };
     materiaux.push(materiau);
 
-    // Un seul quad par couche, largeur 3 600 m pour couvrir tout l'horizon
-    // sud. La hauteur suit la cote apparente calculée pour l'Ossau.
-    const largeur = 3600;
+    // Un ARC de cylindre par couche, et non plus un plan. Un plan de
+    // 3 600 m vu de biais avait ses parties latérales à plus de 2 000 m de
+    // la caméra : coupées net par le plan lointain (1 600 m), elles
+    // dessinaient en travers du ciel ouest un pan gris à bord vertical, et
+    // l'obliquité écrasait les crêtes en bloc. Sur un arc centré sur la
+    // caméra, chaque point de crête est à distance constante (1 330 à
+    // 1 420 m), sous le ciel (1 450 m) et sous le plan lointain, quel que
+    // soit le cap. Constaté le 3 octobre 2026 rue du Parc, cap sud-ouest.
     const hauteur = crete.hauteur * (256 / 54) * 1.05;
-    const plan = MeshBuilder.CreatePlane(`pyrenees-plan-${crete.graine}`, {
-      width: largeur, height: hauteur, sideOrientation: Mesh.DOUBLESIDE,
-    }, scene);
-    plan.material = materiau;
-    // Le pied du plan doit passer SOUS la ligne d'horizon, sinon la bande
-    // transparente du bas laisse voir les crêtes flotter en l'air, détachées
-    // du sol. On l'enfonce donc largement : la partie basse est de toute
-    // façon masquée par le terrain et par la ville.
-    plan.position.set(0, hauteur * .5 - 120, crete.profondeur);
-    plan.isPickable = false;
-    // PAS d'infiniteDistance : il recentre le plan sur la caméra à chaque
-    // image, ce qui annule sa position en Z et écrase les trois couches à la
-    // même profondeur. Le fond est assez loin (1 330 à 1 420 m) pour que le
-    // déplacement du joueur ne produise aucune parallaxe visible.
+    // Le pied passe SOUS la ligne d'horizon, sinon la bande transparente du
+    // bas laisse voir les crêtes flotter en l'air, détachées du sol.
+    const yBas = -120, yHaut = hauteur - 120;
+    const R = crete.profondeur;
+    const SEGMENTS = 96;
+    const positions: number[] = [], uvs: number[] = [], indices: number[] = [];
+    for (let i = 0; i <= SEGMENTS; i++) {
+      const u = i / SEGMENTS;
+      const phi = (u - .5) * ARC_FOND;
+      // u croît vers +X, comme sur l'ancien plan : l'Ossau garde son côté.
+      const x = R * Math.sin(phi), z = R * Math.cos(phi);
+      positions.push(x, yBas, z, x, yHaut, z);
+      // v = 1 au pied, 0 en haut : la texture (DynamicTexture, invertY)
+      // porte ses crêtes en haut du canvas. Dans l'autre sens, la brume de
+      // vallée montait au-dessus des crêtes comme un rideau de pluie.
+      uvs.push(u, 1, u, 0);
+      if (i < SEGMENTS) {
+        const k = i * 2;
+        indices.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
+      }
+    }
+    const arc = new Mesh(`pyrenees-plan-${crete.graine}`, scene);
+    const data = new VertexData();
+    data.positions = positions;
+    data.uvs = uvs;
+    data.indices = indices;
+    const normales: number[] = [];
+    VertexData.ComputeNormals(positions, indices, normales);
+    data.normals = normales;
+    data.applyToMesh(arc);
+    arc.material = materiau;
+    arc.parent = noeud;
+    arc.isPickable = false;
     // Le brouillard linéaire (fin à 980 m en Équilibré) noierait un fond
     // situé au-delà de 1 300 m : la brume est peinte dans la texture.
-    plan.applyFog = false;
-    plan.freezeWorldMatrix();
+    arc.applyFog = false;
+    // Toujours dans le champ (il suit la caméra) : inutile de le tester.
+    arc.alwaysSelectAsActiveMesh = true;
   }
-  return materiaux;
+  return { materiaux, noeud };
 }
 
 
@@ -427,7 +462,7 @@ async function start(): Promise<void> {
   scene.imageProcessingConfiguration.exposure = .94;
   scene.imageProcessingConfiguration.contrast = 1.18;
 
-  const cretesPyrenees = createBackdrop(scene);
+  const { materiaux: cretesPyrenees, noeud: fondPyrenees } = createBackdrop(scene);
   // Teinte des crêtes, recalée à chaque ambiance. Une montagne lointaine
   // prend la couleur de l'air qui la sépare de l'observateur : elle est donc
   // dérivée de la couleur du brouillard, tirée vers le bleu et assombrie
@@ -1109,6 +1144,9 @@ async function start(): Promise<void> {
     }
     // Champ dynamique et secousse : la couche arcade pose la caméra.
     arcade.cadrer(dt, car, cameraPosition, cameraTarget, cameraMode);
+    // Fond de Pyrénées centré sur la caméra en plan (voir createBackdrop).
+    fondPyrenees.position.x = camera.position.x;
+    fondPyrenees.position.z = camera.position.z;
     // Plan proche rapproché en vue conducteur : le volant se tient à environ
     // 35 cm de l'œil, soit exactement sur le plan de 0,35 m des vues
     // extérieures, qui le tranchait en deux. 0,08 m le laisse entier sans

@@ -155,11 +155,16 @@ Retirée le 19 septembre 2026.
   `useAlphaFromAlbedoTexture` et `transparencyMode = ALPHABLEND`. Ce piège a
   coûté quatre corrections inutiles du dessin de la texture des Pyrénées, le
   voile gris venant du matériau et non du canvas.
-- Fond de montagnes : trois plans peints, pas de géométrie. Pied du plan SOUS
-  la ligne d'horizon (sinon les crêtes flottent), pas d'`infiniteDistance`
-  (il recentre le plan sur la caméra et écrase les couches à la même
-  profondeur), bords latéraux estompés. L'Ossau est exagéré 2,5 fois en
-  hauteur : à sa cote réelle (62,6 km, 2,26° de haut) il est invisible.
+- Fond de montagnes : trois ARCS de cylindre peints (110° autour du sud,
+  rayons 1 330 à 1 420 m), rattachés au nœud `fond-pyrenees` qui suit la
+  caméra en plan. Des plans plats de 3 600 m avaient, vus de biais, leurs
+  côtés à plus de 2 000 m : coupés par le plan lointain (1 600 m), ils
+  barraient le ciel d'un pan gris à bord vertical. Pas d'`infiniteDistance`
+  (il écrase les couches à la même profondeur ; le nœud parent garde leurs
+  rayons). UV v = 1 au PIED : à l'envers, la brume montait au-dessus des
+  crêtes en rideau de pluie, et la chaîne est restée illisible des mois.
+  Pied SOUS l'horizon, bords estompés, Ossau placé en angle (azimut 169,9°)
+  et exagéré 2,5 fois en hauteur (invisible à sa cote réelle de 2,26°).
 - Éclairage nocturne : les matériaux convertis plafonnent à 10 lumières
   simultanées (`maxSimultaneousLights`, three-city-bridge). Au-delà les
   lampes surnuméraires s'éteignent en silence. Le pool en compte 12, jamais

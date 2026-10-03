@@ -112,8 +112,24 @@ projection horizontale du toit les striait de rayures. Vérifié sur la maison
 du diagnostic et en vue plongeante sur le lotissement des Jardins de la
 Coste : pavillons carrés en quatre pans, aucun toit cassé.
 
-Défauts restants du diagnostic : pan gris sur l'horizon ouest
-(probablement un plan de montagnes), joints de mousse des pavés trop vifs. Nouveau, visible depuis que les
+**Pan gris et Pyrénées (même jour).** Masquer les plans de montagnes
+faisait disparaître le pan : c'était le plan du milieu. Son canal alpha était
+juste (fondu latéral sur 14 %), le bord net venait du plan lointain : vu cap
+sud-ouest depuis la rue du Parc, le côté ouest du plan de 3 600 m se trouvait
+à plus de 2 000 m, coupé à 1 600 m. Les trois plans deviennent des arcs de
+110° centrés sur la caméra (nœud parent qui la suit en plan), chaque crête à
+distance constante sous le ciel et sous le plan lointain ; l'Ossau est placé
+en angle. Vue plongeante au premier essai : brume AU-DESSUS des crêtes, la
+texture était lue à l'envers ; une fois v inversé, la chaîne apparaît enfin,
+trois couches étagées et la double dent de l'Ossau. L'ancien rendu écrasé en
+pan gris masquait cette inversion. À revoir : depuis la rue, la chaîne paraît
+haute (hauteurs réglées quand la texture était à l'envers).
+
+**Pavés.** Saturation de `paves_couleur.jpg` ramenée à 40 % (étape ajoutée
+à scripts/preparer-textures.mjs) : la mousse jaune-vert des joints, invisible
+tant que le sol était éclairé à l'envers, ressortait en néon.
+
+Diagnostic du 3 octobre soldé. Nouveau, visible depuis que les
 pavés reçoivent la lumière : joints de mousse jaune-vert trop vifs.
 
 ## 2026-10-03 : motion design arcade
