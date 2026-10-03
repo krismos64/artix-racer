@@ -205,6 +205,11 @@ Retirée le 19 septembre 2026.
   surface de toit (hangars, commerces) : sous une texture de tuile canal, il
   faisait de chaque zone d'activité un village. Tout nouveau maillage de
   toiture doit rejoindre `PROTEGES_FUSION` et `shadowMeshes` du pont.
+- Toit d'un bâtiment ordinaire (world.js) : deux-pans/croupe/pyramide si
+  l'emprise est simple (au plus un sommet rentrant, remplissage 0,72),
+  quelle que soit son élancement ; sinon couverture à faible pente. Un
+  ACROTÈRE couleur d'enduit ne se pose que sur un toit réellement plat :
+  sur une maison, il la transforme en toit-terrasse.
 - Flotte Kenney : mise à l'échelle AXE PAR AXE (`MODELES` de flotte.js,
   longueur, largeur, hauteur réelles). Sur la seule longueur, le kit trapu
   donnait des berlines de 2,32 m de haut.

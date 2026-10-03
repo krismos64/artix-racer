@@ -2564,9 +2564,12 @@ export function buildWorld(scene, data) {
     // faîtage. Une projection sur les axes du monde les ferait tourner d'un
     // bâtiment à l'autre, ce qui se remarque immédiatement vu d'en haut.
     const lot = lotsToit[LOT_PAR_MATERIAU[materiauCouverture(b)] ?? 'tuile'];
-    const poserToit = (x, y, z, col) => {
+    // `uv` optionnel : une face verticale (muret, rebord) a besoin d'UV
+    // propres, la projection horizontale y étirait la texture en rayures.
+    const poserToit = (x, y, z, col, uv = null) => {
       lot.pos.push(x, y, z);
       lot.col.push(col.r, col.g, col.b);
+      if (uv) { lot.uv.push(uv[0], uv[1]); return; }
       const dx = x - cx, dz = z - cz;
       lot.uv.push((dx * ax + dz * az) / 1.4, (dx * px2 + dz * pz2) / 1.4);
     };
@@ -2591,9 +2594,14 @@ export function buildWorld(scene, data) {
     // les deux pans à 178 bâtiments (45,3 % contre 52,3 %), sans laisser passer
     // les formes en L, qui portent deux décrochements ou davantage.
     const rentrants = Math.round(forme.concavite * forme.sommets);
+    // Plus d'exigence d'élancement (elle était de 1,15) : elle envoyait toute
+    // maison CARRÉE au toit-terrasse bordé d'un muret couleur d'enduit, alors
+    // que le pavillon béarnais carré porte un toit à quatre pans. Sur une
+    // emprise presque carrée, le retrait de faîtage est poussé au maximum
+    // plus bas : la croupe devient pyramide, et la direction du faîtage, mal
+    // définie, n'a plus d'effet visible.
     const formeSimple = rentrants <= 1
       && forme.remplissage >= 0.72
-      && forme.elancement >= 1.15
       && forme.sommets <= 12;
     // Quand le LiDAR a mesuré une couverture à deux pans, la mesure prime sur
     // la déduction : on accepte alors une emprise sensiblement moins régulière.
@@ -2714,12 +2722,19 @@ export function buildWorld(scene, data) {
       // Il ferme aussi la tranche entre l'égout et la couverture inclinée :
       // c'est cette bande verticale qui, laissée ouverte, laissait voir
       // l'intérieur du volume sur les emprises un peu pentues.
-      const ACROTERE = platte ? 0.42 : 0.26;
-      const EPAIS = 0.16;
+      // Sur une couverture à faible pente (emprise en L, en U, découpée),
+      // pas d'acrotère : un rebord de 10 cm à la teinte assombrie du toit, qui
+      // se lit comme la rive des tuiles. Le muret de 26 cm couleur d'enduit
+      // donnait à ces maisons un air de toit-terrasse ; c'était le « plateau
+      // crème » du diagnostic. Le vrai acrotère reste aux toits plats.
+      const ACROTERE = platte ? 0.42 : 0.1;
+      const EPAIS = platte ? 0.16 : 0.08;
       const interieur = contracter(contour, cx, cz, EPAIS);
       // Teinte du muret : plus proche du mur que de la couverture, un acrotère
       // étant maçonné et enduit comme la façade qu'il prolonge.
-      const ac = new THREE.Color(wr, wg, wb).multiplyScalar(0.94);
+      const ac = platte
+        ? new THREE.Color(wr, wg, wb).multiplyScalar(0.94)
+        : rc.clone().multiplyScalar(0.8);
       for (let i = 0; i < contour.length; i++) {
         const j = (i + 1) % contour.length;
         const [x1, z1] = contour[i], [x2, z2] = contour[j];
@@ -2730,16 +2745,20 @@ export function buildWorld(scene, data) {
         const h2 = altPlat(x2, z2) + ACROTERE;
         const b1 = top - DALLE, b2 = top - DALLE;
 
+        // UV planaires de la face : abscisse le long de l'arête, ordonnée en
+        // hauteur, même échelle (1,4 m) que la couverture.
+        const la = Math.hypot(x2 - x1, z2 - z1) / 1.4;
+        const P = (u, y) => [u, y / 1.4];
         // Face extérieure, dans le prolongement de la façade.
-        poserToit(x1, b1, z1, ac); poserToit(x2, b2, z2, ac); poserToit(x2, h2, z2, ac);
-        poserToit(x1, b1, z1, ac); poserToit(x2, h2, z2, ac); poserToit(x1, h1, z1, ac);
+        poserToit(x1, b1, z1, ac, P(0, b1)); poserToit(x2, b2, z2, ac, P(la, b2)); poserToit(x2, h2, z2, ac, P(la, h2));
+        poserToit(x1, b1, z1, ac, P(0, b1)); poserToit(x2, h2, z2, ac, P(la, h2)); poserToit(x1, h1, z1, ac, P(0, h1));
         // Couronnement : la tranche horizontale visible d'en haut.
-        poserToit(x1, h1, z1, ac); poserToit(x2, h2, z2, ac); poserToit(u2, h2, v2, ac);
-        poserToit(x1, h1, z1, ac); poserToit(u2, h2, v2, ac); poserToit(u1, h1, v1, ac);
+        poserToit(x1, h1, z1, ac, P(0, 0)); poserToit(x2, h2, z2, ac, P(la, 0)); poserToit(u2, h2, v2, ac, P(la, 0.1));
+        poserToit(x1, h1, z1, ac, P(0, 0)); poserToit(u2, h2, v2, ac, P(la, 0.1)); poserToit(u1, h1, v1, ac, P(0, 0.1));
         // Face intérieure, qui plonge vers la couverture.
         const ci1 = altPlat(u1, v1), ci2 = altPlat(u2, v2);
-        poserToit(u1, h1, v1, ac); poserToit(u2, h2, v2, ac); poserToit(u2, ci2, v2, ac);
-        poserToit(u1, h1, v1, ac); poserToit(u2, ci2, v2, ac); poserToit(u1, ci1, v1, ac);
+        poserToit(u1, h1, v1, ac, P(0, h1)); poserToit(u2, h2, v2, ac, P(la, h2)); poserToit(u2, ci2, v2, ac, P(la, ci2));
+        poserToit(u1, h1, v1, ac, P(0, h1)); poserToit(u2, ci2, v2, ac, P(la, ci2)); poserToit(u1, ci1, v1, ac, P(0, ci1));
       }
     } else {
       // ---- Couverture à deux pans -----------------------------------------
@@ -2758,7 +2777,8 @@ export function buildWorld(scene, data) {
       // Le retrait ne dépend plus du remplissage : l'emprise est régulière par
       // construction ici, puisque les formes découpées sont parties au toit
       // plat. C'est ce couplage qui faisait éclater les toitures en éventail.
-      const retrait = Math.min(demiLong * 0.85, retraitBase);
+      const carree = forme.elancement < 1.15;
+      const retrait = carree ? demiLong * 0.85 : Math.min(demiLong * 0.85, retraitBase);
       const f1x = cx + ax * (longMin + retrait), f1z = cz + az * (longMin + retrait);
       const f2x = cx + ax * (longMax - retrait), f2z = cz + az * (longMax - retrait);
 

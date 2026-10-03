@@ -97,9 +97,23 @@ couverture de tuile à pente, le long des égouts (arêtes parallèles au
 faîtage sur un deux-pans), jamais sur un côté mitoyen (débords nuls).
 Un appel de dessin de plus (`genoises`).
 
-Défauts restants du diagnostic : débords de toit couleur mur sur les toits
-à faible pente, pan gris sur l'horizon ouest (probablement un plan de
-montagnes), joints de mousse des pavés trop vifs. Nouveau, visible depuis que les
+**Débords couleur mur (même jour).** Le « plateau crème » n'était pas un
+débord mais un ACROTÈRE : tout bâtiment refusé au deux-pans partait en
+couverture à faible pente bordée d'un muret de 26 cm couleur d'enduit, un
+air de toit-terrasse. Et le critère du deux-pans exigeait un élancement de
+1,15 : toute maison CARRÉE y était refusée. Deux corrections. L'élancement
+n'est plus exigé ; sur emprise presque carrée, le retrait de faîtage est
+poussé au maximum et la croupe devient pyramide (les formes en L restent
+exclues par les sommets rentrants et le remplissage). Sur les couvertures à
+faible pente qui restent (emprises en L, en U), l'acrotère devient une rive
+de 10 cm à la teinte du toit ; le vrai acrotère reste aux toits plats. Les
+faces verticales de ces murets reçoivent des UV planaires propres : la
+projection horizontale du toit les striait de rayures. Vérifié sur la maison
+du diagnostic et en vue plongeante sur le lotissement des Jardins de la
+Coste : pavillons carrés en quatre pans, aucun toit cassé.
+
+Défauts restants du diagnostic : pan gris sur l'horizon ouest
+(probablement un plan de montagnes), joints de mousse des pavés trop vifs. Nouveau, visible depuis que les
 pavés reçoivent la lumière : joints de mousse jaune-vert trop vifs.
 
 ## 2026-10-03 : motion design arcade
