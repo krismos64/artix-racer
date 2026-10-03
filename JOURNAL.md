@@ -2,6 +2,47 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-03 (suite) : diagnostic visuel, le sol n'avait jamais vu le soleil
+
+Christophe trouve les maisons et les voitures laides. Diagnostic par
+captures (cinq rues résidentielles, un parking, HUD masqué, voiture
+téléportée par `__car.start` + `reset()`), avant de toucher à quoi que ce
+soit. Huit défauts relevés ; les deux premiers traités.
+
+**Voitures garées gonflées, mesuré.** Le kit Kenney est mis à l'échelle sur
+sa seule longueur ; trapu par construction, il sortait à 2,32 m de haut et
+2,68 m de large pour une berline (réel : 1,45 × 1,80), deux fois la Ferrari.
+Mise à l'échelle axe par axe vers des cotes de catalogue. Les roues, déjà
+des cylindres instanciés à part, prennent un rayon de 0,3 × facteur vertical
+(0,33 à 0,44 m) qui remplit les passages de roue.
+
+**Herbe vert-noir : ni texture ni ACES.** Essais en console, un facteur à
+la fois : teintes au blanc et lightmap retirée (gain faible), carte de
+normales retirée (aucun), ombres coupées (aucun), soleil à 49° (pas un
+soleil rasant). Puis soleil inversé (`direction.y` positif) : l'herbe, les
+trottoirs et la chaussée s'allument d'un coup. Les normales des nappes
+pointaient vers le bas. Cause : `twoSidedLighting` retourne la normale selon
+l'enroulement vu par la caméra, et les matériaux convertis, à
+`sideOrientation` null en repère main droite, prenaient le dessus des nappes
+Three pour leur face arrière. Toute la ville au sol, et les toits, étaient
+éclairés par la seule composante « sol » de l'hémisphérique depuis le début.
+
+Correctif dans le pont : `sideOrientation` antihoraire sur les matériaux,
+et alignement de l'enroulement de chaque triangle sur sa normale stockée
+(inversion si (b - a) × (c - a) s'oppose à la somme des normales). Le
+premier seul faisait passer l'enrobé du parking au noir : cette nappe-là
+avait l'erreur inverse, que l'ancien réglage compensait par hasard.
+Vérifié de jour (façade, lotissement, centre-bourg, mairie, église) et de
+nuit (flaques des lampadaires, phares sur les pavés). Toits passés du brun
+sombre au rouge terre cuite, trottoirs gris clair, herbe verte avec ombres
+et modelé des coteaux. Aucun appel de dessin en plus.
+
+Défauts restants du diagnostic : vitres en plaques lavande, volets plats,
+murs en aplats (ni soubassement, ni génoise), débords de toit couleur mur
+sur les toits à faible pente, tuiles illisibles, pan gris sur l'horizon
+ouest (probablement un plan de montagnes). Nouveau, visible depuis que les
+pavés reçoivent la lumière : joints de mousse jaune-vert trop vifs.
+
 ## 2026-10-03 : motion design arcade
 
 Christophe a demandé d'animer le jeu « façon arcade ». Contrainte posée

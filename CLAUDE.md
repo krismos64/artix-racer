@@ -180,6 +180,19 @@ Retirée le 19 septembre 2026.
   avant, et ressort délavé, presque translucide : les haies ont vécu ça
   au-dessus de la place pavée. Fermer les volumes, même sur une face
   invisible.
+- **Éclairage à l'envers des nappes (corrigé le 3 octobre 2026)** : avec
+  `twoSidedLighting`, Babylon retourne la normale selon l'ENROULEMENT vu par
+  la caméra. Matériau converti laissé à `sideOrientation = null` en repère
+  main droite, il prenait le DESSUS des nappes Three pour leur face arrière :
+  sol, zones, trottoirs et toits n'ont jamais reçu le soleil (herbe
+  vert-noir, toits bruns). Le pont pose `sideOrientation` antihoraire ET
+  aligne l'enroulement de chaque triangle sur sa normale stockée (sinon les
+  nappes tracées à l'envers, comme l'enrobé des parkings, passent au noir).
+  Test décisif d'un sol trop sombre : inverser `sun.direction.y` dans la
+  console ; s'il s'allume, c'est ce piège.
+- Flotte Kenney : mise à l'échelle AXE PAR AXE (`MODELES` de flotte.js,
+  longueur, largeur, hauteur réelles). Sur la seule longueur, le kit trapu
+  donnait des berlines de 2,32 m de haut.
 - Nuance sans texture ni appel de dessin supplémentaire : l'attribut `color`
   de géométrie EST transmis par le pont (`vertexData`) et lu par défaut
   (`mesh.useVertexColors` vaut true). Le piège des `vertexColors` cité plus

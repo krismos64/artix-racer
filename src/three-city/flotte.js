@@ -20,14 +20,22 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { textureFichier } from './textures.js';
 
-// Correspondance gabarit du jeu → modèle Kenney, avec la longueur hors tout
-// visée en mètres (le kit est à une échelle fantaisiste, 2,5 m de long).
+// Correspondance gabarit du jeu → modèle Kenney, avec les cotes hors tout
+// visées en mètres : longueur, largeur, hauteur.
+//
+// Le kit est à une échelle fantaisiste ET trapu (berline de 2,55 × 1,50 ×
+// 1,30 m). Mise à l'échelle sur la seule longueur, une berline sortait à
+// 2,32 m de haut et 2,68 m de large, deux fois la hauteur de la Ferrari
+// (1,19 m) : c'était le premier facteur de l'effet « voiture jouet ». La
+// caisse est donc étirée axe par axe vers des cotes réelles de catalogue.
+// Les roues n'en souffrent pas : ce sont des cylindres instanciés à part
+// (voir plus bas), jamais déformés.
 export const MODELES = {
-  compacte: { fichier: 'hatchback-sports', longueur: 4.05 },
-  berline: { fichier: 'sedan', longueur: 4.55 },
-  break: { fichier: 'suv', longueur: 4.65 },
-  fourgonnette: { fichier: 'van', longueur: 4.5 },
-  fourgon: { fichier: 'delivery', longueur: 5.6 },
+  compacte: { fichier: 'hatchback-sports', longueur: 4.05, largeur: 1.75, hauteur: 1.45 },
+  berline: { fichier: 'sedan', longueur: 4.55, largeur: 1.8, hauteur: 1.45 },
+  break: { fichier: 'suv', longueur: 4.65, largeur: 1.85, hauteur: 1.68 },
+  fourgonnette: { fichier: 'van', longueur: 4.5, largeur: 1.85, hauteur: 1.85 },
+  fourgon: { fichier: 'delivery', longueur: 5.6, largeur: 2.05, hauteur: 2.4 },
 };
 
 const BASE = '/models/flotte/';
@@ -140,23 +148,28 @@ export async function chargerFlotte() {
       morceaux.push(g.index ? g.toNonIndexed() : g);
     });
     const fusion = mergeGeometries(morceaux, false);
-    // Mise à l'échelle sur la longueur (l'axe Z du kit est l'axe long, avant
+    // Mise à l'échelle axe par axe (l'axe Z du kit est l'axe long, avant
     // vers +Z, comme dans le jeu), puis sol à y = 0 et centrage en x, z.
     // Le sol de référence est le bas des roues (centre à 0,3 dans le kit,
     // rayon 0,3), la caisse seule flottant au-dessus.
     fusion.computeBoundingBox();
     let bb = fusion.boundingBox;
-    const k = spec.longueur / (bb.max.z - bb.min.z);
+    const kx = spec.largeur / (bb.max.x - bb.min.x);
+    const ky = spec.hauteur / bb.max.y;
+    const kz = spec.longueur / (bb.max.z - bb.min.z);
     const dx = -(bb.min.x + bb.max.x) / 2, dz = -(bb.min.z + bb.max.z) / 2;
-    fusion.scale(k, k, k);
-    fusion.translate(dx * k, 0, dz * k);
+    fusion.scale(kx, ky, kz);
+    fusion.translate(dx * kx, 0, dz * kz);
     fusion.computeBoundingBox();
     bb = fusion.boundingBox;
     const lots = separer(fusion, palette);
     flotte[type] = {
       ...lots,
-      roues: roues.map((r) => ({ x: (r.x + dx) * k, y: r.y * k, z: (r.z + dz) * k })),
-      rayonRoue: 0.3 * k,
+      // Rayon de roue suivant la HAUTEUR : il remplit ainsi les passages de
+      // roue de la caisse aplatie. 0,33 m (berline) à 0,44 m (fourgon), au
+      // lieu de 0,43 à 0,53 m quand tout suivait la longueur.
+      roues: roues.map((r) => ({ x: (r.x + dx) * kx, y: r.y * ky, z: (r.z + dz) * kz })),
+      rayonRoue: 0.3 * ky,
       demiL: (bb.max.z - bb.min.z) / 2,
       demiW: (bb.max.x - bb.min.x) / 2,
       hauteur: bb.max.y,

@@ -3,6 +3,7 @@ import {
   Engine,
   Matrix,
   Mesh,
+  Material,
   MultiMaterial,
   PBRMaterial,
   Quaternion,
@@ -208,6 +209,18 @@ class ThreeCityConverter {
     // VOLUME à l'objet : voir la plaque des panneaux dans signage.js.
     material.backFaceCulling = false;
     material.twoSidedLighting = true;
+    // Sens d'enroulement de Three (antihoraire = face avant), explicite.
+    // Laissé à null, Babylon prenait en repère main droite la face du DESSUS
+    // de chaque nappe Three pour une face arrière ; `twoSidedLighting`
+    // retournait alors sa normale vers le bas. Le sol, les zones végétales,
+    // les trottoirs et les toits n'ont ainsi jamais reçu le soleil, seulement
+    // le faible « sol » de la lumière hémisphérique : l'herbe virait au
+    // vert-noir sur toutes les captures (constaté le 3 octobre 2026 en
+    // éclairant la scène par en dessous, ce qui la rallumait d'un coup).
+    // Corollaire indispensable : vertexData aligne l'enroulement de chaque
+    // triangle sur sa normale, sinon les nappes tracées à l'envers (enrobé
+    // de parking) passent au noir à leur tour.
+    material.sideOrientation = Material.CounterClockWiseSideOrientation;
 
     // Nuit : phares du joueur et lampadaires proches s'ajoutent au soleil et à
     // l'ambiante. Le plafond par défaut (4) éteindrait silencieusement les
@@ -322,10 +335,31 @@ class ThreeCityConverter {
       if (color) colors.push(color.getX(i), color.getY(i), color.getZ(i), color.itemSize > 3 ? color.getW(i) : 1);
     }
 
-    const rawIndices = geometry.index
+    const indices = geometry.index
       ? Array.from(geometry.index.array as ArrayLike<number>)
       : Array.from({ length: position.count }, (_, index) => index);
-    const indices = rawIndices;
+    // Enroulement aligné sur la normale stockée. `twoSidedLighting` décide
+    // de retourner la normale d'après l'ENROULEMENT vu par la caméra : un
+    // triangle dont l'ordre des sommets contredit sa normale (polygone
+    // cadastral horaire, normale posée à la main vers le haut) est éclairé
+    // à l'envers. On inverse donc tout triangle dont la normale géométrique
+    // (b - a) × (c - a) s'oppose à la somme de ses normales de sommet.
+    if (normals.length) {
+      for (let t = 0; t + 2 < indices.length; t += 3) {
+        const a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
+        const abx = positions[b] - positions[a], aby = positions[b + 1] - positions[a + 1], abz = positions[b + 2] - positions[a + 2];
+        const acx = positions[c] - positions[a], acy = positions[c + 1] - positions[a + 1], acz = positions[c + 2] - positions[a + 2];
+        const fx = aby * acz - abz * acy, fy = abz * acx - abx * acz, fz = abx * acy - aby * acx;
+        const nx = normals[a] + normals[b] + normals[c];
+        const ny = normals[a + 1] + normals[b + 1] + normals[c + 1];
+        const nz = normals[a + 2] + normals[b + 2] + normals[c + 2];
+        if (fx * nx + fy * ny + fz * nz < 0) {
+          const echange = indices[t + 1];
+          indices[t + 1] = indices[t + 2];
+          indices[t + 2] = echange;
+        }
+      }
+    }
 
     const data = new VertexData();
     data.positions = positions;
