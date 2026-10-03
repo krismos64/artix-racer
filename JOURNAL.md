@@ -57,10 +57,24 @@ texture d'émission en deux moitiés : noire pour une pièce éteinte, carreaux
 repérés sur les profils de luminosité de la texture de jour. Vérifié : une
 baie allumée sur la façade de référence, bois sombres, autres baies éteintes.
 
-Défauts restants du diagnostic : murs en aplats (ni soubassement, ni
-génoise), débords de toit couleur mur sur les toits à faible pente, tuiles
-illisibles, pan gris sur l'horizon ouest (probablement un plan de
-montagnes). Nouveau, visible depuis que les
+**Murs et toits (même jour).** Crépi et tuile procéduraux (canvas, relief
+plat) remplacés par deux matières ambientCG CC0 choisies sur planche
+d'aperçus : Plaster003 et RoofingTiles006, tuile canal terre cuite. Sur 3 542
+bâtiments, environ 1 300 sont en tuile au cadastre, 74 en ardoise : une seule
+texture de tuile pour tous les toits est juste à plus de 95 %. Les cartes de
+couleur passent en gris clair (scripts/preparer-bati.mjs) pour que la teinte
+de chaque bâtiment les colore ; la couleur de RoofingTiles006 étant presque
+unie, son occlusion y est multipliée, sinon les canaux disparaissaient. Deux
+réglages trouvés à la capture : crépi d'abord centré sur 215, toutes les
+façades grisaient (recentré sur 242, l'ancien crépi était à 246) ; relief du
+crépi à 0,8, les façades en lumière rasante noircissaient (0,35, mesuré en
+console). Rangs de tuiles lisibles depuis la rue. Les toits d'ardoise
+sortent presque noirs (palette sombre multipliée par la texture) : à revoir.
+
+Défauts restants du diagnostic : soubassement et génoise absents, débords
+de toit couleur mur sur les toits à faible pente, toits d'ardoise trop
+sombres et à motif de tuile, pan gris sur l'horizon ouest (probablement un
+plan de montagnes). Nouveau, visible depuis que les
 pavés reçoivent la lumière : joints de mousse jaune-vert trop vifs.
 
 ## 2026-10-03 : motion design arcade

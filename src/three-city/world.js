@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { couleurMur, couleurToit } from './bdtopo.js';
 import { ecarterDeChaussee } from './osm.js';
 import { construireHaies } from './haies.js';
-import { texturerEnduit, texturerTuile, texturerPave, texturerEcorce, texturerGalets, texturerFeuilles,
+import { texturerPave, texturerEcorce, texturerGalets, texturerFeuilles,
   texturerEnrobe, texturerRugositeEnrobe, texturerUsureMarquage, texturerDamierPlace,
   texturerNormalesEau, bruit, matiere, textureFichier, texturerMacroHerbe,
   relief as carteRelief, anisotropie } from './textures.js';
@@ -598,9 +598,20 @@ export function buildWorld(scene, data) {
   // pixels de texture par mètre, ce qui lissait le crépi en aplat dès qu'on
   // s'approchait. Ces deux textures sont uniques et partagées par les 3 500
   // bâtiments, le quadruplement ne pèse donc que sur elles.
-  const enduit = texturerEnduit(512);
-  enduit.repeat.set(1, 1);
-  const tuile = texturerTuile(512);
+  //
+  // Remplacées le 3 octobre 2026 par des matières photographiques ambientCG
+  // (CC0), préparées par scripts/preparer-bati.mjs : crépi Plaster003 et
+  // tuile canal RoofingTiles006, ramenés en gris clair pour garder la teinte
+  // de chaque bâtiment, avec leurs cartes de normales. Le relief procédural
+  // (`carteRelief`) ne donnait qu'un grain plat ; les normales mesurées
+  // dessinent enfin le galbe des canaux et les reprises du crépi.
+  // Murs : UV à 3 m, répétition 2, soit un crépi de 1,5 m de côté.
+  const enduit = textureFichier('/textures/bati/enduit_couleur.jpg', { repeat: 2 });
+  const enduitNormales = textureFichier('/textures/bati/enduit_normales.jpg', { repeat: 2, couleur: false });
+  // Toits : UV à 1,4 m, huit canaux par tuile de texture, soit 17,5 cm par
+  // canal, la largeur d'une tuile canal posée.
+  const tuile = textureFichier('/textures/bati/tuile_couleur.jpg');
+  const tuileNormales = textureFichier('/textures/bati/tuile_normales.jpg', { couleur: false });
 
   // ---- Sol général -------------------------------------------------------
   // Le plan est subdivisé : avec 4 sommets seulement, l'interpolation de
@@ -2773,7 +2784,10 @@ export function buildWorld(scene, data) {
     // ce qui est le défaut le plus visible en conduite.
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
       vertexColors: true, roughness: 0.86, side: THREE.DoubleSide,
-      map: enduit, bumpMap: carteRelief(enduit), bumpScale: 0.35,
+      // Relief à 0,35 : à 0,8, le crépi assombrissait nettement toute façade
+      // en lumière rasante (les grains tournés à l'ombre noircissent), et le
+      // bâti entier virait au gris. Mesuré en console, relief à 0 puis 0,35.
+      map: enduit, normalMap: enduitNormales, normalScale: new THREE.Vector2(0.35, 0.35),
     }));
     // Pas de castShadow : la passe d'ombre redessinerait les 3 500 bâtiments
     // à chaque frame, pour un gain visuel marginal en vue de conduite.
@@ -2972,7 +2986,7 @@ export function buildWorld(scene, data) {
     // Sud-Ouest, et il porte loin : c'est visible sur toute la ligne de toits.
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
       vertexColors: true, roughness: 0.95, side: THREE.DoubleSide,
-      map: tuile, bumpMap: carteRelief(tuile), bumpScale: 0.5,
+      map: tuile, normalMap: tuileNormales, normalScale: new THREE.Vector2(1, 1),
     }));
     m.name = 'toitures';
     m.receiveShadow = true;

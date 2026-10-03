@@ -282,6 +282,8 @@ Retirée le 19 septembre 2026.
 | `artix-poteaux.json` | 357 poteaux triangulés | `fetch-poteaux` |
 | `textures/ciel/*.hdr` | 3 panoramas Poly Haven plafonnés (jour, soir, nuit) | `scripts/ciel-soleil.mjs` |
 | `textures/sols/*.jpg` | matières ambientCG (enrobé, herbe, béton, pavés, grave, écorce) | `scripts/preparer-textures.mjs` |
+| `textures/bati/*.jpg` | crépi Plaster003 et tuile canal RoofingTiles006 (ambientCG), en gris clair + normales | `scripts/preparer-bati.mjs` |
+| `textures/facades/*.jpg` | baie à la française, émission de nuit, vantail de volet | générées par Codex (fenêtre, volet) |
 | `models/flotte/*.glb` | 5 voitures Kenney Car Kit + palette | copie du kit |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 
