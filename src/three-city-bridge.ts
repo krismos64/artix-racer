@@ -70,7 +70,8 @@ export interface FaithfulCityResult {
 // Maillages retrouvés par leur nom après conversion (émission des vitrages
 // la nuit, ombres nommées, UV planaires des trottoirs) : jamais fusionnés.
 const PROTEGES_FUSION = new Set([
-  'vitrages', 'murs', 'murs-pierre', 'toitures', 'cheminees', 'lucarnes',
+  'vitrages', 'murs', 'murs-pierre', 'toitures', 'toitures-ardoise', 'toitures-acier',
+  'cheminees', 'lucarnes',
   'ventilations', 'trottoirs', 'bordures-trottoir',
 ]);
 
@@ -453,7 +454,8 @@ class ThreeCityConverter {
     // le depth buffer entre certains groupes. Les chaussées se dessinaient
     // alors par-dessus les bâtiments et formaient les longues bandes visibles
     // sur la capture. Les zOffset des matériaux suffisent pour le z-fighting.
-    const shadowMeshes = new Set(['murs', 'murs-pierre', 'toitures', 'cheminees', 'lucarnes', 'ventilations']);
+    const shadowMeshes = new Set(['murs', 'murs-pierre', 'toitures', 'toitures-ardoise', 'toitures-acier',
+      'cheminees', 'lucarnes', 'ventilations']);
     const shouldCastShadow = source.castShadow || shadowMeshes.has(source.name)
       || source.name.startsWith('facades-photo');
     const caster = shouldCastShadow && !source.userData.noShadowCast;

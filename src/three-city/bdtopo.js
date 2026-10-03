@@ -260,15 +260,19 @@ export function couleurMur(b) {
   return palette[Math.floor(hash(b.graine) * palette.length)];
 }
 
+// Matériau de couverture retenu : cadastre (MAJIC) quand il est renseigné.
+// Les bâtiments industriels et agricoles sans matériau renseigné sont
+// couverts en bac acier, pas en tuile. Partagé par la teinte (couleurToit) et
+// par le choix de texture (world.js), qui doivent suivre la même règle.
+export function materiauCouverture(b) {
+  if (b.toit) return b.toit;
+  return b.nature === 'Industriel, agricole ou commercial' || b.surface > 700
+    ? 'zinc' : 'defaut';
+}
+
 // Choisit la teinte de couverture d'après le matériau réel.
 export function couleurToit(b) {
-  // Les bâtiments industriels et agricoles sans matériau renseigné sont
-  // couverts en bac acier, pas en tuile.
-  let cle = b.toit;
-  if (!cle) {
-    cle = b.nature === 'Industriel, agricole ou commercial' || b.surface > 700
-      ? 'zinc' : 'defaut';
-  }
+  const cle = materiauCouverture(b);
   const palette = TEINTES_TOIT[cle] ?? TEINTES_TOIT.defaut;
   return palette[Math.floor(hash(b.graine + 77) * palette.length)];
 }

@@ -199,6 +199,12 @@ Retirée le 19 septembre 2026.
 - Baies et volets du bâti ordinaire : textures générées par Codex
   (`public/textures/facades/`). Le dormant est un CADRE de quatre montants :
   plaque pleine 7,5 cm devant la vitre, il l'avait masquée depuis le début.
+- Trois maillages de toiture (`toitures`, `toitures-ardoise`,
+  `toitures-acier`), choisis par `materiauCouverture` (bdtopo.js), la même
+  règle que la teinte. Le bac acier, c'est 164 bâtiments mais un TIERS de la
+  surface de toit (hangars, commerces) : sous une texture de tuile canal, il
+  faisait de chaque zone d'activité un village. Tout nouveau maillage de
+  toiture doit rejoindre `PROTEGES_FUSION` et `shadowMeshes` du pont.
 - Flotte Kenney : mise à l'échelle AXE PAR AXE (`MODELES` de flotte.js,
   longueur, largeur, hauteur réelles). Sur la seule longueur, le kit trapu
   donnait des berlines de 2,32 m de haut.
@@ -282,7 +288,7 @@ Retirée le 19 septembre 2026.
 | `artix-poteaux.json` | 357 poteaux triangulés | `fetch-poteaux` |
 | `textures/ciel/*.hdr` | 3 panoramas Poly Haven plafonnés (jour, soir, nuit) | `scripts/ciel-soleil.mjs` |
 | `textures/sols/*.jpg` | matières ambientCG (enrobé, herbe, béton, pavés, grave, écorce) | `scripts/preparer-textures.mjs` |
-| `textures/bati/*.jpg` | crépi Plaster003 et tuile canal RoofingTiles006 (ambientCG), en gris clair + normales | `scripts/preparer-bati.mjs` |
+| `textures/bati/*.jpg` | crépi Plaster003, tuile canal RoofingTiles006, ardoise RoofingTiles003, bac acier CorrugatedSteel005 (ambientCG), en gris clair + normales | `scripts/preparer-bati.mjs` |
 | `textures/facades/*.jpg` | baie à la française, émission de nuit, vantail de volet | générées par Codex (fenêtre, volet) |
 | `models/flotte/*.glb` | 5 voitures Kenney Car Kit + palette | copie du kit |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |

@@ -71,10 +71,23 @@ crépi à 0,8, les façades en lumière rasante noircissaient (0,35, mesuré en
 console). Rangs de tuiles lisibles depuis la rue. Les toits d'ardoise
 sortent presque noirs (palette sombre multipliée par la texture) : à revoir.
 
+**Ardoise et bac acier (même jour).** Avant de traiter l'ardoise, comptage
+des couvertures telles que le jeu les résout : tuile 2 469 bâtiments
+(232 000 m²), bac acier 164 (114 000 m², un tiers de la surface de toit),
+ardoise 54 (7 000 m²), béton 16. Le vrai défaut était donc les hangars et
+commerces sous tuile canal. Trois maillages de toiture au lieu d'un, choisis
+par `materiauCouverture` (nouvelle fonction de bdtopo.js, partagée avec la
+teinte) : RoofingTiles003 pour l'ardoise (pose rectangulaire, texture
+centrée sur 225 pour compenser une palette déjà sombre), CorrugatedSteel005
+pour le bac acier (galvanisé, metalness 0,15, nervures dans le sens de la
+pente). Deux appels de dessin de plus en passe principale, plus un par
+cascade dans la passe d'ombre. Vérifié en vue plongeante, caméra posée à la
+main boucle figée : ardoises gris-bleu lisibles, grands toits plats en tôle
+nervurée.
+
 Défauts restants du diagnostic : soubassement et génoise absents, débords
-de toit couleur mur sur les toits à faible pente, toits d'ardoise trop
-sombres et à motif de tuile, pan gris sur l'horizon ouest (probablement un
-plan de montagnes). Nouveau, visible depuis que les
+de toit couleur mur sur les toits à faible pente, pan gris sur l'horizon
+ouest (probablement un plan de montagnes). Nouveau, visible depuis que les
 pavés reçoivent la lumière : joints de mousse jaune-vert trop vifs.
 
 ## 2026-10-03 : motion design arcade

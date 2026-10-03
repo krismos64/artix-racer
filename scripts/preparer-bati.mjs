@@ -51,3 +51,20 @@ await sharp(`${T}_NormalGL.jpg`).resize(1024, 1024).jpeg({ quality: 88 }).toFile
 // contre près de 0,9 pour l'ancien crépi procédural).
 await grisRecentre(`${P}_Color.jpg`, `${OUT}/enduit_couleur.jpg`, 242, 0.6, 1024);
 await sharp(`${P}_NormalGL.jpg`).resize(1024, 1024).jpeg({ quality: 88 }).toFile(`${OUT}/enduit_normales.jpg`);
+
+// Ardoise (RoofingTiles003, pose rectangulaire) : la palette cadastrale de
+// l'ardoise est déjà sombre (0x4b5158 à 0x6a7078) ; une texture centrée bas
+// la poussait au noir. Centrée sur 225, contraste x 1,4 pour garder les
+// joints entre ardoises.
+const S = `${A}/RoofingTiles003/RoofingTiles003_1K-JPG`;
+await grisRecentre(`${S}_Color.jpg`, `${OUT}/ardoise_couleur.jpg`, 225, 1.4, 1024);
+await sharp(`${S}_NormalGL.jpg`).resize(1024, 1024).jpeg({ quality: 88 }).toFile(`${OUT}/ardoise_normales.jpg`);
+
+// Bac acier (CorrugatedSteel005, galvanisé) : occlusion multipliée comme
+// pour la tuile, gris centré sur 215.
+const B = `${A}/CorrugatedSteel005/CorrugatedSteel005_1K-JPG`;
+const acierAo = await sharp(`${B}_Color.jpg`).greyscale()
+  .composite([{ input: await sharp(`${B}_AmbientOcclusion.jpg`).greyscale().toBuffer(), blend: 'multiply' }])
+  .toBuffer();
+await grisRecentre(acierAo, `${OUT}/acier_couleur.jpg`, 215, 1.5, 1024);
+await sharp(`${B}_NormalGL.jpg`).resize(1024, 1024).jpeg({ quality: 88 }).toFile(`${OUT}/acier_normales.jpg`);

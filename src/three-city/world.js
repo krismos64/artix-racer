@@ -1,7 +1,7 @@
 // Construit la ville d'Artix en 3D à partir des données OSM et BD TOPO.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { couleurMur, couleurToit } from './bdtopo.js';
+import { couleurMur, couleurToit, materiauCouverture } from './bdtopo.js';
 import { ecarterDeChaussee } from './osm.js';
 import { construireHaies } from './haies.js';
 import { texturerPave, texturerEcorce, texturerGalets, texturerFeuilles,
@@ -1859,7 +1859,18 @@ export function buildWorld(scene, data) {
   if (PLACAGE_PHOTO && data.facadesCentre?.atlas) {
     fusionner(data.facadesCentre, chargerAtlas('facades-centre', data.facadesCentre.atlas));
   }
-  const roofPos = [], roofCol = [], roofUv = [];
+  // Trois lots de couverture, un maillage chacun : tuile canal, ardoise, bac
+  // acier. Le bac acier couvre 164 bâtiments mais 114 000 m², un tiers de la
+  // surface de toit de la commune (hangars, commerces) : il portait des
+  // tuiles canal. L'ardoise ne fait que 54 toits (7 000 m²). Deux appels de
+  // dessin de plus, soit environ 28 µs par image au tarif mesuré (14 µs par
+  // maillage), pour un tiers des toits rendu juste.
+  const lotsToit = {
+    tuile: { pos: [], col: [], uv: [] },
+    ardoise: { pos: [], col: [], uv: [] },
+    acier: { pos: [], col: [], uv: [] },
+  };
+  const LOT_PAR_MATERIAU = { ardoise: 'ardoise', zinc: 'acier', beton: 'acier' };
   // Chants de rive : quads verticaux sous le bord des couvertures. Sans eux,
   // le toit est une feuille sans épaisseur vue de profil.
   const rivePos = [], riveCol = [];
@@ -2509,11 +2520,12 @@ export function buildWorld(scene, data) {
     // axes du toit pour que les rangs de tuiles courent parallèlement au
     // faîtage. Une projection sur les axes du monde les ferait tourner d'un
     // bâtiment à l'autre, ce qui se remarque immédiatement vu d'en haut.
+    const lot = lotsToit[LOT_PAR_MATERIAU[materiauCouverture(b)] ?? 'tuile'];
     const poserToit = (x, y, z, col) => {
-      roofPos.push(x, y, z);
-      roofCol.push(col.r, col.g, col.b);
+      lot.pos.push(x, y, z);
+      lot.col.push(col.r, col.g, col.b);
       const dx = x - cx, dz = z - cz;
-      roofUv.push((dx * ax + dz * az) / 1.4, (dx * px2 + dz * pz2) / 1.4);
+      lot.uv.push((dx * ax + dz * az) / 1.4, (dx * px2 + dz * pz2) / 1.4);
     };
 
     // Forme de l'emprise : c'est elle qui décide du type de couverture.
@@ -2973,22 +2985,41 @@ export function buildWorld(scene, data) {
     group.add(m);
   }
 
-  if (roofPos.length) {
+  // Le rythme des rangs de tuiles est ce qui identifie une couverture du
+  // Sud-Ouest, et il porte loin : c'est visible sur toute la ligne de toits.
+  // Ardoise et bac acier : textures à leur échelle réelle sur les mêmes UV
+  // (1,4 m) ; ardoises de 22 cm, une tuile de texture d'environ 2,7 m
+  // (répétition 0,52) ; nervures à 27 cm d'entraxe, environ 3,2 m (0,44).
+  // Les nervures, verticales dans la texture, suivent la pente comme les
+  // canaux de tuile.
+  const ardoise = textureFichier('/textures/bati/ardoise_couleur.jpg', { repeat: 0.52 });
+  const ardoiseNormales = textureFichier('/textures/bati/ardoise_normales.jpg', { repeat: 0.52, couleur: false });
+  const acier = textureFichier('/textures/bati/acier_couleur.jpg', { repeat: 0.44 });
+  const acierNormales = textureFichier('/textures/bati/acier_normales.jpg', { repeat: 0.44, couleur: false });
+  const MATIERES_TOIT = {
+    tuile: { nom: 'toitures', map: tuile, normalMap: tuileNormales, roughness: 0.95, metalness: 0 },
+    ardoise: { nom: 'toitures-ardoise', map: ardoise, normalMap: ardoiseNormales, roughness: 0.8, metalness: 0 },
+    // Galvanisé à peine métallique : un métal franc ne renvoie que ce qui lui
+    // fait face et sortirait noir (même piège que les vitrages de façade nord).
+    acier: { nom: 'toitures-acier', map: acier, normalMap: acierNormales, roughness: 0.55, metalness: 0.15 },
+  };
+  for (const [cle, lot] of Object.entries(lotsToit)) {
+    if (!lot.pos.length) continue;
+    const mat = MATIERES_TOIT[cle];
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(roofPos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(roofCol, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(roofUv, 2));
+    g.setAttribute('position', new THREE.Float32BufferAttribute(lot.pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(lot.col, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(lot.uv, 2));
     // Les pans sont inclinés : les normales doivent être déduites de la
     // géométrie, sinon tous les toits reçoivent la lumière comme s'ils étaient plats.
     g.computeVertexNormals();
     g.computeBoundingSphere();
-    // Le rythme des rangs de tuiles est ce qui identifie une couverture du
-    // Sud-Ouest, et il porte loin : c'est visible sur toute la ligne de toits.
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: 0.95, side: THREE.DoubleSide,
-      map: tuile, normalMap: tuileNormales, normalScale: new THREE.Vector2(1, 1),
+      vertexColors: true, roughness: mat.roughness, metalness: mat.metalness,
+      side: THREE.DoubleSide,
+      map: mat.map, normalMap: mat.normalMap, normalScale: new THREE.Vector2(1, 1),
     }));
-    m.name = 'toitures';
+    m.name = mat.nom;
     m.receiveShadow = true;
     group.add(m);
   }
