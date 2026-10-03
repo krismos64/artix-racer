@@ -37,10 +37,30 @@ nuit (flaques des lampadaires, phares sur les pavés). Toits passés du brun
 sombre au rouge terre cuite, trottoirs gris clair, herbe verte avec ombres
 et modelé des coteaux. Aucun appel de dessin en plus.
 
-Défauts restants du diagnostic : vitres en plaques lavande, volets plats,
-murs en aplats (ni soubassement, ni génoise), débords de toit couleur mur
-sur les toits à faible pente, tuiles illisibles, pan gris sur l'horizon
-ouest (probablement un plan de montagnes). Nouveau, visible depuis que les
+**Vitres et volets (même jour).** La « plaque lavande » n'était pas la
+vitre : le dormant, rectangle PLEIN posé 7,5 cm devant elle et plus large,
+la masquait entièrement depuis le début. Il devient un cadre de quatre
+montants. Deux textures générées par Codex, contrôlées à l'œil avant usage :
+fenêtre à la française (deux vantaux de trois carreaux, reflet de ciel,
+voilage de dentelle) et vantail de volet à lames avec écharpe en Z et
+pentures, peint en gris très clair (moyenne 220/255) pour que la couleur
+Panoramax par sommet le teinte. Les UV des volets vont du bord côté baie au
+bord côté mur : les pentures tombent toujours à l'extérieur, la paire se lit
+en miroir. Aucun appel de dessin en plus.
+
+La nuit a révélé un défaut caché par la plaque : le choix « une pièce sur
+douze allumée » passait par un shader Three modifié (`onBeforeCompile`) que
+le pont ignore ; toutes les baies brillaient en aplat beige. Remplacé par un
+second jeu d'UV (`uv1`, transmis par le pont en `uvs2`) qui pointe dans une
+texture d'émission en deux moitiés : noire pour une pièce éteinte, carreaux
+éclairés derrière le voilage pour une pièce allumée. Les carreaux ont été
+repérés sur les profils de luminosité de la texture de jour. Vérifié : une
+baie allumée sur la façade de référence, bois sombres, autres baies éteintes.
+
+Défauts restants du diagnostic : murs en aplats (ni soubassement, ni
+génoise), débords de toit couleur mur sur les toits à faible pente, tuiles
+illisibles, pan gris sur l'horizon ouest (probablement un plan de
+montagnes). Nouveau, visible depuis que les
 pavés reçoivent la lumière : joints de mousse jaune-vert trop vifs.
 
 ## 2026-10-03 : motion design arcade

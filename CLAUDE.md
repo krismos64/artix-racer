@@ -190,6 +190,15 @@ Retirée le 19 septembre 2026.
   nappes tracées à l'envers, comme l'enrobé des parkings, passent au noir).
   Test décisif d'un sol trop sombre : inverser `sun.direction.y` dans la
   console ; s'il s'allume, c'est ce piège.
+- Le pont IGNORE tout `onBeforeCompile` (shaders Three modifiés). Ce qui
+  doit varier par sommet passe par des attributs qu'il transmet : `color`,
+  `uv`, et `uv1` (second jeu d'UV, lu par une texture dont `channel = 1`,
+  converti en `coordinatesIndex = 1`). C'est ainsi que les vitrages
+  choisissent baie par baie entre émission noire et carreaux allumés
+  (`fenetre-nuit.jpg`, moitié gauche noire, moitié droite allumée).
+- Baies et volets du bâti ordinaire : textures générées par Codex
+  (`public/textures/facades/`). Le dormant est un CADRE de quatre montants :
+  plaque pleine 7,5 cm devant la vitre, il l'avait masquée depuis le début.
 - Flotte Kenney : mise à l'échelle AXE PAR AXE (`MODELES` de flotte.js,
   longueur, largeur, hauteur réelles). Sur la seule longueur, le kit trapu
   donnait des berlines de 2,32 m de haut.

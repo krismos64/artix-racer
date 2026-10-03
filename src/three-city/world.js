@@ -1866,13 +1866,13 @@ export function buildWorld(scene, data) {
   // qui varie d'une baie à l'autre, et l'indication d'une pièce éclairée. Les
   // fenêtres allumées reçoivent une teinte chaude que le canal d'émission
   // reprend, ce qui évite un second maillage pour quelques centaines de baies.
-  const winPos = [], winCol = [], winEmi = [];
+  const winPos = [], winCol = [], winEmi = [], winUv = [], winUvNuit = [];
   // Volets ouverts, plaqués au mur de part et d'autre des baies. C'est le
   // détail qui distingue une rue béarnaise réelle d'une maquette : sur les
   // panoramiques Panoramax du bourg, presque toutes les façades d'habitation
   // en portent. Couleur relevée sur les photos quand l'analyse l'a détectée,
   // sinon palette des teintes réellement vues à Artix.
-  const voletPos = [], voletCol = [];
+  const voletPos = [], voletCol = [], voletUv = [];
   const PALETTE_VOLETS = [0x7a2f2b, 0x3e5a3c, 0x4a5f70, 0x6d4a33, 0x8a8d86, 0x5c3a41];
   // Encadrement des baies, en maillage séparé : un dormant clair autour d'une
   // vitre sombre est ce qui rend une fenêtre lisible de loin, bien plus que la
@@ -2216,6 +2216,7 @@ export function buildWorld(scene, data) {
               cxw + ux + ox, yh, czw + uz + oz,
               cxw - ux + ox, yh, czw - uz + oz,
             );
+            winUv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
 
             // Teinte du vitrage. Une baie ne renvoie pas la même chose selon
             // ce qu'il y a derrière et selon son orientation : les unes tirent
@@ -2238,15 +2239,21 @@ export function buildWorld(scene, data) {
             // baie sur dix. L'allumage passe désormais par le seul canal
             // d'émission, nul le jour, ce qui laisse le rendu nocturne
             // inchangé.
+            //
+            // Depuis le 3 octobre 2026, la baie porte une texture (fenêtre à
+            // deux vantaux de trois carreaux, reflet de ciel, voilage : image
+            // générée par Codex). La couleur de sommet n'en est plus qu'une
+            // nuance multiplicative proche du blanc, sinon elle noircissait
+            // aussi les petits bois peints.
             let vr, vg, vbl;
             if (gv < 0.28) {
-              vr = 0.196; vg = 0.227; vbl = 0.278;   // gris bleuté
+              vr = 0.90; vg = 0.94; vbl = 1.0;     // reflet bleuté
             } else if (gv < 0.55) {
-              vr = 0.157; vg = 0.180; vbl = 0.212;   // gris neutre sombre
+              vr = 1.0; vg = 1.0; vbl = 1.0;       // neutre
             } else if (gv < 0.80) {
-              vr = 0.169; vg = 0.176; vbl = 0.169;   // pièce sombre, verdi
+              vr = 0.92; vg = 0.93; vbl = 0.92;    // plus sombre
             } else {
-              vr = 0.212; vg = 0.196; vbl = 0.176;   // volet bois, brun
+              vr = 1.0; vg = 0.96; vbl = 0.90;     // voilage chaud
             }
             for (let s = 0; s < 6; s++) winCol.push(vr, vg, vbl);
             // Couleur d'allumage, portée par un attribut séparé : noire pour
@@ -2257,6 +2264,14 @@ export function buildWorld(scene, data) {
             const er = allume ? 1.0 : 0, eg = allume ? 0.82 : 0,
                   eb = allume ? 0.52 : 0;
             for (let s = 0; s < 6; s++) winEmi.push(er, eg, eb);
+            // Même choix, lisible par Babylon : le pont ignore le shader
+            // modifié ci-dessous (`onBeforeCompile`), si bien que TOUTES les
+            // baies s'allumaient la nuit. Le second jeu d'UV pointe dans la
+            // texture d'émission : moitié gauche noire pour une pièce
+            // éteinte, moitié droite (carreaux éclairés derrière le voilage)
+            // pour une pièce allumée.
+            const du = allume ? 0.5 : 0;
+            winUvNuit.push(du, 0, du + 0.5, 0, du + 0.5, 1, du, 0, du + 0.5, 1, du, 1);
 
             // Dormant : un quadrilatère un peu plus large et plus haut, en
             // saillie devant la vitre. C'est ce décrochement qui donne la
@@ -2267,14 +2282,29 @@ export function buildWorld(scene, data) {
             const vz2 = (dz / len) * (largeur / 2 + MARGE);
             const yb2 = yb - MARGE, yh2 = yh + MARGE;
             const ox2 = nx * 0.075, oz2 = nz * 0.075;
-            cadrePos.push(
-              cxw - vx2 + ox2, yb2, czw - vz2 + oz2,
-              cxw + vx2 + ox2, yb2, czw + vz2 + oz2,
-              cxw + vx2 + ox2, yh2, czw + vz2 + oz2,
-              cxw - vx2 + ox2, yb2, czw - vz2 + oz2,
-              cxw + vx2 + ox2, yh2, czw + vz2 + oz2,
-              cxw - vx2 + ox2, yh2, czw - vz2 + oz2,
-            );
+            // Quatre montants autour de la baie, et non plus une plaque
+            // pleine : posée 7,5 cm DEVANT la vitre et plus large qu'elle, la
+            // plaque la masquait entièrement. Les vitres n'étaient jamais
+            // visibles ; la « fenêtre » lue depuis la rue était ce rectangle
+            // gris, teinté lavande par le ciel.
+            // `a` et `b` : abscisses le long de l'arête, `y0`, `y1` : hauteurs.
+            const montant = (a, b, y0, y1) => {
+              const ax = (dx / len) * a, az = (dz / len) * a;
+              const bx = (dx / len) * b, bz = (dz / len) * b;
+              cadrePos.push(
+                cxw + ax + ox2, y0, czw + az + oz2,
+                cxw + bx + ox2, y0, czw + bz + oz2,
+                cxw + bx + ox2, y1, czw + bz + oz2,
+                cxw + ax + ox2, y0, czw + az + oz2,
+                cxw + bx + ox2, y1, czw + bz + oz2,
+                cxw + ax + ox2, y1, czw + az + oz2,
+              );
+            };
+            const dl = largeur / 2, dlM = largeur / 2 + MARGE;
+            montant(-dlM, -dl, yb2, yh2);   // montant gauche
+            montant(dl, dlM, yb2, yh2);     // montant droit
+            montant(-dl, dl, yh, yh2);      // traverse haute
+            montant(-dl, dl, yb2, yb);      // traverse basse
 
             // Appui de fenêtre : une tablette horizontale débordant de part et
             // d'autre du dormant. Deux quads, le dessus et le chant vu d'en
@@ -2331,6 +2361,11 @@ export function buildWorld(scene, data) {
                   cxw + c2 + oxv, yh2, czw + d2 + ozv,
                   cxw + c1 + oxv, yh2, czw + d1 + ozv,
                 );
+                // u de 0 (bord côté baie) à 1 (bord côté mur) : les pentures
+                // de la texture, peintes à droite, tombent ainsi toujours sur
+                // le bord extérieur, là où le vantail est ferré. Les deux
+                // vantaux se lisent en miroir, comme une vraie paire.
+                voletUv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
                 for (let s = 0; s < 6; s++) voletCol.push(rv, gvv, bv);
               }
             }
@@ -2794,6 +2829,8 @@ export function buildWorld(scene, data) {
     g.setAttribute('color', new THREE.Float32BufferAttribute(winCol, 3));
     // Couleur d'allumage, lue par le shader modifié plus bas.
     g.setAttribute('emiCouleur', new THREE.Float32BufferAttribute(winEmi, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(winUv, 2));
+    g.setAttribute('uv1', new THREE.Float32BufferAttribute(winUvNuit, 2));
     g.computeVertexNormals();
     g.computeBoundingSphere();
     // Vitrage sombre légèrement réfléchissant : de loin, ce sont ces trouées
@@ -2815,8 +2852,19 @@ export function buildWorld(scene, data) {
     // La teinte est portée par sommet, ce qui donne quatre nuances de vitrage,
     // toutes sombres. L'allumage des pièces passe par un attribut distinct,
     // `emiCouleur`, que le canal d'émission reprend la nuit.
+    const texFenetre = textureFichier('/textures/facades/fenetre.jpg');
+    texFenetre.wrapS = texFenetre.wrapT = THREE.ClampToEdgeWrapping;
+    // Rugosité 0,35 : la texture porte aussi les bois peints, qu'un 0,24
+    // rendait vernis comme le verre.
+    // Émission de nuit : carreaux seuls, bois sombres, lue sur le canal
+    // d'UV 1 (voir winUvNuit). Fabriquée depuis la texture de jour en
+    // repérant les carreaux sur les profils de luminosité.
+    const texFenetreNuit = textureFichier('/textures/facades/fenetre-nuit.jpg');
+    texFenetreNuit.wrapS = texFenetreNuit.wrapT = THREE.ClampToEdgeWrapping;
+    texFenetreNuit.channel = 1;
     const mat = new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: 0.24, metalness: 0.08,
+      map: texFenetre, emissiveMap: texFenetreNuit,
+      vertexColors: true, roughness: 0.35, metalness: 0.08,
       side: THREE.DoubleSide,
       emissive: 0xffffff, emissiveIntensity: 0,
     });
@@ -2869,8 +2917,10 @@ export function buildWorld(scene, data) {
     //
     // La teinte reste très légèrement plus froide que l'enduit, comme une
     // menuiserie peinte à côté d'un crépi.
+    // Gris clair 0xcfcdc7 : le dormant n'est plus une plaque mais un cadre
+    // de 11 cm, il prolonge les bois blancs de la texture de baie.
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0xb4b6b8, roughness: 0.7, side: THREE.DoubleSide,
+      color: 0xcfcdc7, roughness: 0.7, side: THREE.DoubleSide,
     }));
     m.renderOrder = 0;
     group.add(m);
@@ -2880,12 +2930,18 @@ export function buildWorld(scene, data) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(voletPos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(voletCol, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(voletUv, 2));
     g.computeVertexNormals();
     g.computeBoundingSphere();
     // Bois peint mat : rugosité élevée, couleur portée par les sommets
     // (relevés Panoramax ou palette). Un seul maillage pour toute la commune.
+    // La texture (vantail à lames, écharpe en Z et pentures, générée par
+    // Codex) est peinte en gris très clair, moyenne 220/255 : la couleur de
+    // sommet la teinte sans l'assombrir de plus de 15 %.
+    const texVolet = textureFichier('/textures/facades/volet.jpg');
+    texVolet.wrapS = texVolet.wrapT = THREE.ClampToEdgeWrapping;
     group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: 0.85, side: THREE.DoubleSide,
+      map: texVolet, vertexColors: true, roughness: 0.85, side: THREE.DoubleSide,
     })));
   }
 

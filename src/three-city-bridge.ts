@@ -291,7 +291,12 @@ class ThreeCityConverter {
     if (standard.emissive) material.emissiveColor = color3(standard.emissive, Color3.Black());
     if (standard.emissiveIntensity != null) material.emissiveIntensity = standard.emissiveIntensity;
     const emissive = this.texture(standard.emissiveMap);
-    if (emissive) material.emissiveTexture = emissive;
+    if (emissive) {
+      // Canal d'UV choisi côté Three (`texture.channel`) : les vitrages lisent
+      // leur émission de nuit sur un second jeu d'UV, propre à chaque baie.
+      if (standard.emissiveMap?.channel === 1) emissive.coordinatesIndex = 1;
+      material.emissiveTexture = emissive;
+    }
 
     if (source.alphaTest > 0) {
       material.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHATEST;
@@ -319,16 +324,19 @@ class ThreeCityConverter {
     const position = geometry.getAttribute('position');
     const normal = geometry.getAttribute('normal');
     const uv = geometry.getAttribute('uv');
+    const uv1 = geometry.getAttribute('uv1');
     const color = geometry.getAttribute('color');
     const positions: number[] = [];
     const normals: number[] = [];
     const uvs: number[] = [];
+    const uvs2: number[] = [];
     const colors: number[] = [];
 
     for (let i = 0; i < position.count; i++) {
       positions.push(position.getX(i), position.getY(i), position.getZ(i));
       if (normal) normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
       if (uv) uvs.push(uv.getX(i), uv.getY(i));
+      if (uv1) uvs2.push(uv1.getX(i), uv1.getY(i));
       // UV planaires monde pour les nappes construites sans UV (trottoirs) :
       // une tuile de `uvPlanaires` mètres, projetée depuis le dessus.
       else if (uvPlanaires > 0) uvs.push(position.getX(i) / uvPlanaires, position.getZ(i) / uvPlanaires);
@@ -366,6 +374,7 @@ class ThreeCityConverter {
     data.indices = indices;
     if (normals.length) data.normals = normals;
     if (uvs.length) data.uvs = uvs;
+    if (uvs2.length) data.uvs2 = uvs2;
     if (colors.length) data.colors = colors;
     return { data, vertices: position.count, indices: indices.length };
   }
