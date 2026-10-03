@@ -92,7 +92,13 @@ function buildCheckpoints(roads: RoadData[], start: Point2): Point2[] {
   return checkpoints.length >= 4 ? checkpoints : route.filter((_, index) => index > 0 && index % 4 === 0).slice(0, 8);
 }
 
+// Événements de partie lus par la couche arcade (bannières, points volants).
+export type EvenementPartie =
+  | { type: 'checkpoint'; points: number; rang: number; total: number }
+  | { type: 'arrivee'; temps: number; record: boolean };
+
 export class GameSession {
+  readonly evenements: EvenementPartie[] = [];
   private readonly checkpoints: Point2[];
   private readonly ring: Mesh;
   private mode: GameMode = 'free';
@@ -145,7 +151,8 @@ export class GameSession {
     this.ring.scaling.setAll(pulse);
     const target = this.checkpoints[this.checkpointIndex];
     if (!target || Math.hypot(target[0] - x, target[1] - z) > 9.5) return;
-    this.score += 2500 + Math.abs(speed) * 30;
+    const points = 2500 + Math.abs(speed) * 30;
+    this.score += points;
     this.checkpointIndex++;
     if (this.checkpointIndex >= this.checkpoints.length) {
       this.running = false;
@@ -154,7 +161,16 @@ export class GameSession {
       this.finishedTimer = 6;
       const previous = Number(localStorage.getItem('artix-racer-best') ?? Infinity);
       if (this.elapsed < previous) localStorage.setItem('artix-racer-best', this.elapsed.toFixed(3));
-    } else this.placeRing();
+      this.evenements.push({ type: 'arrivee', temps: this.elapsed, record: this.elapsed < previous });
+    } else {
+      this.evenements.push({ type: 'checkpoint', points, rang: this.checkpointIndex, total: this.checkpoints.length });
+      this.placeRing();
+    }
+  }
+
+  // Points gagnés hors du calcul de distance (combo de dérapage).
+  ajouterPoints(points: number): void {
+    this.score += points;
   }
 
   get objective(): Point2 | null {

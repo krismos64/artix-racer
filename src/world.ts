@@ -44,10 +44,20 @@ interface ChunkData {
   buildings: BuildingData[];
   areas: AreaData[];
   parkings: ParkingData[];
+  esplanades: Array<{ pts: Point2[] }>;
   water: WaterData[];
   barriers: BarrierData[];
   terrains: SportsFieldData[];
   rails: RailData[];
+}
+
+// Revêtements de terrain de sport qui soulèvent de la terre ; tout le reste
+// (enrobé, résine, béton) est minéral. Sans tag `surface`, le football et le
+// rugby se jouent sur herbe, les autres sports sur dur.
+const SOLS_MEUBLES = new Set(['grass', 'dirt', 'earth', 'ground', 'sand', 'clay', 'gravel', 'fine_gravel', 'unpaved']);
+function terrainMineral(t: SportsFieldData): boolean {
+  if (t.surface) return !SOLS_MEUBLES.has(t.surface);
+  return t.sport !== 'soccer' && t.sport !== 'rugby' && t.sport !== 'rugby_union';
 }
 
 const MAJOR_ROADS = new Set(['primary', 'secondary', 'tertiary', 'trunk']);
@@ -154,6 +164,26 @@ export class ArtixWorld {
     return false;
   }
 
+  // Sol minéral hors chaussée : parking de surface, place piétonne ou
+  // terrain de sport en dur. La place du Général de Gaulle, pavée, et le
+  // plateau multisport comptaient comme hors-piste et soulevaient de la
+  // poussière de terre (fumee.ts). Même grille 3 × 3 que
+  // isOnRoad : une emprise est rangée dans la cellule de son centre, et
+  // aucune ne dépasse 256 m.
+  estMineral(x: number, z: number): boolean {
+    const [cx, cz] = chunkCoords(chunkKey(x, z));
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const data = this.chunks.get(`${cx + dx},${cz + dz}`);
+        if (!data) continue;
+        if (data.parkings.some((p) => pointInPolygon(x, z, p.pts))) return true;
+        if (data.esplanades.some((e) => pointInPolygon(x, z, e.pts))) return true;
+        if (data.terrains.some((t) => terrainMineral(t) && pointInPolygon(x, z, t.pts))) return true;
+      }
+    }
+    return false;
+  }
+
   roadNameAt(x: number, z: number): string | null {
     const [cx, cz] = chunkCoords(chunkKey(x, z));
     let best: { distance: number; name: string } | null = null;
@@ -215,7 +245,7 @@ export class ArtixWorld {
     let chunk = this.chunks.get(key);
     if (!chunk) {
       chunk = {
-        roads: [], buildings: [], areas: [], parkings: [], water: [],
+        roads: [], buildings: [], areas: [], parkings: [], esplanades: [], water: [],
         barriers: [], terrains: [], rails: [],
       };
       this.chunks.set(key, chunk);
@@ -275,6 +305,7 @@ export class ArtixWorld {
     };
     addFeature(this.map.areas, 'areas');
     addFeature(this.map.parkings, 'parkings');
+    addFeature(this.map.esplanades, 'esplanades');
     addFeature(this.map.water, 'water');
     addFeature(this.map.barriers, 'barriers');
     addFeature(this.map.terrains, 'terrains');

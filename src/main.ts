@@ -26,6 +26,8 @@ import {
   VertexData,
 } from '@babylonjs/core';
 import './style.css';
+import { MotionArcade } from './arcade';
+import { FumeePneus } from './fumee';
 import { ArcadeAudio } from './audio';
 import { ArcadeCar, KeyboardInput } from './car';
 import { DEFAULT_QUALITY, QUALITY, type QualityName } from './config';
@@ -59,6 +61,7 @@ const placeNameEl = document.querySelector<HTMLElement>('#place-name')!;
 const boostBar = document.querySelector<HTMLElement>('#boost-bar')!;
 const minimapCanvas = document.querySelector<HTMLCanvasElement>('#minimap')!;
 const hudElements = [...document.querySelectorAll<HTMLElement>('.hud')];
+const telemetryEl = document.querySelector<HTMLElement>('.telemetry')!;
 
 interface MemoryPerformance extends Performance {
   memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number };
@@ -910,13 +913,25 @@ async function start(): Promise<void> {
   // Ambiance de départ : charge le panorama de jour et pose la lumière.
   applyAmbiance(ambianceIndex);
 
+  const arcade = new MotionArcade(camera, pipeline, telemetryEl, scoreEl);
+  const fumee = new FumeePneus(scene);
+  const lancerSession = (mode: GameMode): void => {
+    // Départ arrêté en chrono : `car.update` est suspendu pendant le compte à
+    // rebours, l'état de conduite resterait figé sur sa dernière valeur (un
+    // dérapage en cours continuait d'engranger des points voiture immobile,
+    // et la voiture repartait au GO avec sa vitesse d'avant).
+    if (mode === 'challenge') car.arreter();
+    session.start(mode);
+    arcade.demarrer(mode);
+  };
+
   const begin = (mode: GameMode): void => {
     playing = true;
     paused = false;
     startScreen.classList.add('hidden');
     pauseScreen.classList.add('hidden');
     hudElements.forEach((element) => element.classList.remove('hidden'));
-    session.start(mode);
+    lancerSession(mode);
     canvas.focus();
   };
   document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((button) => {
@@ -978,7 +993,7 @@ async function start(): Promise<void> {
       car.setVueCabine(cameraMode === 1);
     }
     if (playing && input.tapped('r')) car.reset();
-    if (playing && input.tapped('t')) session.start('challenge');
+    if (playing && input.tapped('t')) lancerSession('challenge');
     if (input.tapped('l')) {
       ambianceIndex = (ambianceIndex + 1) % AMBIANCES.length;
       applyAmbiance(ambianceIndex);
@@ -1014,11 +1029,14 @@ async function start(): Promise<void> {
     }
 
     if (playing && !paused) {
-      car.update(dt, input);
+      // Compte à rebours du défi : la voiture et le chrono attendent le GO.
+      if (!arcade.fige) car.update(dt, input);
       // Passants et touffes d'herbe : logique Three animée, rendu Babylon.
       faithful.vivant?.update(dt, performance.now() / 1000, car.root.position.x, car.root.position.z);
       if (traffic.update(dt, car.root.position.x, car.root.position.z, performance.now() / 1000)) car.hitTraffic();
-      session.update(dt, car.root.position.x, car.root.position.z, car.speed);
+      if (!arcade.fige) session.update(dt, car.root.position.x, car.root.position.z, car.speed);
+      arcade.update(dt, car, session);
+      fumee.update(car, world, nuitActive);
       audio.update(car.speed, car.boosting, car.drifting);
     } else if (paused) audio.update(0, false, false);
     car.forward(forward);
@@ -1089,8 +1107,8 @@ async function start(): Promise<void> {
       const cameraLerp = 1 - Math.exp(-dt * (cameraMode === 0 ? 7.5 : 5));
       Vector3.LerpToRef(cameraPosition, desiredCamera, cameraLerp, cameraPosition);
     }
-    camera.position.copyFrom(cameraPosition);
-    camera.setTarget(cameraTarget);
+    // Champ dynamique et secousse : la couche arcade pose la caméra.
+    arcade.cadrer(dt, car, cameraPosition, cameraTarget, cameraMode);
     // Plan proche rapproché en vue conducteur : le volant se tient à environ
     // 35 cm de l'œil, soit exactement sur le plan de 0,35 m des vues
     // extérieures, qui le tranchait en deux. 0,08 m le laisse entier sans

@@ -79,6 +79,9 @@ export class ArcadeCar {
   boosting = false;
   drifting = false;
   distanceTravelled = 0;
+  // Vitesse d'impact (m/s) du dernier choc, relevée puis remise à zéro par
+  // la couche de motion design (secousse caméra, flash, perte du combo).
+  impact = 0;
 
   private readonly start: SpawnPoint;
   private readonly wheels: TransformNode[] = [];
@@ -440,6 +443,7 @@ export class ArcadeCar {
     if (this.world.collidesBuilding(this.root.position.x, this.root.position.z, 1.05)) {
       this.root.position.x = this.lastX;
       this.root.position.z = this.lastZ;
+      this.impact = Math.max(this.impact, Math.abs(this.speed));
       this.speed *= -.16;
     }
 
@@ -463,7 +467,15 @@ export class ArcadeCar {
     this.root.rotationQuaternion = Quaternion.FromEulerAngles(0, this.heading, 0);
   }
 
+  arreter(): void {
+    this.speed = 0;
+    this.steering = 0;
+    this.boosting = false;
+    this.drifting = false;
+  }
+
   hitTraffic(): void {
+    this.impact = Math.max(this.impact, Math.abs(this.speed));
     this.speed *= -.22;
     this.boost = Math.max(0, this.boost - .12);
   }

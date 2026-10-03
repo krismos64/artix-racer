@@ -2,6 +2,70 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-03 : motion design arcade
+
+Christophe a demandé d'animer le jeu « façon arcade ». Contrainte posée
+d'emblée : le coût du jeu est le nombre d'appels de dessin (84 % de l'image),
+donc AUCUN effet n'ajoute de maillage. Tout passe par la caméra, deux réglages
+du pipeline déjà en place et une couche DOM animée en CSS (`transform` et
+`opacity` seulement, composités hors du canvas). Module : `src/arcade.ts`.
+
+- Champ de vision dynamique : 1,03 rad à l'arrêt, +0,10 entre 36 et 198 km/h,
+  +0,09 sous nitro, coup de +0,05 à l'allumage. Moitié d'effet en vue
+  conducteur.
+- Secousse « trauma » (amplitude = trauma²) : chocs proportionnels à la
+  vitesse d'impact (`car.impact`, posé par la collision bâti et
+  `hitTraffic`), grondement continu sous nitro et hors-piste. Elle décale
+  surtout la visée, peu l'œil.
+- Aberration chromatique dosée par la vitesse, le nitro et les chocs.
+  Premier essai plafonné à 34 : chaque arête se doublait d'un arc-en-ciel.
+  Ramené vers 15.
+- Lignes de vitesse (dégradés coniques masqués au centre), flash rouge au
+  choc, compteur qui chauffe puis tremble sous nitro, score qui rebondit.
+- Compte à rebours 3, 2, 1, GO en mode chrono : voiture et chrono figés
+  pendant le compte (`arcade.fige`).
+- Combo de dérapage : ×1 à ×5 (un cran par 1,2 s de glisse), encaissé après
+  0,35 s d'adhérence retrouvée, perdu au premier choc. Bannières de
+  checkpoint et d'arrivée via `session.evenements`.
+
+Relecture par Codex (`codex review --uncommitted`) : un seul point, fondé.
+Relancer un défi (T) en plein dérapage gelait `car.update` pendant le compte
+à rebours mais laissait `drifting` et `speed` à leur dernière valeur : le
+combo engrangeait des points voiture immobile, et la voiture repartait au GO
+lancée. Corrigé à la racine par un départ arrêté (`car.arreter()`), plus un
+garde dans le combo.
+
+Fumée de pneus (`src/fumee.ts`) : sprite généré par Codex sur fond noir,
+transparence tirée de la luminance par ImageMagick (`public/textures/
+fumee.png`, 256 px). Un seul `ParticleSystem` pour les deux roues arrière,
+l'émetteur alterne d'une roue à l'autre à chaque image : un appel de dessin
+(par construction, pas mesuré : `_drawCalls` hors boucle cumule les images).
+Deux pièges vus à la capture : émises à 12 cm du sol, les bouffées passaient
+à moitié sous la chaussée (demi-dômes plats), centre remonté à 0,45 m ; à
+60 particules/s la traînée se lisait comme une file de boules, débit porté à
+60 + 3,8 × vitesse avec une opacité plus basse. Teinte divisée par 3 la nuit
+(les particules ne sont pas éclairées). Le compteur de combo, ancré à 170 px
+du bas, recouvrait la voiture sur une fenêtre haute : calé à 54 % de hauteur.
+
+Poussière hors-piste, dans le MÊME système de particules (aucun appel de
+dessin en plus) : Babylon fige à la naissance de chaque particule sa
+couleur, son pas vers `colorDead` (thinParticleSystem.function.js:14), sa
+taille, sa vie et sa direction, donc changer de matière ne recolore pas les
+bouffées en vol. Brun ocre, plus large, plus basse, plus longue que la fumée,
+dès 18 km/h hors chaussée, dérapage ou pas.
+
+Piège trouvé à la capture : « hors chaussée » n'est pas « sur la terre ». La
+place pavée du Général de Gaulle et le plateau multisport soulevaient de la
+terre. Nouvelle question de l'index spatial, `world.estMineral(x, z)` :
+parkings, esplanades et terrains de sport en dur (surface OSM hors sols
+meubles ; sans tag, football et rugby sur herbe, le reste sur dur). Les
+grosses bouffées de poussière (1,2 à 2 m) étaient à nouveau tranchées par
+le sol à 0,45 m : hauteur d'émission propre à chaque matière, 0,75 m pour
+la poussière.
+
+Pistes : quasi-accident (frôler un véhicule du trafic sans le toucher) pour
+nourrir le combo, sons associés (bip du compte, encaissement).
+
 ## 2026-09-19 (suite) : les passants cessent d'être des capsules
 
 Christophe a demandé de traiter les piétons, dernier point resté ouvert du

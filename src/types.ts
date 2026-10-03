@@ -61,6 +61,7 @@ export interface CityMapData {
   buildings: BuildingData[];
   areas: AreaData[];
   parkings: ParkingData[];
+  esplanades?: Array<{ pts: Point2[]; nom?: string | null }>;
   water: WaterData[];
   barriers: BarrierData[];
   terrains: SportsFieldData[];

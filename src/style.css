@@ -302,3 +302,136 @@ kbd {
   .touch-pedals button { width: 52px; height: 52px; font-size: 9px; }
   .touch-pedals .accelerate { background: #d8a92dcc; font-size: 25px; }
 }
+
+/* Motion design arcade (src/arcade.ts). Uniquement transform et opacity
+   animés : le navigateur les compose hors du canvas WebGL, sans repeindre. */
+.arcade-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Rayons qui fuient vers les bords. Deux périodes superposées (5,3° et
+   9,1°) pour que l'œil ne lise pas une roue régulière ; le centre reste
+   dégagé, c'est là que se joue la conduite. */
+.lignes-vitesse {
+  position: absolute;
+  inset: -25%;
+  opacity: 0;
+  background:
+    repeating-conic-gradient(from 0deg at 50% 50%, #fff0 0deg 1.5deg, #ffffff90 1.6deg 1.75deg, #fff0 1.85deg 5.3deg),
+    repeating-conic-gradient(from 2deg at 50% 50%, #fff0 0deg 3deg, #ffffff58 3.1deg 3.2deg, #fff0 3.3deg 9.1deg);
+  -webkit-mask: radial-gradient(circle at 50% 50%, transparent 0 36%, #0006 50%, #000 72%);
+  mask: radial-gradient(circle at 50% 50%, transparent 0 36%, #0006 50%, #000 72%);
+}
+.lignes-vitesse.actif { animation: lignes-fuite .14s steps(3) infinite; }
+@keyframes lignes-fuite {
+  from { transform: rotate(0deg) scale(1); }
+  to { transform: rotate(2.4deg) scale(1.05); }
+}
+
+.flash-impact {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, #ff3b2f 115%);
+}
+.flash-impact.choc { animation: flash-choc .5s ease-out; }
+@keyframes flash-choc {
+  from { opacity: var(--force, .6); }
+  to { opacity: 0; }
+}
+
+/* Bannières : entrée en « slam » (agrandie puis écrasée à sa taille avec un
+   léger rebond), tenue, sortie en glissant. */
+.banniere {
+  position: absolute;
+  top: 32%;
+  left: 50%;
+  color: #fff;
+  font-size: clamp(34px, 6vw, 72px);
+  font-style: italic;
+  font-weight: 860;
+  letter-spacing: .06em;
+  white-space: nowrap;
+  text-shadow: 0 4px 0 #0007, 0 0 28px #000a;
+  animation: banniere-slam 1.15s cubic-bezier(.2, 1.3, .4, 1) forwards;
+}
+.banniere.compte { font-size: clamp(80px, 14vw, 170px); color: #f6cf50; animation-duration: .95s; }
+.banniere.go { font-size: clamp(64px, 11vw, 140px); color: #8ef06a; text-shadow: 0 4px 0 #0007, 0 0 40px #8ef06a88; }
+.banniere.checkpoint { top: 24%; font-size: clamp(22px, 3.4vw, 40px); color: #f6cf50; }
+.banniere.titre { top: 26%; font-size: clamp(26px, 4vw, 48px); }
+.banniere.record { top: 44%; font-size: clamp(24px, 3.6vw, 44px); color: #6fd8ff; }
+@keyframes banniere-slam {
+  0% { opacity: 0; transform: translate(-50%, -50%) skewX(-10deg) scale(2.4); }
+  16% { opacity: 1; transform: translate(-50%, -50%) skewX(-10deg) scale(1); }
+  72% { opacity: 1; transform: translate(-50%, -50%) skewX(-10deg) scale(1.04); }
+  100% { opacity: 0; transform: translate(-20%, -50%) skewX(-10deg) scale(1); }
+}
+
+.points-volants {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  font: italic 820 clamp(20px, 2.6vw, 30px)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #f6cf50;
+  text-shadow: 0 2px 0 #0008, 0 0 18px #f6cf5066;
+  animation: points-monte 1s cubic-bezier(.15, .8, .3, 1) forwards;
+}
+.points-volants.derapage { top: 50%; color: #ff9f43; }
+.points-volants.rate { top: 50%; color: #ff5a4a; font-size: clamp(16px, 2vw, 22px); }
+@keyframes points-monte {
+  0% { opacity: 0; transform: translate(-50%, 10px) scale(.6); }
+  18% { opacity: 1; transform: translate(-50%, 0) scale(1.15); }
+  100% { opacity: 0; transform: translate(-50%, -70px) scale(1); }
+}
+
+/* Compteur de combo de dérapage, couleur par palier de multiplicateur.
+   Calé en HAUTEUR relative, au-dessus du toit de la voiture : ancré à 170 px
+   du bas, il recouvrait la caisse dès que la fenêtre était haute. */
+.combo {
+  position: absolute;
+  top: 54%;
+  left: 50%;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  opacity: 0;
+  transform: translateX(-50%) skewX(-10deg) scale(.8);
+  transition: opacity .15s, transform .2s cubic-bezier(.2, 1.4, .4, 1);
+  font-style: italic;
+  text-shadow: 0 2px 0 #0008, 0 0 16px #000a;
+}
+.combo.actif { opacity: 1; transform: translateX(-50%) skewX(-10deg) scale(1); }
+.combo-titre { font-size: 12px; font-weight: 800; letter-spacing: .2em; color: #e3e9ed; }
+.combo-multi { font-size: 30px; font-weight: 880; color: #f6cf50; }
+.combo-points { font: 800 22px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #fff; }
+.combo[data-palier="3"] .combo-multi { color: #ff9f43; }
+.combo[data-palier="4"] .combo-multi,
+.combo[data-palier="5"] .combo-multi { color: #ff5a4a; animation: combo-pulse .3s ease-in-out infinite alternate; }
+@keyframes combo-pulse { to { transform: scale(1.18); } }
+
+/* Compteur de vitesse : chauffe au-delà de 158 km/h, tremble sous nitro. */
+.speed span { display: inline-block; transition: color .3s, text-shadow .3s; }
+.telemetry.rapide .speed span { color: #ffe7a6; }
+.telemetry.nitro .speed span {
+  color: #ffd257;
+  text-shadow: 0 0 22px #ff9a2f, 0 2px 14px #000d;
+  animation: compteur-tremble .07s steps(2) infinite;
+}
+@keyframes compteur-tremble {
+  from { transform: translate(0, 0); }
+  to { transform: translate(1.5px, -1px); }
+}
+.telemetry.nitro #boost-bar { animation: nitro-pulse .25s ease-in-out infinite alternate; }
+@keyframes nitro-pulse { to { filter: brightness(1.6); box-shadow: 0 0 22px #f6cf50; } }
+
+.score-panel strong { display: inline-block; transform-origin: right center; }
+.score-panel strong.gain { animation: score-gain .4s cubic-bezier(.2, 1.5, .4, 1); }
+@keyframes score-gain {
+  0% { transform: scale(1.35); color: #f6cf50; }
+  100% { transform: scale(1); }
+}
+

@@ -33,9 +33,9 @@ Objectif unique : le meilleur rendu visuel possible, vite.
    PBR. Contient aussi `LiveInstancedBridge` (contenu animé) et le calcul du
    contenu vivant.
 3. **`src/world.ts`** (Babylon natif) : `ArtixWorld` est un pur INDEX SPATIAL.
-   Il ne dessine rien : il ne répond qu'aux quatre questions que la boucle de
+   Il ne dessine rien : il ne répond qu'aux cinq questions que la boucle de
    jeu pose à chaque image (`surfaceY`, `isOnRoad`, `roadNameAt`,
-   `collidesBuilding`), via une grille de cellules de 256 m. Ne pas y chercher
+   `collidesBuilding`, `estMineral`), via une grille de cellules de 256 m. Ne pas y chercher
    le visuel, et ne rien y ajouter qui dessine.
 4. **`src/main.ts`** : scène, ciel, lumières, ombres CSM, ambiances, pipeline
    post-process, boucle de jeu, HUD.
