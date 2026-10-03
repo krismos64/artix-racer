@@ -1895,6 +1895,9 @@ export function buildWorld(scene, data) {
   // en portent. Couleur relevée sur les photos quand l'analyse l'a détectée,
   // sinon palette des teintes réellement vues à Artix.
   const voletPos = [], voletCol = [], voletUv = [];
+  // Portes d'entrée, portes de garage et devantures : un seul maillage, un
+  // atlas de trois images Codex (voir le maillage `portes` plus bas).
+  const portePos = [], porteUv = [], porteCol = [];
   const PALETTE_VOLETS = [0x7a2f2b, 0x3e5a3c, 0x4a5f70, 0x6d4a33, 0x8a8d86, 0x5c3a41];
   // Encadrement des baies, en maillage séparé : un dormant clair autour d'une
   // vitre sombre est ce qui rend une fenêtre lisible de loin, bien plus que la
@@ -2095,6 +2098,32 @@ export function buildWorld(scene, data) {
       }
     }
 
+    // Style de menuiserie (3 octobre 2026, images Codex). Les pavillons
+    // de lotissement, petits et loin du bourg, portent des fenêtres PVC à
+    // volet roulant et pas de volets battants ; ailleurs, persiennes ou
+    // volets pleins à écharpe. Écart de fidélité accepté : le style est tiré
+    // au hasard, pas relevé maison par maison.
+    const habitation = b.usage === 'Résidentiel' || b.usage === 'Indifférencié';
+    const moderne = habitation && b.surface < 280 && Math.hypot(ctrX, ctrZ) > 350
+      && hash(b.graine * 5.13 + 1.7) < 0.75;
+    const persienne = !moderne && hash(b.graine * 2.71 + 0.3) < 0.45;
+    if (moderne) aVolets = false;
+    const commerce = b.usage === 'Commercial et services' && b.nature === 'Indifférenciée' && b.surface < 700;
+    const annexe = b.usage === 'Annexe';
+    // Façade principale : l'arête la plus longue, le plus souvent le mur
+    // gouttereau sur rue. C'est elle qui reçoit porte, garage ou devanture.
+    let iPrincipale = -1, lPrincipale = 0;
+    for (let i = 0; i < n; i++) {
+      const [ax1, az1] = b.pts[i], [ax2, az2] = b.pts[(i + 1) % n];
+      const l = Math.hypot(ax2 - ax1, az2 - az1);
+      if (l > lPrincipale) { lPrincipale = l; iPrincipale = i; }
+    }
+    const teintePorte = aVolets ? [voletR, voletG, voletB]
+      : (() => {
+        const hex = PALETTE_VOLETS[Math.floor(hash(b.graine * 4.9 + 3.3) * PALETTE_VOLETS.length)];
+        return [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
+      })();
+
     // Salissure de pied de façade : la pluie rejaillit du sol et noircit le
     // bas des murs sur les 80 premiers centimètres, très visible sur les
     // enduits clairs du bourg. Rendue par assombrissement des sommets bas
@@ -2220,6 +2249,20 @@ export function buildWorld(scene, data) {
       collisionTris.push(x1, BASE_Y, z1, x2, BASE_Y, z2, x2, top, z2);
       collisionTris.push(x1, BASE_Y, z1, x2, top, z2, x1, top, z1);
 
+      // --- Rez-de-chaussée de la façade principale ---
+      // Emplacements de baie réservés : porte au premier, garage au dernier
+      // (pavillon moderne assez large), tout le niveau pour une devanture ou
+      // une annexe. Mêmes calculs de niveaux et d'emplacements que les baies.
+      const principale = i === iPrincipale && !b.leger;
+      const nSlots = Math.max(1, Math.min(6, Math.floor(len / 3.1)));
+      const niveauxEst = Math.max(1, Math.min(6, Math.max(1, Math.floor(h / 2.4)),
+        b.etages ?? Math.round(h / 2.9)));
+      const hRdc = Math.min(3.0, h / niveauxEst - 0.1);
+      const rdcEntier = principale && (commerce || annexe);
+      const slotPorte = principale && habitation && !commerce && h > 2.4 ? 0 : -1;
+      const slotGarage = principale && moderne && nSlots >= 3 && len / nSlots >= 2.8 ? nSlots - 1 : -1;
+      const reserve = (k) => rdcEntier || k === slotPorte || k === slotGarage;
+
       // --- Fenêtres sur cette façade ---
       // Le nombre de niveaux vient de la BD TOPO quand il est renseigné,
       // sinon il se déduit de la hauteur (2,9 m par étage).
@@ -2268,6 +2311,7 @@ export function buildWorld(scene, data) {
           // plus bas, ce qui vaut mieux qu'un toit troué.
           if (yh > top - 0.45) continue;
           for (let k = 0; k < parNiveau; k++) {
+            if (e === 0 && reserve(k)) continue;
             const t = (k + 0.5) / parNiveau;
             const cxw = x1 + dx * t, czw = z1 + dz * t;
             const ux = (dx / len) * (largeur / 2), uz = (dz / len) * (largeur / 2);
@@ -2279,7 +2323,10 @@ export function buildWorld(scene, data) {
               cxw + ux + ox, yh, czw + uz + oz,
               cxw - ux + ox, yh, czw - uz + oz,
             );
-            winUv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
+            // Atlas de baies : fenêtre à la française à gauche, fenêtre PVC
+            // à volet roulant à droite.
+            const fu = moderne ? 0.5 : 0;
+            winUv.push(fu, 0, fu + 0.5, 0, fu + 0.5, 1, fu, 0, fu + 0.5, 1, fu, 1);
 
             // Teinte du vitrage. Une baie ne renvoie pas la même chose selon
             // ce qu'il y a derrière et selon son orientation : les unes tirent
@@ -2333,8 +2380,9 @@ export function buildWorld(scene, data) {
             // texture d'émission : moitié gauche noire pour une pièce
             // éteinte, moitié droite (carreaux éclairés derrière le voilage)
             // pour une pièce allumée.
-            const du = allume ? 0.5 : 0;
-            winUvNuit.push(du, 0, du + 0.5, 0, du + 0.5, 1, du, 0, du + 0.5, 1, du, 1);
+            // Quatre cases : [noire, française allumée, noire, PVC allumée].
+            const du = (moderne ? 0.5 : 0) + (allume ? 0.25 : 0);
+            winUvNuit.push(du, 0, du + 0.25, 0, du + 0.25, 1, du, 0, du + 0.25, 1, du, 1);
 
             // Dormant : un quadrilatère un peu plus large et plus haut, en
             // saillie devant la vitre. C'est ce décrochement qui donne la
@@ -2430,10 +2478,45 @@ export function buildWorld(scene, data) {
                 // de la texture, peintes à droite, tombent ainsi toujours sur
                 // le bord extérieur, là où le vantail est ferré. Les deux
                 // vantaux se lisent en miroir, comme une vraie paire.
-                voletUv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
+                // Atlas : volet plein à écharpe à gauche, persienne à droite.
+                const pu = persienne ? 0.5 : 0;
+                voletUv.push(pu, 0, pu + 0.5, 0, pu + 0.5, 1, pu, 0, pu + 0.5, 1, pu, 1);
                 for (let s = 0; s < 6; s++) voletCol.push(rv, gvv, bv);
               }
             }
+          }
+        }
+      }
+
+      // Porte, garage, devanture : posés à 4,5 cm du nu, devant le
+      // soubassement (3 cm). UV dans l'atlas `portes` (v = 1 en haut) :
+      // porte [0 ; 0,25] x [0,5 ; 1], garage [0,25 ; 1] x [0,5 ; 1],
+      // devanture [0 ; 1] x [0 ; 0,5].
+      if (principale && h > 2.2) {
+        const ofx = nx * 0.045, ofz = nz * 0.045;
+        const poser = (t, larg, haut, u0, u1, v0, v1, col) => {
+          const cxp = x1 + dx * t, czp = z1 + dz * t;
+          const ex = (dx / len) * larg / 2, ez = (dz / len) * larg / 2;
+          const y0 = BASE_Y, y1 = BASE_Y + haut;
+          portePos.push(
+            cxp - ex + ofx, y0, czp - ez + ofz, cxp + ex + ofx, y0, czp + ez + ofz, cxp + ex + ofx, y1, czp + ez + ofz,
+            cxp - ex + ofx, y0, czp - ez + ofz, cxp + ex + ofx, y1, czp + ez + ofz, cxp - ex + ofx, y1, czp - ez + ofz,
+          );
+          porteUv.push(u0, v0, u1, v0, u1, v1, u0, v0, u1, v1, u0, v1);
+          for (let v = 0; v < 6; v++) porteCol.push(col[0], col[1], col[2]);
+        };
+        const blanc = [0.95, 0.95, 0.94];
+        if (commerce) {
+          // Devanture au milieu du rez-de-chaussée, 7,5 m au plus.
+          poser(0.5, Math.min(len - 0.8, 7.5), hRdc, 0, 1, 0, 0.5, [1, 1, 1]);
+        } else if (annexe) {
+          if (len >= 3) poser(0.5, Math.min(2.6, len - 0.6), Math.min(2.1, h - 0.3), 0.25, 1, 0.5, 1, blanc);
+        } else {
+          if (slotPorte >= 0) {
+            poser((slotPorte + 0.5) / nSlots, 1.0, Math.min(2.2, hRdc - 0.15), 0, 0.25, 0.5, 1, teintePorte);
+          }
+          if (slotGarage >= 0) {
+            poser((slotGarage + 0.5) / nSlots, 2.5, Math.min(2.1, hRdc - 0.2), 0.25, 1, 0.5, 1, blanc);
           }
         }
       }
@@ -3026,6 +3109,26 @@ export function buildWorld(scene, data) {
     // couverture, ce qui donnait des toits troués vus de loin.
     group.add(m);
     vitrages = mat;
+  }
+
+  if (portePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(portePos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(porteUv, 2));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(porteCol, 3));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Atlas de trois images Codex : porte béarnaise à panneaux (peinte en
+    // gris clair, teintée comme les volets de la maison), porte de garage
+    // sectionnelle, devanture sans texte. Un appel de dessin pour les trois.
+    const tex = textureFichier('/textures/facades/portes.jpg');
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      map: tex, vertexColors: true, roughness: 0.6, side: THREE.DoubleSide,
+    }));
+    m.name = 'portes';
+    m.receiveShadow = true;
+    group.add(m);
   }
 
   if (cadrePos.length) {
@@ -4036,10 +4139,13 @@ function plantTrees(data, relief = null) {
     // Subdivision 1 : 80 faces contre 20, assez pour que le lobe cesse de se
     // lire comme un polyèdre sans faire exploser le compte de triangles à
     // 3 500 exemplaires.
+    // Lobes réduits de 25 % (3 octobre 2026) : ils ne forment plus que la
+    // masse intérieure du houppier ; la silhouette vient des cartes de
+    // feuillage ajoutées plus bas.
     const lobes = [
-      { p: [0, 0.12, 0], r: 0.82 },
-      { p: [0.42, -0.16, -0.26], r: 0.62 },
-      { p: [-0.38, -0.10, 0.34], r: 0.58 },
+      { p: [0, 0.12, 0], r: 0.62 },
+      { p: [0.42, -0.16, -0.26], r: 0.47 },
+      { p: [-0.38, -0.10, 0.34], r: 0.44 },
     ].map(({ p, r }) => {
       const g = new THREE.IcosahedronGeometry(r, 1);
       // Déformation par sommet : un lobe strictement sphérique reste trop
@@ -4054,8 +4160,41 @@ function plantTrees(data, relief = null) {
       g.translate(p[0], p[1], p[2]);
       return g;
     });
-    const g = mergeGeometries(lobes);
-    g.computeVertexNormals();
+    // Cartes de feuillage : huit plans croisés portant une grappe de feuilles
+    // détourée (image Codex), orientés au hasard autour du houppier. C'est
+    // la technique des arbres de jeu vidéo : la découpe alpha dessine une
+    // silhouette feuillue, là où les lobes seuls restaient des boules
+    // facettées. Normales SPHÉRIQUES (depuis le centre, aplaties comme le
+    // houppier) : les cartes s'éclairent comme un volume, pas comme des
+    // plans.
+    const cartes = [];
+    for (let k = 0; k < 8; k++) {
+      const c = new THREE.PlaneGeometry(1.25, 1.25);
+      c.rotateX((hash(k * 3.1) - 0.5) * Math.PI);
+      c.rotateY(hash(k * 5.7) * Math.PI * 2);
+      c.rotateZ((hash(k * 8.3) - 0.5) * 0.8);
+      const t = hash(k * 1.9) * Math.PI * 2, el = (hash(k * 7.7) - 0.4) * 0.6;
+      c.translate(Math.cos(t) * 0.38, el, Math.sin(t) * 0.38);
+      cartes.push(c.toNonIndexed());
+    }
+    for (const c of cartes) {
+      const a = c.attributes.position, nrm = c.attributes.normal;
+      for (let i = 0; i < a.count; i++) {
+        const x = a.getX(i), y = a.getY(i) * 1.6, z = a.getZ(i);
+        const l = Math.hypot(x, y, z) || 1;
+        nrm.setXYZ(i, x / l, y / l, z / l);
+      }
+    }
+    // Les lobes prennent la même normale calculée que d'habitude ; les
+    // cartes gardent leurs normales sphériques, d'où la fusion APRÈS calcul.
+    const masse = mergeGeometries(lobes);
+    masse.computeVertexNormals();
+    // UV des lobes recadrées sur le cœur DENSE de la grappe (40 % central) :
+    // étalée entière, l'image plaquait ses marges transparentes et ses bords
+    // en traînées sur la masse intérieure, trouée et striée de près.
+    const uvM = masse.attributes.uv;
+    for (let i = 0; i < uvM.count; i++) uvM.setXY(i, 0.3 + uvM.getX(i) * 0.4, 0.3 + uvM.getY(i) * 0.4);
+    const g = mergeGeometries([masse, ...cartes]);
     return g;
   })();
 
@@ -4100,13 +4239,16 @@ function plantTrees(data, relief = null) {
   // la silhouette des lobes et rend le houppier poreux, le ciel passant par
   // les vides. DoubleSide obligatoire : les trous montrent l'intérieur de la
   // couronne. La teinte d'essence reste portée par la couleur d'instance.
-  const feuilles = texturerFeuilles(256);
-  feuilles.repeat.set(2, 2);
+  // Grappe de feuilles détourée (Codex, ramenée en gris clair pour que la
+  // couleur d'instance de chaque essence la teinte).
+  const feuilles = textureFichier('/textures/facades/feuillage.png');
+  void texturerFeuilles;
   const leafMat = new THREE.MeshStandardMaterial({
     // Teinte relevée avec le ciel HDR : sous l'ancien éclairage plat, un
     // vert sombre passait ; sous un vrai soleil et ses ombres, les couronnes
     // ressortaient en masses noires. Albédo visé d'un feuillage : 0,1 linéaire.
-    color: 0x78a864, roughness: 1, flatShading: true,
+    // flatShading retiré : il écrasait les normales sphériques des cartes.
+    color: 0x78a864, roughness: 1,
     map: feuilles, alphaTest: 0.5, side: THREE.DoubleSide,
   });
 

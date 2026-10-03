@@ -2,6 +2,39 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-03 (suite 2) : visuels générés par Codex, fidélité relâchée
+
+Christophe autorise des visuels qui ne respectent pas la ville à
+l'identique et demande tout d'un coup. Huit images Codex lancées en
+parallèle ; le script prenant la plus récente image apparue, elles se sont
+volé leurs résultats : originaux récupérés dans `~/.codex/generated_images/`
+et identifiés sur planche. Toutes réussies au premier essai.
+
+- **Pyrénées** : panorama peint sur fond vert uni, détouré (excès de vert
+  vers l'alpha, frange retirée), une seule couche au lieu de trois, répété
+  3,5 fois en miroir sur l'arc (étiré d'un tenant, rapport 10 pour 1 contre 3
+  pour l'image, il aplatissait les pics), extrémités fondues par l'alpha de
+  sommet. L'Ossau dessiné à son azimut disparaît : écart accepté.
+- **Feuillage** : grappe de feuilles sur fond noir, ramenée en gris clair
+  (la couleur d'instance de chaque essence la teinte), 1 024 px. Houppier =
+  huit cartes croisées à normales sphériques + lobes réduits de 25 % en
+  masse intérieure, UV des lobes recadrées sur le cœur dense de la grappe
+  (étalée entière, elle les striait). Même instanciation, mêmes appels.
+- **Portes, garages, devantures** : atlas `portes.jpg` de trois images, un
+  maillage (+1 appel). Façade principale = arête la plus longue. Porte au
+  premier emplacement de baie du rez-de-chaussée (teinte des volets),
+  garage au dernier sur les pavillons modernes assez larges et au milieu des
+  annexes, devanture sur les bâtiments « Commercial et services ». Compté :
+  1 356 portes, 901 garages, 51 devantures.
+- **Variantes** : pavillons de lotissement (habitation de moins de 280 m² à
+  plus de 350 m du centre, 75 %) en fenêtres PVC à volet roulant sans volets
+  battants ; ailleurs 45 % de persiennes. Atlas dans les maillages
+  existants (+0 appel) : 8 364 baies PVC, 14 239 à la française. Émission de
+  nuit en quatre cases (noire / française allumée / noire / PVC allumée).
+- **Écran titre** : illustration en fond, dégradé et image dans le MÊME
+  calque (un pseudo-élément en z-index -1 se peint au-dessus du fond du
+  panneau), lent zoom animé, coupé sous `prefers-reduced-motion`.
+
 ## 2026-10-03 (suite) : diagnostic visuel, le sol n'avait jamais vu le soleil
 
 Christophe trouve les maisons et les voitures laides. Diagnostic par

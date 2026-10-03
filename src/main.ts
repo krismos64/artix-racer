@@ -203,6 +203,7 @@ interface CretePyrenees {
   brume: number;        // 0 = crête nette, 1 = fondue dans le ciel
   graine: number;
   ossau: boolean;       // cette couche porte-t-elle le pic ?
+  photo?: boolean;      // panorama peint (fichier) au lieu du dessin procédural
 }
 // Trois plans, du plus lointain au plus proche. Les crêtes de l'arrière-plan
 // sont plus hautes et plus pâles : c'est ce recouvrement, plus le contraste
@@ -210,11 +211,19 @@ interface CretePyrenees {
 // Ouverture des arcs de crête, de part et d'autre du sud : 110°. La texture
 // s'y répartit linéairement en ANGLE (u = 0,5 au sud).
 const ARC_FOND = 110 * Math.PI / 180;
+// Depuis le 3 octobre 2026, une seule couche : un panorama des Pyrénées
+// peint par Codex (fond vert détouré), qui porte en lui-même l'étagement
+// des plans et la brume. Les sinus donnaient des bosses arrondies. Le pic
+// d'Ossau dessiné à son azimut disparaît : écart de fidélité accepté par
+// Christophe au profit du rendu. Le dessin procédural reste disponible
+// (photo: false) pour qui voudrait revenir aux trois couches.
 const CRETES: CretePyrenees[] = [
-  { profondeur: 1420, hauteur: 62, brume: .62, graine: 7.3, ossau: false },
-  { profondeur: 1380, hauteur: 52, brume: .42, graine: 3.1, ossau: true },
-  { profondeur: 1330, hauteur: 36, brume: .24, graine: 11.7, ossau: false },
+  { profondeur: 1380, hauteur: 52, brume: .42, graine: 3.1, ossau: false, photo: true },
 ];
+// Répétitions du panorama sur l'arc, en miroir : 3,5 fois sur 110°, soit
+// 31° et 760 m d'arc par image. Étirée d'un seul tenant (rapport 10 pour 1
+// contre 3 pour 1 pour l'image), elle aplatissait les pics.
+const REPET_PANORAMA = 3.5;
 
 // Profil d'une crête : sommes de sinus de périodes différentes, donc des
 // pics irréguliers plutôt qu'une ondulation régulière. `u` va de 0 à 1.
@@ -361,7 +370,14 @@ function createBackdrop(scene: Scene): { materiaux: PBRMaterial[]; noeud: Transf
   // écrasait.
   const noeud = new TransformNode('fond-pyrenees', scene);
   for (const crete of CRETES) {
-    const texture = texturerCrete(scene, crete);
+    let texture: Texture;
+    if (crete.photo) {
+      texture = new Texture('/textures/fond/pyrenees.png', scene);
+      texture.wrapU = Texture.MIRROR_ADDRESSMODE;
+      texture.uScale = REPET_PANORAMA;
+    } else {
+      texture = texturerCrete(scene, crete);
+    }
     const materiau = new PBRMaterial(`pyrenees-${crete.graine}`, scene);
     materiau.albedoTexture = texture;
     materiau.opacityTexture = texture;
@@ -379,7 +395,7 @@ function createBackdrop(scene: Scene): { materiaux: PBRMaterial[]; noeud: Transf
     materiau.disableDepthWrite = true;
     materiau.unlit = true;
     materiau.backFaceCulling = false;
-    materiau.metadata = { brume: crete.brume };
+    materiau.metadata = { brume: crete.brume, photo: !!crete.photo };
     materiaux.push(materiau);
 
     // Un ARC de cylindre par couche, et non plus un plan. Un plan de
@@ -390,13 +406,17 @@ function createBackdrop(scene: Scene): { materiaux: PBRMaterial[]; noeud: Transf
     // caméra, chaque point de crête est à distance constante (1 330 à
     // 1 420 m), sous le ciel (1 450 m) et sous le plan lointain, quel que
     // soit le cap. Constaté le 3 octobre 2026 rue du Parc, cap sud-ouest.
-    const hauteur = crete.hauteur * (256 / 54) * 1.05;
+    // Panorama : hauteur tirée du rapport de l'image (2 172 x 724) sur 760 m
+    // d'arc par répétition, pour garder des pics à leurs proportions.
+    const hauteur = crete.photo
+      ? (crete.profondeur * ARC_FOND / REPET_PANORAMA) * (724 / 2172)
+      : crete.hauteur * (256 / 54) * 1.05;
     // Le pied passe SOUS la ligne d'horizon, sinon la bande transparente du
     // bas laisse voir les crêtes flotter en l'air, détachées du sol.
     const yBas = -120, yHaut = hauteur - 120;
     const R = crete.profondeur;
     const SEGMENTS = 96;
-    const positions: number[] = [], uvs: number[] = [], indices: number[] = [];
+    const positions: number[] = [], uvs: number[] = [], indices: number[] = [], couleurs: number[] = [];
     for (let i = 0; i <= SEGMENTS; i++) {
       const u = i / SEGMENTS;
       const phi = (u - .5) * ARC_FOND;
@@ -406,7 +426,14 @@ function createBackdrop(scene: Scene): { materiaux: PBRMaterial[]; noeud: Transf
       // v = 1 au pied, 0 en haut : la texture (DynamicTexture, invertY)
       // porte ses crêtes en haut du canvas. Dans l'autre sens, la brume de
       // vallée montait au-dessus des crêtes comme un rideau de pluie.
-      uvs.push(u, 1, u, 0);
+      // Fichier image (Texture, invertY) : haut de l'image à v = 1, d'où le
+      // sens opposé à la texture dessinée.
+      if (crete.photo) uvs.push(u, 0, u, 1);
+      else uvs.push(u, 1, u, 0);
+      // Fondu des deux extrémités de l'arc par l'alpha de sommet : la
+      // répétition en miroir interdit de l'estomper dans l'image.
+      const fondu = Math.min(1, Math.min(u, 1 - u) / .1);
+      couleurs.push(1, 1, 1, fondu, 1, 1, 1, fondu);
       if (i < SEGMENTS) {
         const k = i * 2;
         indices.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
@@ -420,7 +447,9 @@ function createBackdrop(scene: Scene): { materiaux: PBRMaterial[]; noeud: Transf
     const normales: number[] = [];
     VertexData.ComputeNormals(positions, indices, normales);
     data.normals = normales;
+    data.colors = couleurs;
     data.applyToMesh(arc);
+    arc.hasVertexAlpha = true;
     arc.material = materiau;
     arc.parent = noeud;
     arc.isPickable = false;
@@ -470,6 +499,17 @@ async function start(): Promise<void> {
   // ciel). Sans cela le fond restait gris-vert au couchant comme la nuit.
   const teinterBackdrop = (fog: Color3, neige: number): void => {
     for (const materiau of cretesPyrenees) {
+      if (materiau.metadata?.photo) {
+        // Panorama déjà en couleur : seulement voilé de la teinte de l'air,
+        // bleuté le jour, doré au soir, presque éteint la nuit.
+        materiau.unfreeze?.();
+        materiau.albedoColor = new Color3(
+          Math.min(1, fog.r * 1.3), Math.min(1, fog.g * 1.3), Math.min(1, fog.b * 1.3),
+        );
+        materiau.emissiveColor = Color3.Black();
+        materiau.freeze();
+        continue;
+      }
       const brume = (materiau.metadata?.brume as number) ?? .6;
       // Plus la couche est embrumée, plus elle se rapproche de l'air ambiant.
       // L'étagement doit être FRANC : à teintes trop voisines (0,54 contre

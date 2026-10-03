@@ -215,6 +215,11 @@ Retirée le 19 septembre 2026.
   quelle que soit son élancement ; sinon couverture à faible pente. Un
   ACROTÈRE couleur d'enduit ne se pose que sur un toit réellement plat :
   sur une maison, il la transforme en toit-terrasse.
+- Codex en parallèle : `codex.sh image` copie la PLUS RÉCENTE image apparue
+  depuis son lancement. Plusieurs générations simultanées se volent leurs
+  résultats (le fichier « Pyrénées » contenait la porte de garage). Lancer
+  en parallèle est utile, mais récupérer les originaux dans
+  `~/.codex/generated_images/` et les identifier à l'œil.
 - Flotte Kenney : mise à l'échelle AXE PAR AXE (`MODELES` de flotte.js,
   longueur, largeur, hauteur réelles). Sur la seule longueur, le kit trapu
   donnait des berlines de 2,32 m de haut.
@@ -299,7 +304,9 @@ Retirée le 19 septembre 2026.
 | `textures/ciel/*.hdr` | 3 panoramas Poly Haven plafonnés (jour, soir, nuit) | `scripts/ciel-soleil.mjs` |
 | `textures/sols/*.jpg` | matières ambientCG (enrobé, herbe, béton, pavés, grave, écorce) | `scripts/preparer-textures.mjs` |
 | `textures/bati/*.jpg` | crépi Plaster003, tuile canal RoofingTiles006, ardoise RoofingTiles003, bac acier CorrugatedSteel005 (ambientCG), en gris clair + normales | `scripts/preparer-bati.mjs` |
-| `textures/facades/*.jpg` | baie à la française, émission de nuit, vantail de volet, génoise | générées par Codex (fenêtre, volet, génoise accolée à son reflet pour se raccorder) |
+| `textures/facades/*` | atlas de baies (française, PVC à volet roulant) et leur émission de nuit en 4 cases, atlas de volets (écharpe, persienne), atlas `portes` (porte, garage, devanture), génoise, feuillage | générées par Codex, détourées et assemblées à la main (voir JOURNAL.md, 3 octobre) |
+| `textures/fond/pyrenees.png` | panorama des Pyrénées, fond vert détouré | généré par Codex |
+| `images/titre.jpg` | illustration de l'écran titre | générée par Codex |
 | `models/flotte/*.glb` | 5 voitures Kenney Car Kit + palette | copie du kit |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 

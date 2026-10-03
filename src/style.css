@@ -435,3 +435,33 @@ kbd {
   100% { transform: scale(1); }
 }
 
+
+/* Écran titre : illustration générée par Codex (bourg béarnais, voiture en
+   dérapage, Pyrénées), lent zoom animé. Le dégradé sombre à gauche garde le
+   texte lisible ; l'image a été demandée calme et sombre de ce côté. Le
+   flou d'arrière-plan des autres panneaux est retiré ici, il noyait l'image. */
+#start-screen {
+  overflow: hidden;
+  background: #05101a;
+  backdrop-filter: none;
+}
+/* Dégradé et image dans le MÊME calque : un pseudo-élément en z-index -1 se
+   peint au-dessus du fond propre du panneau, le dégradé posé sur le panneau
+   passait donc sous l'image et ne protégeait plus le texte. */
+#start-screen::before {
+  content: "";
+  position: absolute;
+  inset: -4%;
+  z-index: -1;
+  background:
+    linear-gradient(100deg, #05101af0 0%, #07131dd0 34%, #0a172100 70%),
+    url("/images/titre.jpg") center / cover no-repeat;
+  animation: titre-zoom 24s ease-in-out infinite alternate;
+}
+@keyframes titre-zoom {
+  from { transform: scale(1) translateX(0); }
+  to { transform: scale(1.08) translateX(-1.5%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #start-screen::before { animation: none; }
+}
