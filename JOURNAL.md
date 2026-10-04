@@ -2,6 +2,26 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-04 (suite 2) : Codex en conseil, plaques de rue, ombres au pied des murs
+
+Codex mis à contribution sur trois rôles. **Idées** : soumis l'état visuel
+et les contraintes (appels de dessin, pont), il classe en tête l'ancrage
+des bâtiments au sol par des ombres de contact. Sa technique (assombrir les
+sommets du sol) ne tient pas ici, le sol ayant une maille de 22 m : adaptée
+en ruban de 0,9 m autour de chaque emprise, dégradé noir transparent, un
+maillage (montage de l'ombre des voitures garées). Alpha au mur ramené de
+0,5 à 0,4 : bande trop dure et triangle noir aux angles où deux rubans se
+recouvrent. **Image** : fond de plaque émaillée SANS texte (bleu cobalt,
+liseré, rivets, éclats) ; les noms, qu'un générateur déformerait, sont
+écrits en SVG par `scripts/preparer-plaques.mjs` (183 noms OSM, atlas
+2 048 px, type de voie en petites capitales). Plaque à chaque extrémité de
+voie nommée, sur le mur le plus proche à moins de 12 m, texte vérifié à
+l'endroit en jeu. **Relecture** : deux défauts réels relevés et corrigés,
+l'altitude (hauteur de chaussée au lieu de l'assise BD TOPO des murs) et le
+dédoublonnage (une autre rue au même angle était supprimée ; 85 puis 97
+plaques). Hauteur plafonnée à 45 % de la hauteur du bâtiment : à 2,5 m,
+la plaque d'une maison basse passait sous la génoise.
+
 ## 2026-10-04 (suite) : portes sur rue, passants avec visage et manches
 
 **Portes sur rue.** La façade principale (porte, garage, devanture) était

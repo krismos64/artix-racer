@@ -310,6 +310,7 @@ Retirée le 19 septembre 2026.
 | `textures/bati/*.jpg` | crépi Plaster003, tuile canal RoofingTiles006, ardoise RoofingTiles003, bac acier CorrugatedSteel005 (ambientCG), en gris clair + normales | `scripts/preparer-bati.mjs` |
 | `textures/facades/*` | atlas de baies (française, PVC à volet roulant) et leur émission de nuit en 4 cases, atlas de volets (écharpe, persienne), atlas `portes` (porte, garage, devanture), génoise, feuillage | générées par Codex, détourées et assemblées à la main (voir JOURNAL.md, 3 octobre) |
 | `textures/fond/pyrenees.png` | panorama des Pyrénées, fond vert détouré | généré par Codex |
+| `textures/facades/plaques.jpg` | atlas des 183 plaques de rue émaillées (fond Codex sans texte, noms OSM en SVG, ordre alphabétique) | `scripts/preparer-plaques.mjs` (à relancer si les noms de voies changent) |
 | `images/titre.jpg` | illustration de l'écran titre | générée par Codex |
 | `models/flotte-rgs/*.json` | 4 véhicules rgsdev (CC0) en deux lots + palette | `scripts/preparer-flotte.mjs` (depuis le FBX) |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |

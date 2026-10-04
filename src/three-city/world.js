@@ -1916,6 +1916,11 @@ export function buildWorld(scene, data) {
   // Génoises : frise de rangs de tuiles canal sous l'égout, la signature des
   // maisons du Sud-Ouest. Un maillage pour toute la commune.
   const genoisePos = [], genoiseUv = [];
+  // Ombres de contact au pied des murs (proposition de Codex, classée en
+  // tête de sa revue visuelle du 4 octobre 2026) : un ruban de 0,9 m couché
+  // au sol autour de chaque emprise, en dégradé sombre vers transparent.
+  // Les maisons paraissaient posées sur l'herbe sans y peser.
+  const ombrePos = [], ombreUv = [];
   // Largeur couverte par une tuile de texture : l'image générée (trois rangs
   // de huit tuiles) est accolée à son reflet pour se raccorder sans couture,
   // soit seize tuiles de 12,5 cm sur 2 m, à l'échelle d'une frise de 32 cm.
@@ -2269,6 +2274,22 @@ export function buildWorld(scene, data) {
         poserMur(ya); poserMur(yb); poserMur(yb);
         const va = (ya - BASE_Y) / 3, vb = (yb - BASE_Y) / 3;
         mUv.push(0, va, len / 3, va, len / 3, vb, 0, va, len / 3, vb, 0, vb);
+      }
+
+      // Ombre de contact : ruban de 0,9 m vers l'extérieur, posé sur l'herbe
+      // (le sol le plus fréquent au pied d'une maison), 5 cm au-dessus. Là
+      // où trottoir ou chaussée touchent le mur, plus hauts que l'herbe, le
+      // ruban passe dessous et ne se voit pas : aucun artefact, pas d'effet.
+      // v = 0 au mur (sombre), 1 au bord extérieur (transparent).
+      if (!b.leger && len > 1 && h > 2) {
+        const W = 0.9;
+        const yS = (x, z) => (relief ? relief.hauteurEn(x, z) : 0) + ROAD_Y - GARDE_SOL + 0.05;
+        const ex1 = x1 + nx * W, ez1 = z1 + nz * W, ex2 = x2 + nx * W, ez2 = z2 + nz * W;
+        ombrePos.push(
+          x1, yS(x1, z1), z1, x2, yS(x2, z2), z2, ex2, yS(ex2, ez2), ez2,
+          x1, yS(x1, z1), z1, ex2, yS(ex2, ez2), ez2, ex1, yS(ex1, ez1), ez1,
+        );
+        ombreUv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
       }
 
       // Soubassement : bandeau de ciment gris de 55 cm au pied du mur, en
@@ -3227,6 +3248,144 @@ export function buildWorld(scene, data) {
     group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
       map: texVolet, vertexColors: true, roughness: 0.85, side: THREE.DoubleSide,
     })));
+  }
+
+  // ---- Plaques de rue émaillées ------------------------------------------
+  // Une plaque à chaque extrémité de voie nommée, sur le mur le plus proche
+  // (moins de 12 m), à 2,5 m du sol : la place des plaques en France. Le
+  // nom vient d'un atlas préparé par scripts/preparer-plaques.mjs (fond
+  // émaillé généré par Codex, nom écrit en SVG d'après OSM), dont les cases
+  // suivent l'ordre alphabétique des noms de voies carrossables : la même
+  // liste est recalculée ici. Un maillage pour toute la commune.
+  const plaquePos = [], plaqueUv = [];
+  {
+    const noms = [...new Set(data.roads.filter((r) => r.drivable && r.name).map((r) => r.name))].sort();
+    const indexNom = new Map(noms.map((nom, k) => [nom, k]));
+    const PAR_RANG = 8, rangs = Math.ceil(noms.length / PAR_RANG);
+    const CELL_P = 20;
+    const grille = new Map();
+    for (const b of data.buildings) {
+      if (!b.pts || b.pts.length < 3 || b.leger) continue;
+      const cles = new Set(b.pts.map(([x, z]) => `${Math.floor(x / CELL_P)},${Math.floor(z / CELL_P)}`));
+      for (const cle of cles) {
+        let l = grille.get(cle);
+        if (!l) grille.set(cle, l = []);
+        l.push(b);
+      }
+    }
+    const posees = [];
+    for (const r of data.roads) {
+      if (!r.drivable || !r.name || !r.pts || r.pts.length < 2) continue;
+      const k = indexNom.get(r.name);
+      for (const bout of [0, r.pts.length - 1]) {
+        const [px, pz] = r.pts[bout];
+        const cx = Math.floor(px / CELL_P), cz = Math.floor(pz / CELL_P);
+        let best = null;
+        const vus = new Set();
+        for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+          for (const b of grille.get(`${cx + dx},${cz + dz}`) ?? []) {
+            if (vus.has(b)) continue;
+            vus.add(b);
+            for (let i = 0; i < b.pts.length; i++) {
+              const [ax, az] = b.pts[i], [bx, bz] = b.pts[(i + 1) % b.pts.length];
+              const ux = bx - ax, uz = bz - az, L = Math.hypot(ux, uz);
+              if (L < 1.6) continue;
+              const t = Math.max(0.6, Math.min(L - 0.6, ((px - ax) * ux + (pz - az) * uz) / L));
+              const qx = ax + ux / L * t, qz = az + uz / L * t;
+              const d = Math.hypot(px - qx, pz - qz);
+              if (d < 12 && (!best || d < best.d)) best = { d, qx, qz, ux: ux / L, uz: uz / L, b };
+            }
+          }
+        }
+        // Doublon = même NOM à moins de 4 m (les deux bouts d'une voie courte,
+        // ou deux tronçons qui se rejoignent). La plaque d'une autre rue au
+        // même angle est gardée, décalée de 30 cm vers le bas si elle tombe au
+        // même endroit (relevé par la relecture Codex du 4 octobre 2026).
+        if (!best || posees.some(([x, z, nom]) => nom === r.name && Math.hypot(x - best.qx, z - best.qz) < 4)) continue;
+        const empiles = posees.filter(([x, z]) => Math.hypot(x - best.qx, z - best.qz) < 1).length;
+        posees.push([best.qx, best.qz, r.name]);
+        // Normale tournée vers la voie, puis vecteur « droite » de celui qui
+        // regarde le mur depuis la rue : (nz, -nx) en repère main droite. Le
+        // texte se lit ainsi de gauche à droite.
+        let nx = -best.uz, nz = best.ux;
+        if ((px - best.qx) * nx + (pz - best.qz) * nz < 0) { nx = -nx; nz = -nz; }
+        const rx = nz, rz = -nx;
+        // Assise du bâtiment porteur, calculée comme celle de ses murs
+        // (altitude BD TOPO quand elle existe, sinon terrain sous son
+        // centre) : la hauteur de chaussée au point de pose pouvait, sur un
+        // coteau, enterrer la plaque ou la faire flotter au-dessus du mur.
+        const bp = best.b;
+        let assise = BASE_OFFSET;
+        if (relief) {
+          if (bp.zSol != null && data.altRef != null) assise = bp.zSol - data.altRef + BASE_OFFSET;
+          else {
+            let cxb = 0, czb = 0;
+            for (const [x, z] of bp.pts) { cxb += x; czb += z; }
+            assise = relief.hauteurRoute(cxb / bp.pts.length, czb / bp.pts.length) + BASE_OFFSET;
+          }
+        }
+        // 2,5 m, mais jamais dans la génoise d'une maison basse : plafond à
+        // 45 % de la hauteur totale (4,4 m de plain-pied : 2 m), plancher à
+        // 1,6 m.
+        const hPlaque = Math.min(2.5, Math.max(1.6, (bp.hauteur ?? 6) * 0.45));
+        const W2 = 0.33, Y0 = assise + hPlaque - empiles * 0.3, HP = 0.22;
+        const ox = best.qx + nx * 0.05, oz = best.qz + nz * 0.05;
+        const gx = ox - rx * W2, gz = oz - rz * W2, dxp = ox + rx * W2, dzp = oz + rz * W2;
+        plaquePos.push(
+          gx, Y0, gz, dxp, Y0, dzp, dxp, Y0 + HP, dzp,
+          gx, Y0, gz, dxp, Y0 + HP, dzp, gx, Y0 + HP, gz,
+        );
+        const u0 = (k % PAR_RANG) / PAR_RANG, u1 = u0 + 1 / PAR_RANG;
+        const rang = Math.floor(k / PAR_RANG);
+        const vH = 1 - rang / rangs, vB = 1 - (rang + 1) / rangs;
+        plaqueUv.push(u0, vB, u1, vB, u1, vH, u0, vB, u1, vH, u0, vH);
+      }
+    }
+  }
+  if (plaquePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(plaquePos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(plaqueUv, 2));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    const tex = textureFichier('/textures/facades/plaques.jpg');
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    // Émail : brillant (rugosité 0,25), diélectrique.
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+      map: tex, roughness: 0.25, metalness: 0, side: THREE.DoubleSide,
+    }));
+    m.name = 'plaques';
+    group.add(m);
+  }
+
+  if (ombrePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(ombrePos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(ombreUv, 2));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    // Dégradé noir, alpha 0,4 au mur vers 0 au bord, en courbe douce (0,5
+    // au premier essai : bande trop dure, et triangle noir aux angles où
+    // deux rubans se recouvrent). Même
+    // montage que l'ombre de contact des voitures garées (matériau de base
+    // transparent sans écriture de profondeur), éprouvé par le pont.
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 64;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 64, 0, 0);
+    grad.addColorStop(0, 'rgba(0,0,0,0.4)');
+    grad.addColorStop(0.35, 'rgba(0,0,0,0.16)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 4, 64);
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+    }));
+    m.name = 'ombres-pied';
+    group.add(m);
   }
 
   if (genoisePos.length) {
