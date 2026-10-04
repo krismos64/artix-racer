@@ -1935,6 +1935,44 @@ export function buildWorld(scene, data) {
   //
   // Une grille au pas de 40 m suffit : on ne cherche que les emprises à portée
   // du débord, jamais un voisinage lointain.
+  // Grille des voies carrossables (cases de 30 m) : sert à trouver la
+  // façade SUR RUE d'un bâtiment, celle qui reçoit porte, garage ou
+  // devanture. L'arête la plus longue, retenue d'abord, donnait souvent
+  // sur le jardin.
+  const CELL_ROUTE = 30;
+  const grilleRoutes = new Map();
+  for (const r of data.roads) {
+    if (!r.drivable || !r.pts) continue;
+    for (let k = 0; k < r.pts.length - 1; k++) {
+      const [ax, az] = r.pts[k], [bx, bz] = r.pts[k + 1];
+      const cles = new Set();
+      const pas = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / CELL_ROUTE));
+      for (let t = 0; t <= pas; t++) {
+        const x = ax + (bx - ax) * t / pas, z = az + (bz - az) * t / pas;
+        cles.add(`${Math.floor(x / CELL_ROUTE)},${Math.floor(z / CELL_ROUTE)}`);
+      }
+      for (const cle of cles) {
+        let l = grilleRoutes.get(cle);
+        if (!l) grilleRoutes.set(cle, l = []);
+        l.push([ax, az, bx, bz]);
+      }
+    }
+  }
+  // Distance à la voie la plus proche, cherchée dans les 3 x 3 cases
+  // voisines (Infinity au-delà d'environ 30 m).
+  const distRoute = (x, z) => {
+    const cx = Math.floor(x / CELL_ROUTE), cz = Math.floor(z / CELL_ROUTE);
+    let best = Infinity;
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      for (const [ax, az, bx, bz] of grilleRoutes.get(`${cx + dx},${cz + dz}`) ?? []) {
+        const vx = bx - ax, vz = bz - az, l2 = vx * vx + vz * vz || 1;
+        const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / l2));
+        best = Math.min(best, Math.hypot(x - ax - vx * t, z - az - vz * t));
+      }
+    }
+    return best;
+  };
+
   const CELL_BAT = 40;
   const grilleBat = new Map();
   for (const b of data.buildings) {
@@ -2110,13 +2148,29 @@ export function buildWorld(scene, data) {
     if (moderne) aVolets = false;
     const commerce = b.usage === 'Commercial et services' && b.nature === 'Indifférenciée' && b.surface < 700;
     const annexe = b.usage === 'Annexe';
-    // Façade principale : l'arête la plus longue, le plus souvent le mur
-    // gouttereau sur rue. C'est elle qui reçoit porte, garage ou devanture.
-    let iPrincipale = -1, lPrincipale = 0;
+    // Façade principale : celle qui donne sur la rue, c'est-à-dire l'arête
+    // d'au moins 3 m dont le milieu est le plus proche d'une voie. Sans voie
+    // à portée, la plus longue. C'est elle qui reçoit porte, garage ou
+    // devanture.
+    let iPrincipale = -1, lPrincipale = 0, dPrincipale = Infinity;
     for (let i = 0; i < n; i++) {
       const [ax1, az1] = b.pts[i], [ax2, az2] = b.pts[(i + 1) % n];
       const l = Math.hypot(ax2 - ax1, az2 - az1);
-      if (l > lPrincipale) { lPrincipale = l; iPrincipale = i; }
+      if (l < 3) continue;
+      const d = distRoute((ax1 + ax2) / 2, (az1 + az2) / 2);
+      if (d < dPrincipale - 0.5 || (Math.abs(d - dPrincipale) <= 0.5 && l > lPrincipale)) {
+        dPrincipale = d; lPrincipale = l; iPrincipale = i;
+      }
+    }
+    // Aucune voie à portée : toutes les distances valent Infinity et la
+    // comparaison n'élit personne (Infinity - Infinity = NaN). La plus
+    // longue, alors.
+    if (iPrincipale < 0) {
+      for (let i = 0; i < n; i++) {
+        const [ax1, az1] = b.pts[i], [ax2, az2] = b.pts[(i + 1) % n];
+        const l = Math.hypot(ax2 - ax1, az2 - az1);
+        if (l > lPrincipale) { lPrincipale = l; iPrincipale = i; }
+      }
     }
     const teintePorte = aVolets ? [voletR, voletG, voletB]
       : (() => {

@@ -2,6 +2,30 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-04 (suite) : portes sur rue, passants avec visage et manches
+
+**Portes sur rue.** La façade principale (porte, garage, devanture) était
+l'arête la plus longue, souvent côté jardin. Elle devient l'arête d'au moins
+3 m la plus proche d'une voie carrossable (grille de segments de 30 m dans
+world.js, repli sur la plus longue sans voie à portée : sans ce repli,
+Infinity - Infinity = NaN n'élisait aucune façade). Mesuré, voie à moins de
+15 m devant l'élément, ancienne règle puis nouvelle (`git stash` le temps
+d'un rechargement) : portes 23 % puis 66 %, garages 19 % puis 56 %,
+devantures 29 % puis 75 %.
+
+**Passants.** Visage peint en canvas (yeux, sourcils, ombre du nez,
+bouche) sur l'avant de la tête, UV en projection cylindrique, teinté par la
+carnation : pas Codex, il faut des traits nets placés aux angles exacts de
+la tête. Premier essai : bouche visible mais yeux cachés, la calotte de
+cheveux descendait à hauteur des yeux tout autour (un bonnet) ; son bord
+est incliné vers l'arrière AVANT la mise à l'échelle. Six passants sur dix
+en manches courtes : bras à la carnation sous des fourreaux fusionnés au
+buste (aucun maillage de plus) ; d'abord trop écartés (21 cm) et trop
+larges, ils sortaient des épaules en blocs, recentrés à 19,6 cm.
+
+Piste notée, non faite : plaques de rue émaillées aux carrefours, en canvas
+depuis les noms OSM (Codex déforme le texte ; occitan non disponible).
+
 ## 2026-10-04 : la flotte Kenney remplacée
 
 Codex ne produit pas de modèles 3D : recherche de modèles libres. Retenu le

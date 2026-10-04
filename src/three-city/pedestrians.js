@@ -100,6 +100,62 @@ function fusionner(geometries) {
   return out;
 }
 
+// Visage peint, plaqué à l'avant de la tête et teinté par la carnation de
+// l'instance (la couleur multiplie la texture) : yeux, sourcils, ombre du
+// nez, bouche. Dessiné en canvas plutôt que généré par image : à 5 ou 10
+// pixels de haut en jeu, il faut des traits nets placés exactement aux
+// angles de la tête, ce qu'aucune image générée ne garantit. Les UV sont en
+// projection cylindrique (voir uvVisage) : u = 0,5 face à l'avant, v suit la
+// hauteur sur 0,23 m. Tout le reste du canvas est blanc : nuque et crâne
+// gardent la carnation pure.
+function texturerVisage() {
+  const W = 256, H = 128;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+  const P = (u, v) => [u * W, (1 - v) * H];
+  // Yeux : à 1,5 cm au-dessus du centre de la tête, écartés de ±2,8 cm,
+  // soit ±0,32 rad autour de l'axe : u = 0,5 ± 0,051.
+  ctx.fillStyle = '#26201c';
+  for (const du of [-0.051, 0.051]) {
+    const [x, y] = P(0.5 + du, 0.565);
+    ctx.beginPath(); ctx.ellipse(x, y, 3.2, 2.4, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  // Sourcils, 2 cm plus haut.
+  ctx.strokeStyle = '#4a3a30'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+  for (const du of [-0.051, 0.051]) {
+    const [x, y] = P(0.5 + du, 0.655);
+    ctx.beginPath(); ctx.moveTo(x - 6, y + 1); ctx.lineTo(x + 6, y - 0.5); ctx.stroke();
+  }
+  // Ombre du nez, discrète.
+  const [nx, ny] = P(0.5, 0.47);
+  const g = ctx.createRadialGradient(nx, ny, 0, nx, ny, 7);
+  g.addColorStop(0, 'rgba(120,80,60,0.45)'); g.addColorStop(1, 'rgba(120,80,60,0)');
+  ctx.fillStyle = g; ctx.fillRect(nx - 8, ny - 8, 16, 16);
+  // Bouche, 4,5 cm sous le centre.
+  ctx.strokeStyle = '#8a4a42'; ctx.lineWidth = 2.6;
+  const [mx, my] = P(0.5, 0.30);
+  ctx.beginPath(); ctx.moveTo(mx - 9, my); ctx.quadraticCurveTo(mx, my + 2.5, mx + 9, my); ctx.stroke();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// UV de la tête fusionnée avec son cou : angle autour de l'axe vertical
+// (avant +Z, l'avancée des chaussures), hauteur sur 0,23 m centrée.
+function uvVisage(g) {
+  const p = g.attributes.position;
+  const uv = new Float32Array(p.count * 2);
+  for (let i = 0; i < p.count; i++) {
+    uv[i * 2] = 0.5 + Math.atan2(p.getX(i), p.getZ(i)) / (Math.PI * 2);
+    uv[i * 2 + 1] = 0.5 + p.getY(i) / 0.23;
+  }
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return g;
+}
+
 // Calotte sphérique refermée par un disque : la chevelure coiffe le crâne
 // sans laisser de bord ouvert.
 function calotte(rayon, fraction, segments) {
@@ -287,6 +343,20 @@ export class Pietons {
       [0.196, 0.114, 0.490],   // haut des épaules
       [0.138, 0.094, 0.530],   // trapèzes, resserrés vers le cou
     ], 12);
+    // Manches courtes : deux fourreaux fixés aux épaules, à la couleur du
+    // haut. Ils enveloppent le haut du bras ; quand le bras est teinté peau
+    // (manches courtes), avant-bras et main apparaissent dessous. Sur un
+    // passant en manches longues, bras et fourreau ont la même teinte et le
+    // fourreau ne se voit pas. Aucun maillage de plus.
+    const manches = [-1, 1].map((cote) => {
+      // Centrées à 19,6 cm de l'axe (l'épaule fait 20,8 cm) et à peine plus
+      // larges que le bras (4 cm) : écartées à 21 cm et larges de 5,6 cm,
+      // elles sortaient des épaules comme deux blocs.
+      const m = new THREE.CylinderGeometry(0.047, 0.051, 0.17, 8);
+      m.translate(cote * 0.196, 0.36, 0);
+      return m;
+    });
+    const bustEtManches = fusionner([bustGeo, ...manches]);
 
     // Tête ovoïde AVEC son cou, en un seul maillage : les deux portent la
     // même carnation et ne bougent jamais l'un par rapport à l'autre, les
@@ -298,11 +368,19 @@ export class Pietons {
     teteGeo.scale(0.86, 1.16, 0.94);
     const couGeo = new THREE.CylinderGeometry(0.052, 0.064, 0.115, 7);
     couGeo.translate(0, -0.145, 0);
-    const teteEtCou = fusionner([teteGeo, couGeo]);
+    const teteEtCou = uvVisage(fusionner([teteGeo, couGeo]));
 
     // Chevelure : calotte posée sur le crâne, refermée par un disque pour
     // que le volume reste clos (le pont désactive le back-face culling).
     const chevGeo = calotte(0.103, 0.58, 9);
+    // Bord incliné vers l'arrière (-0,55 rad) : il remonte au-dessus des
+    // sourcils à l'avant et descend vers la nuque à l'arrière, comme une
+    // coupe de cheveux. Horizontal, il tombait à hauteur des yeux tout
+    // autour du crâne : un bonnet qui masquait le visage peint. Rotation
+    // AVANT la mise à l'échelle : la sphère reste la même, seul le bord
+    // bascule, et la surface garde l'orientation du crâne.
+    chevGeo.rotateX(-0.55);
+    chevGeo.translate(0, 0.008, 0);
     chevGeo.scale(0.88, 1.16, 0.96);
 
     // Membres : plus fins et plus longs que les anciens. Jambe = cuisse +
@@ -325,8 +403,10 @@ export class Pietons {
     // et décalée vers l'AVANT : les orteils dépassent, le talon non.
     chaussureGeo.translate(0, -0.034, 0.052);
 
-    this.corps = new THREE.InstancedMesh(bustGeo, mat(0.85), n);
-    this.tete = new THREE.InstancedMesh(teteEtCou, mat(0.7), n);
+    this.corps = new THREE.InstancedMesh(bustEtManches, mat(0.85), n);
+    const teteMat = mat(0.7);
+    teteMat.map = texturerVisage();
+    this.tete = new THREE.InstancedMesh(teteEtCou, teteMat, n);
     this.cheveux = new THREE.InstancedMesh(chevGeo, mat(0.9), n);
     // Membres pairs : UN SEUL maillage de 2n instances par type, le membre
     // gauche du passant i à l'indice i, le droit à n + i. Gauche et droite
@@ -398,6 +478,10 @@ export class Pietons {
       // indices i et n + i : même teinte, matrices distinctes.
       col.setHex(HAUTS[Math.floor(hash(i * 13.7) * HAUTS.length)] || 0x3b5a6b);
       this.corps.setColorAt(i, col);
+      // Six passants sur dix en manches courtes : le bras prend la carnation
+      // (avant-bras et main visibles sous le fourreau du buste).
+      const peau = PEAU[Math.floor(hash(i * 19.3) * PEAU.length)];
+      if (hash(i * 31.7) < 0.6) col.setHex(peau);
       this.bras.setColorAt(i, col);
       this.bras.setColorAt(n + i, col);
       col.setHex(BAS[Math.floor(hash(i * 17.1) * BAS.length)]);
