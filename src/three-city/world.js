@@ -1944,6 +1944,13 @@ export function buildWorld(scene, data) {
   // façade SUR RUE d'un bâtiment, celle qui reçoit porte, garage ou
   // devanture. L'arête la plus longue, retenue d'abord, donnait souvent
   // sur le jardin.
+  // Services non commerciaux (OSM) : pas de devanture d'épicerie générique
+  // chez eux. La règle « Commercial et services » de la BD TOPO attrape
+  // aussi la poste ou la banque, et la première capture montrait un caviste
+  // sous l'enseigne de La Poste.
+  const SERVICES = new Set(['post_office', 'bank', 'townhall', 'police', 'library',
+    'school', 'kindergarten', 'doctors', 'dentist', 'clinic', 'social_facility', 'place_of_worship']);
+  const pointsServices = (data.poi?.equipements ?? []).filter((e) => SERVICES.has(e.categorie));
   const CELL_ROUTE = 30;
   const grilleRoutes = new Map();
   for (const r of data.roads) {
@@ -2151,7 +2158,8 @@ export function buildWorld(scene, data) {
       && hash(b.graine * 5.13 + 1.7) < 0.75;
     const persienne = !moderne && hash(b.graine * 2.71 + 0.3) < 0.45;
     if (moderne) aVolets = false;
-    const commerce = b.usage === 'Commercial et services' && b.nature === 'Indifférenciée' && b.surface < 700;
+    const commerce = b.usage === 'Commercial et services' && b.nature === 'Indifférenciée' && b.surface < 700
+      && !pointsServices.some((e) => Math.hypot(e.x - ctrX, e.z - ctrZ) < 12);
     const annexe = b.usage === 'Annexe';
     // Façade principale : celle qui donne sur la rue, c'est-à-dire l'arête
     // d'au moins 3 m dont le milieu est le plus proche d'une voie. Sans voie
@@ -2283,13 +2291,20 @@ export function buildWorld(scene, data) {
       // v = 0 au mur (sombre), 1 au bord extérieur (transparent).
       if (!b.leger && len > 1 && h > 2) {
         const W = 0.9;
-        const yS = (x, z) => (relief ? relief.hauteurEn(x, z) : 0) + ROAD_Y - GARDE_SOL + 0.05;
+        // Bord intérieur à l'assise du mur (+4 cm), bord extérieur au-dessus
+        // du terrain (+8 cm). Posé au ras du terrain, le ruban passait sous
+        // les zones de jardin, triangulées à grandes mailles et donc planes
+        // à quelques centimètres au-dessus du relief entre leurs sommets. Le
+        // mélange multiplicatif (main.ts) ne fait qu'assombrir ce qu'il
+        // recouvre : le relever ne montre aucune tranche.
+        const yS = (x, z) => Math.max((relief ? relief.hauteurEn(x, z) : 0) + ROAD_Y - GARDE_SOL, BASE_Y - 0.4) + 0.08;
+        const yM = BASE_Y + 0.04;
         const ex1 = x1 + nx * W, ez1 = z1 + nz * W, ex2 = x2 + nx * W, ez2 = z2 + nz * W;
         ombrePos.push(
-          x1, yS(x1, z1), z1, x2, yS(x2, z2), z2, ex2, yS(ex2, ez2), ez2,
-          x1, yS(x1, z1), z1, ex2, yS(ex2, ez2), ez2, ex1, yS(ex1, ez1), ez1,
+          x1, yM, z1, x2, yM, z2, ex2, yS(ex2, ez2), ez2,
+          x1, yM, z1, ex2, yS(ex2, ez2), ez2, ex1, yS(ex1, ez1), ez1,
         );
-        ombreUv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
+        ombreUv.push(0, 0, 0.5, 0, 0.5, 1, 0, 0, 0.5, 1, 0, 1);
       }
 
       // Soubassement : bandeau de ciment gris de 55 cm au pied du mur, en
@@ -2523,6 +2538,24 @@ export function buildWorld(scene, data) {
               cxw - ax3 + sx3, yB - APPUI_EP, czw - az3 + sz3,
             );
             teinterAppui(TEINTE_APPUI);
+
+            // Coulure sous l'appui, une baie sur deux environ : l'eau qui
+            // ruisselle de la tablette salit l'enduit en dessous. Texture de
+            // traînées générée par Codex (moitié droite de l'atlas des
+            // ombres), posée à 1,2 cm du mur sur 0,9 m au plus, sans
+            // descendre dans le soubassement. Traces d'usure liées aux
+            // ouvertures : piste de la revue visuelle de Codex.
+            if (hash(Math.abs(cxw * 3.1 + czw * 7.7 + e * 1.3)) < 0.55) {
+              const yHc = yB - APPUI_EP, yBc = Math.max(BASE_Y + 0.6, yHc - 0.9);
+              if (yHc - yBc > 0.25) {
+                const ocx = nx * 0.012, ocz = nz * 0.012;
+                ombrePos.push(
+                  cxw - ax3 + ocx, yBc, czw - az3 + ocz, cxw + ax3 + ocx, yBc, czw + az3 + ocz, cxw + ax3 + ocx, yHc, czw + az3 + ocz,
+                  cxw - ax3 + ocx, yBc, czw - az3 + ocz, cxw + ax3 + ocx, yHc, czw + az3 + ocz, cxw - ax3 + ocx, yHc, czw - az3 + ocz,
+                );
+                ombreUv.push(0.5, 0, 1, 0, 1, 1, 0.5, 0, 1, 1, 0.5, 1);
+              }
+            }
 
             // Volets ouverts, un vantail de chaque côté du dormant, plaqués au
             // mur. Leur saillie (5 cm) reste entre la vitre et le dormant :
@@ -2802,6 +2835,17 @@ export function buildWorld(scene, data) {
           x1, yG, z1, x2 + ox, yG, z2 + oz, x1 + ox, yG, z1 + oz,
         );
         genoiseUv.push(0, 0.02, u2, 0.02, u2, 0.1, 0, 0.02, u2, 0.1, 0, 0.1);
+        // Ombre portée sous la génoise : bande de 40 cm sur le mur, sombre
+        // sous la frise et fondue vers le bas (dégradé de l'atlas des
+        // ombres, v = 0 en haut). La corniche paraît enfin en saillie.
+        {
+          const ocx = nx * 0.012, ocz = nz * 0.012, yb0 = yG - 0.4;
+          ombrePos.push(
+            x1 + ocx, yb0, z1 + ocz, x2 + ocx, yb0, z2 + ocz, x2 + ocx, yG, z2 + ocz,
+            x1 + ocx, yb0, z1 + ocz, x2 + ocx, yG, z2 + ocz, x1 + ocx, yG, z1 + ocz,
+          );
+          ombreUv.push(0, 1, 0.5, 1, 0.5, 0, 0, 1, 0.5, 0, 0, 0);
+        }
       }
     }
 
@@ -3369,16 +3413,9 @@ export function buildWorld(scene, data) {
     // deux rubans se recouvrent). Même
     // montage que l'ombre de contact des voitures garées (matériau de base
     // transparent sans écriture de profondeur), éprouvé par le pont.
-    const c = document.createElement('canvas');
-    c.width = 4; c.height = 64;
-    const ctx = c.getContext('2d');
-    const grad = ctx.createLinearGradient(0, 64, 0, 0);
-    grad.addColorStop(0, 'rgba(0,0,0,0.4)');
-    grad.addColorStop(0.35, 'rgba(0,0,0,0.16)');
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 4, 64);
-    const tex = new THREE.CanvasTexture(c);
+    // Atlas : dégradé à gauche, coulures de Codex à droite (préparé par un
+    // script sharp, voir JOURNAL.md du 4 octobre 2026).
+    const tex = textureFichier('/textures/facades/ombres.png');
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
     const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
       map: tex, transparent: true, depthWrite: false,

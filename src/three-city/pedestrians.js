@@ -394,8 +394,15 @@ export class Pietons {
     // Bras : épaule 1,41 à poignet 0,68, soit 0,73 m. Même décalage, pivot
     // à l'épaule. Sans lui, la capsule centrée sur l'épaule montait à
     // 1,675 m, au-dessus du cou, et barrait le torse en diagonale.
-    const brasGeo = new THREE.CapsuleGeometry(0.040, 0.58, 3, 6);
-    brasGeo.translate(0, -0.365, 0);
+    const brasSeul = new THREE.CapsuleGeometry(0.040, 0.58, 3, 6);
+    brasSeul.translate(0, -0.365, 0);
+    // Main : ovoïde aplati (5,8 x 9 x 4,3 cm) au bout du bras, fusionnée avec
+    // lui. Elle prend la teinte du bras : carnation en manches courtes. Le
+    // bras finissait en dôme, sans poignet ni main lisibles.
+    const main = new THREE.SphereGeometry(0.048, 7, 5);
+    main.scale(0.6, 0.94, 0.45);
+    main.translate(0, -0.725, 0.006);
+    const brasGeo = fusionner([brasSeul, main]);
     // Chaussure : semelle au sol, chaussure décalée vers l'AVANT du pied
     // (le pivot est la cheville, les orteils sont devant).
     const chaussureGeo = new THREE.BoxGeometry(0.098, 0.068, 0.245);
@@ -478,10 +485,12 @@ export class Pietons {
       // indices i et n + i : même teinte, matrices distinctes.
       col.setHex(HAUTS[Math.floor(hash(i * 13.7) * HAUTS.length)] || 0x3b5a6b);
       this.corps.setColorAt(i, col);
-      // Six passants sur dix en manches courtes : le bras prend la carnation
-      // (avant-bras et main visibles sous le fourreau du buste).
+      // Sept passants sur dix en manches courtes : le bras prend la
+      // carnation (avant-bras et main visibles sous le fourreau du buste).
+      // En manches longues, la main porte la couleur du haut, comme un gant :
+      // la proportion est tenue basse pour que l'effet reste rare.
       const peau = PEAU[Math.floor(hash(i * 19.3) * PEAU.length)];
-      if (hash(i * 31.7) < 0.6) col.setHex(peau);
+      if (hash(i * 31.7) < 0.7) col.setHex(peau);
       this.bras.setColorAt(i, col);
       this.bras.setColorAt(n + i, col);
       col.setHex(BAS[Math.floor(hash(i * 17.1) * BAS.length)]);

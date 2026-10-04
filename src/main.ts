@@ -832,6 +832,54 @@ async function start(): Promise<void> {
     facadesCentre: rawFacadesCentre,
   }, shadow, progress);
   const map = faithful.data as CityMapData;
+  // Vitrines en profondeur : parallax occlusion mapping sur l'atlas des
+  // portes. La carte de relief est plate (normale +Z) et porte la hauteur
+  // dans son alpha : 1 partout, 0 sur les vitres de la devanture, qui
+  // paraissent alors en retrait ; l'intérieur glisse derrière le cadre
+  // quand on passe. Portes et garages, à hauteur 1, ne bougent pas. Piste
+  // de la revue visuelle de Codex (interior mapping), ramenée à ce que
+  // Babylon fait sans shader sur mesure. Réglé côté Babylon : le pont ne
+  // transmet pas ce mode.
+  {
+    const portes = scene.getMeshByName('portes');
+    const materiau = portes?.material as PBRMaterial | null;
+    if (materiau) {
+      materiau.unfreeze?.();
+      const relief = new Texture('/textures/facades/portes-relief.png', scene);
+      materiau.bumpTexture = relief;
+      materiau.invertNormalMapY = true;
+      materiau.useParallax = true;
+      materiau.useParallaxOcclusion = true;
+      // 0,02 en UV : environ 15 cm de décalage en vue rasante sur une
+      // devanture de 7,5 m (0,05 en donnait 37, la vitre sortait du cadre).
+      materiau.parallaxScaleBias = 0.02;
+      materiau.freeze?.();
+    }
+    // Ombres au pied des murs et coulures : NON éclairées. Converties en PBR
+    // éclairé, leur noir recevait le reflet du ciel ; à 40 % d'opacité, ce
+    // gris se confondait avec l'herbe et le ruban devenait invisible
+    // (constaté le 4 octobre 2026). Le pont ne peut pas rendre tous les
+    // MeshBasicMaterial non éclairés : les marquages au sol en sont aussi,
+    // et doivent rester éclairés pour ne pas briller la nuit.
+    //
+    // Mélange MULTIPLICATIF et non transparence : la carte ombres.png est en
+    // niveaux de gris (blanc = aucun effet), le fond est multiplié par elle.
+    // La chaîne de transparence ne rendait rien de juste ici : PBR éclairé et
+    // alpha de l'albédo donnaient une bande invisible, non éclairé une bande
+    // noire opaque. Le multiplicatif n'a pas besoin d'alpha du tout.
+    const ombres = scene.getMeshByName('ombres-pied')?.material as PBRMaterial | null;
+    if (ombres) {
+      ombres.unfreeze?.();
+      ombres.unlit = true;
+      ombres.albedoColor = Color3.White();
+      ombres.useAlphaFromAlbedoTexture = false;
+      if (ombres.albedoTexture) ombres.albedoTexture.hasAlpha = false;
+      ombres.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
+      ombres.alphaMode = Engine.ALPHA_MULTIPLY;
+      ombres.needDepthPrePass = false;
+      ombres.freeze?.();
+    }
+  }
   const terrain = faithful.terrain;
   const spawn = faithful.spawn;
 

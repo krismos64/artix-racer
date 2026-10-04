@@ -2,6 +2,32 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-04 (suite 3) : les pistes de Codex, d'un coup
+
+- **Traces d'usure** : coulures sous un appui sur deux environ (texture de
+  traînées générée par Codex) et ombre sous la génoise, dans le maillage des
+  ombres de contact (atlas : dégradé à gauche, coulures à droite).
+- **Vitrines en profondeur** : parallax occlusion de Babylon sur l'atlas des
+  portes, carte de relief plate avec la hauteur en alpha (0 sur les vitres
+  de devanture, relevées sur l'atlas). L'intérieur glisse derrière le cadre.
+  Décalage réglé à 0,02 en UV (0,05 sortait la vitre du cadre). Devantures
+  retirées des services non commerciaux (POI poste, banque, mairie...) : la
+  première capture montrait un caviste sous l'enseigne de La Poste.
+- **Branchements électriques** : des poteaux vers les deux maisons les plus
+  proches (moins de 18 m), accrochés à 3,6 m, dans le maillage des câbles.
+- **Mains** : ovoïde au bout du bras, fusionné ; manches courtes à 70 %.
+- **Détails fins** : rien à gagner sans mesure, l'anisotropie est déjà à 16
+  sur toutes les textures du pont, mipmaps actifs.
+
+Piège coûteux : le ruban d'ombre, passé d'une texture canvas à un PNG,
+sortait en bande noire opaque, puis invisible. Trois essais en console
+(éclairé et alpha de l'albédo : invisible ; non éclairé : opaque ; texture
+d'opacité : pareil) avant de changer d'approche : mélange multiplicatif sur
+une carte en niveaux de gris, qui n'a pas besoin d'alpha. Il restait
+invisible par endroits : posé au ras du relief, il passait sous les zones de
+jardin, planes entre leurs sommets ; bord intérieur relevé à l'assise du
+mur. Relecture Codex : aucun défaut.
+
 ## 2026-10-04 (suite 2) : Codex en conseil, plaques de rue, ombres au pied des murs
 
 Codex mis à contribution sur trois rôles. **Idées** : soumis l'état visuel

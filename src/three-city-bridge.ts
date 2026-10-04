@@ -232,6 +232,11 @@ class ThreeCityConverter {
     if (albedo) {
       material.albedoTexture = albedo;
       if (source.transparent || source.alphaTest > 0) albedo.hasAlpha = true;
+      // Transparence portée par la texture : sans ce drapeau, Babylon ne lit
+      // pas son alpha et peint le quad entier (piège consigné dans
+      // CLAUDE.md). Les ombres au pied des murs, chargées d'un fichier PNG,
+      // sortaient en bandes noires opaques (4 octobre 2026).
+      if (source.transparent) material.useAlphaFromAlbedoTexture = true;
     }
     const normal = this.texture(standard.normalMap);
     const bump = this.texture(standard.bumpMap);

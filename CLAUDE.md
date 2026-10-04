@@ -220,6 +220,19 @@ Retirée le 19 septembre 2026.
   résultats (le fichier « Pyrénées » contenait la porte de garage). Lancer
   en parallèle est utile, mais récupérer les originaux dans
   `~/.codex/generated_images/` et les identifier à l'œil.
+- **Ombres et salissures par mélange MULTIPLICATIF, pas par transparence.**
+  Un `MeshBasicMaterial` de Three est converti en PBR ÉCLAIRÉ : son noir
+  reçoit le reflet du ciel, et à 40 % d'opacité ce gris se confond avec le
+  sol (ruban invisible) ; en non éclairé, l'alpha de l'albédo était ignoré
+  (bande noire opaque). La parade : carte en niveaux de gris (blanc = aucun
+  effet), `alphaMode = ALPHA_MULTIPLY`, `unlit`, réglés côté Babylon dans
+  main.ts sur le maillage `ombres-pied`. Le pont pose désormais aussi
+  `useAlphaFromAlbedoTexture` sur tout matériau Three transparent texturé.
+  Ne PAS rendre tous les MeshBasicMaterial non éclairés : les marquages au
+  sol en sont, et brilleraient la nuit.
+- Les zones de jardin (`data.areas`) sont triangulées à grandes mailles :
+  entre leurs sommets, leur surface plane passe au-dessus du relief. Un
+  décor posé au ras de `relief.hauteurEn` y disparaît dessous.
 - Flotte de véhicules : pack rgsdev (CC0) converti HORS LIGNE en JSON
   (`scripts/preparer-flotte.mjs`), le jeu ne charge pas de FBX. Mise à
   l'échelle AXE PAR AXE vers des cotes réelles (`MODELES` de flotte.js) :
@@ -310,6 +323,8 @@ Retirée le 19 septembre 2026.
 | `textures/bati/*.jpg` | crépi Plaster003, tuile canal RoofingTiles006, ardoise RoofingTiles003, bac acier CorrugatedSteel005 (ambientCG), en gris clair + normales | `scripts/preparer-bati.mjs` |
 | `textures/facades/*` | atlas de baies (française, PVC à volet roulant) et leur émission de nuit en 4 cases, atlas de volets (écharpe, persienne), atlas `portes` (porte, garage, devanture), génoise, feuillage | générées par Codex, détourées et assemblées à la main (voir JOURNAL.md, 3 octobre) |
 | `textures/fond/pyrenees.png` | panorama des Pyrénées, fond vert détouré | généré par Codex |
+| `textures/facades/ombres.png` | carte MULTIPLICATIVE (blanc = aucun effet) : dégradé d'ombre au pied des murs et sous la génoise, coulures sous les appuis (Codex) | script sharp (voir JOURNAL.md, 4 octobre) |
+| `textures/facades/portes-relief.png` | relief plat, hauteur en alpha : 0 sur les vitres de devanture (parallax occlusion) | script sharp |
 | `textures/facades/plaques.jpg` | atlas des 183 plaques de rue émaillées (fond Codex sans texte, noms OSM en SVG, ordre alphabétique) | `scripts/preparer-plaques.mjs` (à relancer si les noms de voies changent) |
 | `images/titre.jpg` | illustration de l'écran titre | générée par Codex |
 | `models/flotte-rgs/*.json` | 4 véhicules rgsdev (CC0) en deux lots + palette | `scripts/preparer-flotte.mjs` (depuis le FBX) |

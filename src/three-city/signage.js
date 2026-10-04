@@ -1098,6 +1098,62 @@ export function buildSignage(data, relief, roadY) {
           }
         }
       }
+      // Branchements : depuis chaque poteau, un câble vers les deux maisons
+      // les plus proches (moins de 18 m), accroché à 3,6 m sur la façade qui
+      // fait face au poteau. Suggestion de la revue visuelle de Codex : les
+      // lignes se lisent sur le ciel et relient enfin les poteaux au bâti
+      // qu'ils desservent. Même ruban, même maillage : aucun appel en plus.
+      {
+        const CELL = 20;
+        const grille = new Map();
+        for (const b of data.buildings ?? []) {
+          if (!b.pts || b.pts.length < 3 || b.leger || b.usage === 'Annexe') continue;
+          let cx = 0, cz = 0;
+          for (const [x, z] of b.pts) { cx += x; cz += z; }
+          cx /= b.pts.length; cz /= b.pts.length;
+          const cle = `${Math.floor(cx / CELL)},${Math.floor(cz / CELL)}`;
+          if (!grille.has(cle)) grille.set(cle, []);
+          grille.get(cle).push({ b, cx, cz });
+        }
+        positionsPoteaux.forEach(([xa, za], ia) => {
+          const gx = Math.floor(xa / CELL), gz = Math.floor(za / CELL);
+          const proches = [];
+          for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+            for (const e of grille.get(`${gx + dx},${gz + dz}`) ?? []) {
+              // Point de façade le plus proche du poteau.
+              let best = null;
+              const pts = e.b.pts;
+              for (let i = 0; i < pts.length; i++) {
+                const [ax, az] = pts[i], [bx, bz] = pts[(i + 1) % pts.length];
+                const ux = bx - ax, uz = bz - az, l2 = ux * ux + uz * uz || 1;
+                const t = Math.max(0.15, Math.min(0.85, ((xa - ax) * ux + (za - az) * uz) / l2));
+                const qx = ax + ux * t, qz = az + uz * t;
+                const d = Math.hypot(xa - qx, za - qz);
+                if (!best || d < best.d) best = { d, qx, qz };
+              }
+              if (best && best.d > 2 && best.d < 18) proches.push(best);
+            }
+          }
+          proches.sort((p1, p2) => p1.d - p2.d);
+          for (const { qx, qz, d } of proches.slice(0, 2)) {
+            const ya = tetes[ia] - 0.35;
+            const yb = solEn(relief, qx, qz, roadY) + 3.6;
+            const fl = Math.min(0.35, d * 0.02);
+            let px1 = xa, pz1 = za, py1 = ya;
+            const SEG = 4, EP = 0.035;
+            for (let sg = 1; sg <= SEG; sg++) {
+              const t = sg / SEG;
+              const px2 = xa + (qx - xa) * t, pz2 = za + (qz - za) * t;
+              const py2 = ya + (yb - ya) * t - fl * 4 * t * (1 - t);
+              cablePos.push(
+                px1, py1, pz1, px2, py2, pz2, px2, py2 - EP, pz2,
+                px1, py1, pz1, px2, py2 - EP, pz2, px1, py1 - EP, pz1,
+              );
+              px1 = px2; pz1 = pz2; py1 = py2;
+            }
+          }
+        });
+      }
       if (cablePos.length) {
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute(cablePos, 3));
