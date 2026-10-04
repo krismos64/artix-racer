@@ -1098,6 +1098,10 @@ async function start(): Promise<void> {
   startScreen.classList.remove('hidden');
 
   let hudTimer = 0;
+  let capPrecedent = car.heading;
+  let lacetLisse = 0;
+  let nomCandidat: string | null = null;
+  let nomDepuis = 0;
   engine.runRenderLoop(() => {
     const dt = Math.min(.05, engine.getDeltaTime() / 1000);
 
@@ -1153,16 +1157,33 @@ async function start(): Promise<void> {
 
     if (playing && !paused) {
       // Compte à rebours du défi : la voiture et le chrono attendent le GO.
-      if (!arcade.fige) car.update(dt, input);
+      // Arrêt sur image après un choc franc : la voiture, le chrono et la
+      // circulation attendent ; caméra, secousse et passants continuent.
+      const gele = arcade.gele;
+      if (!arcade.fige && !gele) car.update(dt, input);
       // Passants et touffes d'herbe : logique Three animée, rendu Babylon.
       faithful.vivant?.update(dt, performance.now() / 1000, car.root.position.x, car.root.position.z);
-      if (traffic.update(dt, car.root.position.x, car.root.position.z, performance.now() / 1000)) car.hitTraffic();
-      if (!arcade.fige) session.update(dt, car.root.position.x, car.root.position.z, car.speed);
+      if (!gele && traffic.update(dt, car.root.position.x, car.root.position.z, performance.now() / 1000)) car.hitTraffic();
+      if (!arcade.fige && !gele) session.update(dt, car.root.position.x, car.root.position.z, car.speed);
       arcade.update(dt, car, session);
       fumee.update(car, world, nuitActive);
       audio.update(car.speed, car.boosting, car.drifting);
     } else if (paused) audio.update(0, false, false);
     car.forward(forward);
+
+    // Vitesse de lacet RÉELLE (rad/s), lissée sur un tiers de seconde. La
+    // visée de la caméra poursuite se décale vers l'intérieur du virage pour
+    // montrer la rue où l'on s'engage. Elle suit la rotation effective de la
+    // voiture, jamais la direction : sur un contre-braquage en dérapage, le
+    // volant pointe d'un côté pendant que la caisse tourne de l'autre.
+    if (dt > 0) {
+      let dCap = car.heading - capPrecedent;
+      dCap = Math.atan2(Math.sin(dCap), Math.cos(dCap));
+      // Un saut de cap (réapparition, touche R) n'est pas une rotation.
+      const lacet = Math.abs(dCap) > .5 ? 0 : dCap / dt;
+      lacetLisse += (lacet - lacetLisse) * (1 - Math.exp(-dt * 3));
+    }
+    capPrecedent = car.heading;
 
     if (cameraMode === 0) {
       desiredCamera.set(
@@ -1170,10 +1191,19 @@ async function start(): Promise<void> {
         car.root.position.y + 4.25,
         car.root.position.z - forward.z * 9.2,
       );
+      // Gauche du véhicule : (cos cap, -sin cap) en repère main droite, Z au
+      // sud ; un lacet positif tourne à gauche. Le lacet plafonne vers
+      // 1,6 rad/s en dérapage. Le retard de la caméra (elle s'interpole)
+      // regarde déjà vers l'EXTÉRIEUR du virage : à 2,4 m par rad/s, mesuré
+      // en jeu, le déport net ne tournait le regard que de 1°. À 4 m par
+      // rad/s, borné à 4,5 m (la caméra est à 16,7 m du point visé), le
+      // regard gagne une dizaine de degrés vers la sortie. Nul à l'arrêt,
+      // plein dès 43 km/h.
+      const deport = Math.max(-4.5, Math.min(4.5, lacetLisse * 4)) * Math.min(1, Math.abs(car.speed) / 12);
       cameraTarget.set(
-        car.root.position.x + forward.x * 7.5,
+        car.root.position.x + forward.x * 7.5 + Math.cos(car.heading) * deport,
         car.root.position.y + 1.1,
-        car.root.position.z + forward.z * 7.5,
+        car.root.position.z + forward.z * 7.5 - Math.sin(car.heading) * deport,
       );
     } else if (cameraMode === 1) {
       // Vue conducteur, à la place du volant.
@@ -1261,7 +1291,19 @@ async function start(): Promise<void> {
       const roadName = car.onRoad ? world.roadNameAt(car.root.position.x, car.root.position.z) : null;
       surfaceStatus.textContent = car.onRoad ? (car.drifting ? 'DÉRAPAGE' : (roadName?.toUpperCase() ?? 'SUR LA ROUTE')) : 'HORS-PISTE';
       surfaceStatus.classList.toggle('offroad', !car.onRoad);
-      streetNameEl.textContent = roadName ?? (car.onRoad ? 'Voie communale d’Artix' : 'Hors chaussée');
+      // Le nom de rue ne change qu'après 0,45 s de présence confirmée : à un
+      // carrefour, la voiture frôle la transversale et le libellé clignotait
+      // entre les deux noms. Le nouveau nom entre en glissant.
+      const nomVoulu = roadName ?? (car.onRoad ? 'Voie communale d’Artix' : 'Hors chaussée');
+      if (nomVoulu === streetNameEl.textContent) nomCandidat = null;
+      else if (nomVoulu !== nomCandidat) { nomCandidat = nomVoulu; nomDepuis = 0; }
+      else if ((nomDepuis += hudTimer) >= .45) {
+        streetNameEl.textContent = nomVoulu;
+        nomCandidat = null;
+        streetNameEl.classList.remove('change');
+        void streetNameEl.offsetWidth;
+        streetNameEl.classList.add('change');
+      }
       const place = nearestArtixPlace(car.root.position.x, car.root.position.z);
       placeNameEl.textContent = place ? `${place.name} · ${place.detail}` : 'Commune d’Artix · 64170';
       minimap.update(hudTimer, car.root.position.x, car.root.position.z, car.heading, session.objective);

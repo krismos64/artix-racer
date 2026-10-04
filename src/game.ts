@@ -104,6 +104,8 @@ export class GameSession {
   private mode: GameMode = 'free';
   private checkpointIndex = 0;
   private elapsed = 0;
+  // Progression (0 à 1) de l'apparition de l'anneau suivant.
+  private apparition = 1;
   private running = false;
   private finishedTimer = 0;
   private completed = false;
@@ -148,7 +150,13 @@ export class GameSession {
     this.elapsed += dt;
     this.ring.rotation.z += dt * 1.1;
     const pulse = 1 + Math.sin(this.elapsed * 4) * .045;
-    this.ring.scaling.setAll(pulse);
+    // L'anneau suivant JAILLIT en 0,45 s avec un dépassement de 10 % (easing
+    // « back ») : il signale où aller sans ajouter de maillage, l'anneau
+    // franchi étant le même que l'on déplace.
+    this.apparition = Math.min(1, this.apparition + dt / .45);
+    const t = this.apparition - 1;
+    const jaillit = 1 + 2.7 * t * t * t + 1.7 * t * t;
+    this.ring.scaling.setAll(pulse * Math.max(.01, jaillit));
     const target = this.checkpoints[this.checkpointIndex];
     if (!target || Math.hypot(target[0] - x, target[1] - z) > 9.5) return;
     const points = 2500 + Math.abs(speed) * 30;
@@ -204,5 +212,6 @@ export class GameSession {
     const target = this.checkpoints[this.checkpointIndex];
     if (!target) return;
     this.ring.position.set(target[0], this.surfaceY(target[0], target[1]) + 4.4, target[1]);
+    this.apparition = 0;
   }
 }

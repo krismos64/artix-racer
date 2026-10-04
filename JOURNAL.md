@@ -2,6 +2,28 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-04 (suite 5) : motion design, lot 1 (comparé avec Codex)
+
+- Propositions croisées avec Codex (`codex.sh idees`) : convergence sur la
+  transition de l'écran titre, l'impulsion au checkpoint, l'arrivée, le
+  frôlement et le nom de rue animé. Idée propre à Codex retenue en tête :
+  la visée vers la sortie du virage. Idée propre à Claude : l'arrêt sur image.
+- **Visée de virage** (main.ts) : déport latéral de la cible caméra selon le
+  lacet RÉEL lissé, pas la direction. Mesuré : à 2,4 m par rad/s, le retard
+  de la caméra interpolée annulait presque tout (1° net) ; 4 m par rad/s,
+  borné à 4,5 m, donnent 4° net après 0,7 s de virage.
+- **Arrêt sur image** (arcade.ts) : impact > 16,5 m/s, 70 à 100 ms ; voiture,
+  chrono et circulation figés, caméra et secousse actives. Vérifié : 0 mm de
+  déplacement pendant l'arrêt.
+- Nitro en pic (FOV +0,1 rad qui retombe en 0,6 s) puis palier +0,05 ;
+  aberration et grondement idem. Bannières à priorités, points empilés,
+  impulsion du panneau de mission, anneau qui jaillit (easing back, 10 %),
+  nom de rue confirmé après 0,45 s puis glissé.
+- Relecture Codex : une relance (T) pendant ARRIVÉE bloquait le compte à
+  rebours par priorité ; corrigé (purge au départ, record différé annulé).
+- Reste du lot 2 : transition depuis l'écran titre, arrivée avec ralenti,
+  départ parfait, bonus de frôlement.
+
 ## 2026-10-04 (suite 4) : audit de la documentation
 
 - **README** confronté au code : port 5173 (et non 5180), touche M ajoutée,

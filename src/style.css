@@ -465,3 +465,19 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   #start-screen::before { animation: none; }
 }
+
+/* Nom de rue : le nouveau libellé entre en glissant depuis la gauche, une
+   seule fois par changement confirmé (voir la temporisation dans main.ts). */
+.street-banner strong.change { animation: rue-entre .45s cubic-bezier(.2, .9, .3, 1); }
+@keyframes rue-entre {
+  from { opacity: 0; transform: translateX(-18px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Panneau de mission : impulsion au passage d'un checkpoint, brève pour ne
+   pas déborder sur le virage suivant (0,35 s). */
+.mission.impulsion { animation: mission-impulsion .35s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes mission-impulsion {
+  0% { transform: translateX(-50%) scale(1.12); box-shadow: 0 0 26px #f0bd38aa; }
+  100% { transform: translateX(-50%) scale(1); }
+}

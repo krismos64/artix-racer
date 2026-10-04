@@ -255,7 +255,11 @@ règle de n'ajouter aucun appel de dessin (atlas, instances, fusion).
 - **Motion design** (`src/arcade.ts`) : champ de vision qui s'ouvre avec la
   vitesse et la nitro, secousse et flash aux chocs, combo de
   dérapage à paliers, compte à rebours avant le Tour d'Artix, bannières
-  animées en CSS. Aucun maillage ajouté : caméra, pipeline existant et couche
+  animées en CSS et hiérarchisées (l'arrivée prime sur un checkpoint).
+  Caméra poursuite qui regarde vers la sortie du virage (selon la rotation
+  réelle de la voiture), arrêt sur image de 70 à 100 ms aux chocs francs,
+  nom de rue qui entre en glissant après confirmation, anneau de checkpoint
+  qui jaillit, nitro en pic puis palier. Aucun maillage ajouté : caméra, pipeline existant et couche
   DOM.
 - **Fumée de pneus et poussière hors-piste** (`src/fumee.ts`) : un seul
   système de particules, un appel de dessin quand il émet.

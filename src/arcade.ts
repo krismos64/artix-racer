@@ -14,7 +14,11 @@ const FOV_BASE = 1.03;
 // total +0,19 rad (≈ 11°) : au-delà, les façades proches se déforment en
 // bord d'image et la vitesse se lit comme un fish-eye.
 const FOV_VITESSE = .1;
-const FOV_NITRO = .09;
+// Nitro : un PIC au déclenchement qui retombe en 0,6 s vers un palier plus
+// bas. À intensité constante pendant toute la poussée, l'œil s'habituait en
+// une seconde et le déclenchement ne se sentait plus.
+const FOV_NITRO = .05;
+const FOV_KICK_NITRO = .1;
 const ABERRATION_BASE = 6;
 
 // Bruit de secousse : somme de sinus à fréquences non commensurables, assez
@@ -45,6 +49,7 @@ export class MotionArcade {
   private readonly combo: HTMLElement;
   private readonly comboMultiplicateur: HTMLElement;
   private readonly comboPoints: HTMLElement;
+  private readonly mission: HTMLElement | null;
   private readonly offset = new Vector3();
   private readonly cible = new Vector3();
 
@@ -62,6 +67,13 @@ export class MotionArcade {
   private derapageDuree = 0;
   private derapageRepos = 0;
   private boostClasse = false;
+  // Arrêt sur image (« hit-stop ») restant, en secondes.
+  private arret = 0;
+  // Bannière à l'écran et sa priorité : deux annonces ne se disputent plus
+  // le centre de l'image (le record recouvrait l'arrivée, un checkpoint le
+  // GO).
+  private banniereActive: { element: HTMLElement; priorite: number } | null = null;
+  private recordDiffere = 0;
 
   constructor(
     private readonly camera: UniversalCamera,
@@ -76,6 +88,13 @@ export class MotionArcade {
     creer(this.combo, 'combo-titre', 'DÉRAPAGE');
     this.comboMultiplicateur = creer(this.combo, 'combo-multi');
     this.comboPoints = creer(this.combo, 'combo-points');
+    this.mission = document.querySelector<HTMLElement>('.mission');
+  }
+
+  // Vrai pendant un arrêt sur image : la voiture, le chrono et la
+  // circulation se figent, la caméra continue de secouer.
+  get gele(): boolean {
+    return this.arret > 0;
   }
 
   // Tant que le compte à rebours tourne, la voiture et le chrono restent figés.
@@ -85,9 +104,15 @@ export class MotionArcade {
 
   demarrer(mode: GameMode): void {
     this.annulerDerapage();
+    // Une relance (touche T) pendant ARRIVÉE ou NOUVEAU RECORD : la bannière
+    // de la session close garderait sa priorité et étoufferait le compte à
+    // rebours, dont les chiffres refusés ne reviennent jamais.
+    this.banniereActive?.element.remove();
+    this.banniereActive = null;
+    clearTimeout(this.recordDiffere);
     if (mode !== 'challenge') {
       this.compte = 0;
-      this.banniere('C’EST PARTI', 'titre');
+      this.banniere('C’EST PARTI', 'titre', 1);
       return;
     }
     this.compte = 3;
@@ -96,13 +121,14 @@ export class MotionArcade {
 
   update(dt: number, car: ArcadeCar, session: GameSession): void {
     const vitesse = Math.abs(car.speed);
+    this.arret = Math.max(0, this.arret - dt);
 
     if (this.compte > 0) {
       this.compte = Math.max(0, this.compte - dt);
       const entier = Math.ceil(this.compte);
       if (entier !== this.dernierEntier) {
         this.dernierEntier = entier;
-        this.banniere(entier > 0 ? String(entier) : 'GO !', entier > 0 ? 'compte' : 'go');
+        this.banniere(entier > 0 ? String(entier) : 'GO !', entier > 0 ? 'compte' : 'go', 3);
       }
     }
 
@@ -114,6 +140,11 @@ export class MotionArcade {
         this.trauma = Math.min(1, this.trauma + .25 + force * .75);
         this.flash.style.setProperty('--force', (.25 + force * .6).toFixed(2));
         relancer(this.flash, 'choc');
+        // Arrêt sur image réservé aux chocs francs (au-delà de 16 m/s
+        // d'impact, environ 58 km/h) : 70 à 100 ms de jeu figé donnent du
+        // poids au choc. Sur un simple frottement il se lirait comme un
+        // accroc de la boucle d'affichage.
+        if (force > .55) this.arret = .07 + (force - .55) * .065;
         if (this.derapagePoints > 0) {
           this.points('COMBO PERDU', 'rate');
           this.annulerDerapage();
@@ -151,21 +182,27 @@ export class MotionArcade {
 
     for (const evenement of session.evenements.splice(0)) {
       if (evenement.type === 'checkpoint') {
-        this.banniere(`CHECKPOINT ${evenement.rang}/${evenement.total}`, 'checkpoint');
+        this.banniere(`CHECKPOINT ${evenement.rang}/${evenement.total}`, 'checkpoint', 2);
         this.points(`+${Math.round(evenement.points).toLocaleString('fr-FR')}`, 'checkpoint');
         relancer(this.scoreEl, 'gain');
+        if (this.mission) relancer(this.mission, 'impulsion');
       } else {
-        this.banniere('ARRIVÉE', 'go');
-        if (evenement.record) setTimeout(() => this.banniere('NOUVEAU RECORD', 'record'), 1100);
+        this.banniere('ARRIVÉE', 'go', 4);
+        if (this.mission) relancer(this.mission, 'impulsion');
+        if (evenement.record) this.recordDiffere = window.setTimeout(() => this.banniere('NOUVEAU RECORD', 'record', 5), 1100);
       }
     }
 
     // Grondement continu : sous nitro et hors-piste à vitesse. Il fixe un
     // plancher de trauma au lieu de s'additionner, sinon il s'emballe.
-    const grondement = car.boosting ? .32 : !car.onRoad ? Math.min(.3, vitesse / 60) : 0;
+    const grondement = car.boosting ? .2 : !car.onRoad ? Math.min(.3, vitesse / 60) : 0;
     this.trauma = Math.max(this.trauma, grondement);
 
-    if (car.boosting && !this.nitroAvant) this.kickNitro = 1;
+    if (car.boosting && !this.nitroAvant) {
+      this.kickNitro = 1;
+      // Coup de pied au déclenchement, puis le grondement prend le relais.
+      this.trauma = Math.max(this.trauma, .45);
+    }
     this.nitroAvant = car.boosting;
     if (car.boosting !== this.boostClasse) {
       this.boostClasse = car.boosting;
@@ -194,11 +231,11 @@ export class MotionArcade {
     // sinon le volant gonfle et dégonfle à chaque coup d'accélérateur.
     const dosage = cabine ? .5 : 1;
 
-    this.kickNitro = Math.max(0, this.kickNitro - dt * 3);
+    this.kickNitro = Math.max(0, this.kickNitro - dt * 1.7);
     const fovVoulu = FOV_BASE + dosage * (
       FOV_VITESSE * Math.min(1, Math.max(0, (vitesse - 10) / 45))
       + (car.boosting ? FOV_NITRO : 0)
-      + this.kickNitro * .05
+      + this.kickNitro * FOV_KICK_NITRO
     );
     this.fov += (fovVoulu - this.fov) * (1 - Math.exp(-dt * 4));
     this.camera.fov = this.fov;
@@ -220,7 +257,7 @@ export class MotionArcade {
       const v = Math.min(1, Math.max(0, (vitesse - 25) / 35));
       // Plafond ≈ 15 : à 34 (premier essai), chaque arête de façade et de
       // marquage se doublait d'un arc-en-ciel lisible à l'arrêt sur image.
-      this.pipeline.chromaticAberration.aberrationAmount = ABERRATION_BASE + v * 3 + (car.boosting ? 5 : 0) + this.trauma * 12;
+      this.pipeline.chromaticAberration.aberrationAmount = ABERRATION_BASE + v * 3 + (car.boosting ? 2 : 0) + this.kickNitro * 7 + this.trauma * 12;
     }
   }
 
@@ -235,13 +272,26 @@ export class MotionArcade {
     this.combo.classList.remove('actif');
   }
 
-  private banniere(texte: string, variante: string): void {
+  // Priorités : titre 1, checkpoint 2, compte à rebours 3, arrivée 4,
+  // record 5. Une annonce moins prioritaire que celle à l'écran est
+  // abandonnée ; une annonce égale ou supérieure la remplace sur-le-champ.
+  private banniere(texte: string, variante: string, priorite: number): void {
+    const active = this.banniereActive;
+    if (active?.element.isConnected) {
+      if (priorite < active.priorite) return;
+      active.element.remove();
+    }
     const element = creer(this.couche, `banniere ${variante}`, texte);
+    this.banniereActive = { element, priorite };
     element.addEventListener('animationend', () => element.remove(), { once: true });
   }
 
+  // Les points simultanés s'empilent vers le bas au lieu de se superposer
+  // (checkpoint franchi en fin de dérapage : deux montants illisibles).
   private points(texte: string, variante: string): void {
+    const vivants = this.couche.querySelectorAll('.points-volants').length;
     const element = creer(this.couche, `points-volants ${variante}`, texte);
+    if (vivants) element.style.marginTop = `${vivants * 34}px`;
     element.addEventListener('animationend', () => element.remove(), { once: true });
   }
 }
