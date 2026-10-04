@@ -148,7 +148,7 @@ class ThreeCityConverter {
 
     // Retournement vertical : Three retourne ses images par défaut
     // (`flipY = true`) et Babylon aussi (`invertY = true`). Les textures
-    // issues d'un glTF (palette de la flotte Kenney) sont déclarées non
+    // de palette (flotte de véhicules, flotte.js) sont déclarées non
     // retournées des deux côtés : leurs UV ont l'origine en haut.
     const texture = new Texture(url, this.scene, false, source.flipY !== false, Texture.TRILINEAR_SAMPLINGMODE);
     texture.name = `three-texture-${this.textureSerial++}`;
@@ -659,7 +659,7 @@ export async function buildFaithfulArtix(
   spawn.z -= Math.sin(spawn.heading) * lane;
 
   const parkings = new ParkingsEpi(sourceScene, data, terrain, ROAD_Y);
-  // Flotte low-poly (Kenney) pour le parc garé et la circulation. En cas
+  // Flotte low-poly (pack rgsdev) pour le parc garé et la circulation. En cas
   // d'échec de chargement, les deux modules retombent sur leurs silhouettes
   // en boîte : la ville se construit quand même.
   let flotte: AnyRecord | null = null;

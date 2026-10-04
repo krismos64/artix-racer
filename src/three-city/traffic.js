@@ -9,7 +9,7 @@
 // et freine devant le joueur, un contact reste rare. À revoir si le besoin
 // se présente (cuboïdes mobiles dans la physique).
 import * as THREE from 'three';
-import { COULEURS, GABARITS, construireGeometrie } from './parkedcars.js';
+import { COULEURS, GABARITS, construireGeometrie, geometrieRoue } from './parkedcars.js';
 
 function hash(n) {
   const s = Math.sin(n * 127.1) * 43758.5453;
@@ -98,8 +98,10 @@ export class Circulation {
     const peintureMat = new THREE.MeshPhysicalMaterial({
       roughness: 0.38, metalness: 0.12, clearcoat: 1, clearcoatRoughness: 0.08,
     });
+    // Rugosité 0,3 : les détails sont surtout des vitres et des feux, qui
+    // ressortaient mats à 0,55.
     const detailsMat = flotte
-      ? new THREE.MeshStandardMaterial({ map: flotte.palette, roughness: 0.55, metalness: 0.05 })
+      ? new THREE.MeshStandardMaterial({ map: flotte.palette, roughness: 0.3, metalness: 0.05 })
       : null;
     for (const [nom, n] of Object.entries(parType)) {
       const modele = flotte?.[nom];
@@ -111,8 +113,8 @@ export class Circulation {
       this.caisses[nom] = new THREE.InstancedMesh(
         construireGeometrie(GABARITS[nom]), [caisseMat, vitreMat, plaqueMat], n);
     }
-    const roueGeo = new THREE.CylinderGeometry(0.31, 0.31, 0.22, 10);
-    const roueMat = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.95 });
+    const roueGeo = geometrieRoue();
+    const roueMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
     this.roues = new THREE.InstancedMesh(roueGeo, roueMat, effectif * 4);
     const feuGeo = new THREE.BoxGeometry(0.42, 0.15, 0.08);
     this.feuxAr = new THREE.InstancedMesh(feuGeo, new THREE.MeshStandardMaterial({

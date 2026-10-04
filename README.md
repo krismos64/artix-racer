@@ -221,10 +221,10 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 - **Circulation légère** : une douzaine de véhicules parcourent les voies du
   bourg, roulent à droite, respectent les sens uniques et freinent derrière
   le joueur.
-- **Parc automobile modelé** : cinq voitures low-poly (Kenney Car Kit, CC0)
-  pour le stationnement et la circulation, séparées par triangle en
-  carrosserie vernie teintée par instance et en détails (vitres, feux,
-  calandre) à la palette du kit ; palette pondérée du parc français, ombre de
+- **Parc automobile modelé** : citadine, berline, SUV et van low-poly
+  (pack rgsdev, CC0) aux cotes réelles, pour le stationnement et la
+  circulation, en carrosserie vernie teintée par instance et en détails
+  (vitres, feux, garnitures) à palette ; roues à jante argentée ; palette pondérée du parc français, ombre de
   contact sous chaque véhicule. Les scooters gardent leur silhouette
   procédurale.
 - **Trottoirs à bordures** dans le centre-bourg : plateau surélevé de 12 cm,
@@ -717,9 +717,10 @@ L'ancien modèle **Audi R8** reste dans `public/models/` mais n'est plus chargé
 Son attribution n'a jamais pu être retrouvée : il avait été retraité par
 glTF-Transform et ne porte plus ni auteur ni licence.
 
-Le pack **Kenney Car Kit** (CC0) sert au parc garé et à la circulation. Il
-avait été essayé pour le joueur, puis écarté pour son style franchement
-cartoon, trop contrasté avec une ville reconstituée au LiDAR.
+Le parc garé et la circulation utilisent le **Free Low Poly Vehicles Pack**
+de rgsdev (CC0), converti par `scripts/preparer-flotte.mjs`. Il a remplacé
+le 4 octobre 2026 le Kenney Car Kit, dont le style « voiture jouet »
+jurait avec une ville reconstituée au LiDAR.
 
 Un maillage procédural de secours a existé dans `carmesh.js`, module de
 l'ancien moteur Three.js retiré le 19 septembre 2026 : le jeu charge
@@ -798,7 +799,8 @@ sous Licence Ouverte 2.0.
 
 Ressources visuelles ajoutées en septembre 2026, toutes sous CC0 1.0 :
 panoramas de ciel HDR Poly Haven, photos de matière ambientCG (enrobé, herbe,
-béton, pavés, grave, écorce), modèles de véhicules Kenney Car Kit.
+béton, pavés, grave, écorce), modèles de véhicules (Kenney Car Kit,
+remplacé en octobre 2026 par le pack rgsdev).
 
 Le modèle 3D du véhicule ne porte plus de métadonnées d'auteur : son
 attribution reste à établir. Le détail de chaque source figure dans

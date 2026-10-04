@@ -25,7 +25,7 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 1. **`src/three-city/*.js`** (Three.js, hérité) : génère TOUT le visuel de la
    ville. `world.js` (bâti, routes, sols), `landmarks.js` (bâtiments
    modélisés à la main), `signage.js` (signalisation, enseignes, poteaux),
-   `parking.js`, `parkedcars.js` (parc garé : 5 silhouettes + scooters),
+   `parking.js`, `parkedcars.js` (parc garé : flotte rgsdev + scooters),
    `traffic.js` (circulation légère), `pedestrians.js`, `touffes.js`,
    `haies.js` (haies de clôture : laurier, thuya, troène, charmille),
    `textures.js` (textures canvas procédurales).
@@ -220,9 +220,13 @@ Retirée le 19 septembre 2026.
   résultats (le fichier « Pyrénées » contenait la porte de garage). Lancer
   en parallèle est utile, mais récupérer les originaux dans
   `~/.codex/generated_images/` et les identifier à l'œil.
-- Flotte Kenney : mise à l'échelle AXE PAR AXE (`MODELES` de flotte.js,
-  longueur, largeur, hauteur réelles). Sur la seule longueur, le kit trapu
-  donnait des berlines de 2,32 m de haut.
+- Flotte de véhicules : pack rgsdev (CC0) converti HORS LIGNE en JSON
+  (`scripts/preparer-flotte.mjs`), le jeu ne charge pas de FBX. Mise à
+  l'échelle AXE PAR AXE vers des cotes réelles (`MODELES` de flotte.js) :
+  sur la seule longueur, le kit Kenney précédent donnait des berlines de
+  2,32 m de haut. Roues = cylindres instanciés à jante argentée
+  (`geometrieRoue`, couleur de sommet) : noires unies, elles disparaissaient
+  dans l'ombre des passages de roue.
 - Nuance sans texture ni appel de dessin supplémentaire : l'attribut `color`
   de géométrie EST transmis par le pont (`vertexData`) et lu par défaut
   (`mesh.useVertexColors` vaut true). Le piège des `vertexColors` cité plus
@@ -307,7 +311,7 @@ Retirée le 19 septembre 2026.
 | `textures/facades/*` | atlas de baies (française, PVC à volet roulant) et leur émission de nuit en 4 cases, atlas de volets (écharpe, persienne), atlas `portes` (porte, garage, devanture), génoise, feuillage | générées par Codex, détourées et assemblées à la main (voir JOURNAL.md, 3 octobre) |
 | `textures/fond/pyrenees.png` | panorama des Pyrénées, fond vert détouré | généré par Codex |
 | `images/titre.jpg` | illustration de l'écran titre | générée par Codex |
-| `models/flotte/*.glb` | 5 voitures Kenney Car Kit + palette | copie du kit |
+| `models/flotte-rgs/*.json` | 4 véhicules rgsdev (CC0) en deux lots + palette | `scripts/preparer-flotte.mjs` (depuis le FBX) |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 
 Caches locaux (gitignorés, `data/` inclus depuis le 19 septembre 2026) :

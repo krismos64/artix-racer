@@ -98,5 +98,13 @@ Panoramas HDR sous licence CC0 1.0, réduits en 2k et plafonnés en luminance pa
 PavingStones067, Ground037, Bark012). Photos de matière sous licence CC0 1.0,
 converties en JPG 1K par `scripts/preparer-textures.mjs`. https://ambientcg.com
 
-**Kenney Car Kit** : `public/models/flotte/*.glb` et `Textures/colormap.png`.
-Modèles low-poly sous licence CC0 1.0. https://kenney.nl/assets/car-kit
+**Free Low Poly Vehicles Pack, par rgsdev** : `public/models/flotte-rgs/*.json`
+(Hatchback, Sedan, SUV, Van), convertis depuis le FBX d'origine par
+`scripts/preparer-flotte.mjs`. Licence CC0 1.0.
+https://opengameart.org/content/free-low-poly-vehicles-pack
+(Remplace le Kenney Car Kit, CC0, retiré le 4 octobre 2026.)
+
+**Images générées par Codex (OpenAI)** pour ce projet, retouchées
+(détourage, atlas, niveaux) : `public/textures/facades/*` (fenêtres, volets,
+portes, génoise, feuillage, fumée), `public/textures/fond/pyrenees.png`,
+`public/images/titre.jpg`. Pas de tiers à créditer ; usage personnel.

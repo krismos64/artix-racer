@@ -2,6 +2,28 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-04 : la flotte Kenney remplacée
+
+Codex ne produit pas de modèles 3D : recherche de modèles libres. Retenu le
+« Free Low Poly Vehicles Pack » de rgsdev (CC0, OpenGameArt), aperçus
+regardés avant : silhouettes de vraies voitures (capot, pare-brise incliné,
+berline à trois volumes) là où le kit Kenney restait bombé. Fourni en FBX
+seulement : converti hors ligne par `scripts/preparer-flotte.mjs` (FBXLoader
+dans Node) en JSON léger, déjà séparé en carrosserie (matériaux « body
+<couleur> ») et détails (vitres, feux, garnitures) avec une palette PNG
+générée ; teintes de détails reprises à la main (phares et jantes du pack
+lavande). Avant vers +Z repéré par les phares. Citadine, berline, SUV, van
+(fourgonnette et fourgon, deux échelles) ; police, taxi et pick-up écartés.
+`flotte.js` réécrit à interface constante : parkedcars et traffic inchangés.
+
+Au premier essai, voitures « flottantes » : les roues étaient là, mais en
+cylindres noirs unis, invisibles dans l'ombre des passages. Roue refaite
+avec jante argentée sur chaque flanc (couleur de sommet, aucun appel de
+dessin). Détails à rugosité 0,3 (vitres mates à 0,55). Le kit Kenney est
+retiré du dépôt ; ATTRIBUTIONS et README à jour. La palette de teintes du
+parc (60 % de blancs, gris et noirs) existait déjà : les couleurs criardes
+des captures venaient des deux-tons du kit Kenney.
+
 ## 2026-10-03 (suite 2) : visuels générés par Codex, fidélité relâchée
 
 Christophe autorise des visuels qui ne respectent pas la ville à

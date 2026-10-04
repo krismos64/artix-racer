@@ -8,6 +8,32 @@
 // Rendu par InstancedMesh : quelques centaines de véhicules ne coûtent que
 // trois appels de dessin.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+
+// Roue instanciée : pneu noir et JANTE argentée sur chaque flanc, portées
+// par la couleur de sommet (aucun appel de dessin en plus). Un cylindre noir
+// uni se confondait avec l'ombre du passage de roue : les voitures semblaient
+// posées sur le vide (constaté le 4 octobre 2026 avec la flotte rgsdev).
+// Axe Y, rayon 0,31 m, largeur 0,22 m : les appelants l'orientent et le
+// mettent à l'échelle comme l'ancien cylindre.
+export function geometrieRoue() {
+  const teinter = (g, v) => {
+    const n = g.attributes.position.count;
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(n * 3).fill(v), 3));
+    return g;
+  };
+  const parts = [teinter(new THREE.CylinderGeometry(0.31, 0.31, 0.22, 14, 1, true), 0.05)];
+  for (const cote of [1, -1]) {
+    const flanc = new THREE.RingGeometry(0.2, 0.31, 14);
+    const jante = new THREE.CircleGeometry(0.2, 14);
+    for (const [g, v, y] of [[flanc, 0.05, 0.11], [jante, 0.62, 0.112]]) {
+      g.rotateX(-cote * Math.PI / 2);
+      g.translate(0, cote * y, 0);
+      parts.push(teinter(g, v));
+    }
+  }
+  return mergeGeometries(parts);
+}
 
 // Teintes réellement dominantes du parc automobile français : le blanc et le
 // gris représentent plus de la moitié des immatriculations.
@@ -615,8 +641,8 @@ export class VoituresGarees {
     });
     const plaqueMat = new THREE.MeshStandardMaterial({ color: 0xdfe3e6, roughness: 0.35 });
     const sombreMat = new THREE.MeshStandardMaterial({ color: 0x1c1e21, roughness: 0.7 });
-    const roueGeo = new THREE.CylinderGeometry(0.31, 0.31, 0.22, 10);
-    const roueMat = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.95 });
+    const roueGeo = geometrieRoue();
+    const roueMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
     const feuGeo = new THREE.BoxGeometry(0.42, 0.15, 0.08);
     const feuArMat = new THREE.MeshStandardMaterial({
       color: 0x8c1c1c, emissive: 0x4a0d0d, emissiveIntensity: 0.5, roughness: 0.4,
@@ -662,8 +688,10 @@ export class VoituresGarees {
     const peintureMat = new THREE.MeshPhysicalMaterial({
       roughness: 0.38, metalness: 0.12, clearcoat: 1, clearcoatRoughness: 0.08,
     });
+    // Rugosité 0,3 : les détails sont surtout des vitres et des feux, qui
+    // ressortaient mats à 0,55.
     const detailsMat = flotte
-      ? new THREE.MeshStandardMaterial({ map: flotte.palette, roughness: 0.55, metalness: 0.05 })
+      ? new THREE.MeshStandardMaterial({ map: flotte.palette, roughness: 0.3, metalness: 0.05 })
       : null;
     for (const [nom, n] of Object.entries(parType)) {
       const modele = nom !== 'scooter' ? flotte?.[nom] : null;

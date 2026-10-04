@@ -1,179 +1,99 @@
-// Flotte de véhicules low-poly (Kenney Car Kit, licence CC0) pour le parc
-// garé et la circulation.
+// Flotte de véhicules low-poly pour le parc garé et la circulation.
 //
-// Les silhouettes en boîte de parkedcars.js lisaient bien de loin, mais de
-// près elles trahissaient la maquette : pas de galbe, pas de calandre, des
-// vitres plaquées. Les modèles Kenney gardent un compte de triangles très bas
-// (2 000 par voiture) tout en ayant des proportions et des détails lisibles.
+// Depuis le 4 octobre 2026 : « Free Low Poly Vehicles Pack » de rgsdev
+// (CC0, OpenGameArt), converti hors ligne par scripts/preparer-flotte.mjs
+// en public/models/flotte-rgs/*.json. Il remplace le Kenney Car Kit, dont
+// les caisses bombées et les couleurs franches faisaient « voiture jouet »
+// même une fois remises aux cotes réelles : les modèles rgsdev ont des
+// silhouettes de vraies voitures (capot, pare-brise incliné, berline
+// effilée) pour 800 à 1 100 triangles hors roues.
 //
-// Chaque modèle est fusionné en UNE géométrie (caisse + roues), puis
-// séparée en deux lots par triangle :
-//   - `peinture` : les faces de la carrosserie, rendues blanches et teintées
-//     par la couleur d'instance (c'est ce qui donne un parc varié) ;
-//   - `details` : vitres, roues, phares, calandre, qui gardent la palette du
-//     kit et ne doivent PAS prendre la teinte de la caisse.
-// La séparation se fait en lisant, pour chaque triangle, la couleur de la
-// palette Kenney (`colormap.png`) à son centre d'UV : la couleur qui couvre
-// la plus grande surface est la carrosserie.
+// Chaque modèle arrive en deux lots, déjà séparés par la conversion :
+//   - `peinture` : faces de carrosserie, rendues blanches et teintées par la
+//     couleur d'instance (c'est ce qui donne un parc varié) ;
+//   - `details` : vitres, feux, garnitures, qui lisent leur teinte dans
+//     palette.png par leurs UV et ne prennent PAS la teinte de la caisse.
+// Les roues ne sont pas dans les lots : parkedcars.js et traffic.js posent
+// leurs propres cylindres instanciés aux centres fournis.
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { textureFichier } from './textures.js';
 
-// Correspondance gabarit du jeu → modèle Kenney, avec les cotes hors tout
-// visées en mètres : longueur, largeur, hauteur.
-//
-// Le kit est à une échelle fantaisiste ET trapu (berline de 2,55 × 1,50 ×
-// 1,30 m). Mise à l'échelle sur la seule longueur, une berline sortait à
-// 2,32 m de haut et 2,68 m de large, deux fois la hauteur de la Ferrari
-// (1,19 m) : c'était le premier facteur de l'effet « voiture jouet ». La
-// caisse est donc étirée axe par axe vers des cotes réelles de catalogue.
-// Les roues n'en souffrent pas : ce sont des cylindres instanciés à part
-// (voir plus bas), jamais déformés.
+// Correspondance gabarit du jeu → modèle, avec les cotes hors tout visées en
+// mètres (longueur, largeur, hauteur). La caisse est étirée axe par axe vers
+// ces cotes de catalogue : la fourgonnette et le fourgon partagent le même
+// modèle de van à deux échelles, le pack n'en ayant qu'un.
 export const MODELES = {
-  compacte: { fichier: 'hatchback-sports', longueur: 4.05, largeur: 1.75, hauteur: 1.45 },
+  compacte: { fichier: 'hatchback', longueur: 4.05, largeur: 1.75, hauteur: 1.45 },
   berline: { fichier: 'sedan', longueur: 4.55, largeur: 1.8, hauteur: 1.45 },
   break: { fichier: 'suv', longueur: 4.65, largeur: 1.85, hauteur: 1.68 },
   fourgonnette: { fichier: 'van', longueur: 4.5, largeur: 1.85, hauteur: 1.85 },
-  fourgon: { fichier: 'delivery', longueur: 5.6, largeur: 2.05, hauteur: 2.4 },
+  fourgon: { fichier: 'van', longueur: 5.6, largeur: 2.05, hauteur: 2.4 },
 };
 
-const BASE = '/models/flotte/';
+const BASE = '/models/flotte-rgs/';
 
-// Palette lue en pixels pour classer les triangles.
-async function lirePalette(url) {
-  const reponse = await fetch(url);
-  const bitmap = await createImageBitmap(await reponse.blob());
-  const c = document.createElement('canvas');
-  c.width = bitmap.width;
-  c.height = bitmap.height;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(bitmap, 0, 0);
-  const { data } = ctx.getImageData(0, 0, c.width, c.height);
-  return {
-    largeur: c.width,
-    hauteur: c.height,
-    // Couleur quantifiée au pixel, en clé de regroupement.
-    cle(u, v) {
-      // UV glTF : origine en haut à gauche, pas de retournement.
-      const x = Math.min(c.width - 1, Math.max(0, Math.floor(u * c.width)));
-      const y = Math.min(c.height - 1, Math.max(0, Math.floor(v * c.height)));
-      const i = (y * c.width + x) * 4;
-      return `${data[i] >> 3},${data[i + 1] >> 3},${data[i + 2] >> 3}`;
-    },
-  };
-}
-
-function separer(geometrie, palette) {
-  const g = geometrie.index ? geometrie.toNonIndexed() : geometrie;
-  const pos = g.getAttribute('position');
-  const nrm = g.getAttribute('normal');
-  const uv = g.getAttribute('uv');
-  const n = pos.count / 3;
-  const cles = new Array(n);
-  const aires = new Map();
-  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
-  for (let t = 0; t < n; t++) {
-    const u = (uv.getX(t * 3) + uv.getX(t * 3 + 1) + uv.getX(t * 3 + 2)) / 3;
-    const v = (uv.getY(t * 3) + uv.getY(t * 3 + 1) + uv.getY(t * 3 + 2)) / 3;
-    const k = palette.cle(u, v);
-    cles[t] = k;
-    a.fromBufferAttribute(pos, t * 3);
-    b.fromBufferAttribute(pos, t * 3 + 1);
-    c.fromBufferAttribute(pos, t * 3 + 2);
-    const aire = b.sub(a).cross(c.sub(a)).length() / 2;
-    aires.set(k, (aires.get(k) ?? 0) + aire);
-  }
-  let peinture = null, max = -1;
-  for (const [k, aire] of aires) if (aire > max) { max = aire; peinture = k; }
-
-  const lots = { peinture: { pos: [], nrm: [] }, details: { pos: [], nrm: [], uv: [] } };
-  for (let t = 0; t < n; t++) {
-    const lot = cles[t] === peinture ? lots.peinture : lots.details;
-    for (let s = 0; s < 3; s++) {
-      const i = t * 3 + s;
-      lot.pos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
-      lot.nrm.push(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
-      if (lot.uv) lot.uv.push(uv.getX(i), uv.getY(i));
-    }
-  }
-  const construire = (lot) => {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(lot.pos, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(lot.nrm, 3));
-    if (lot.uv) geo.setAttribute('uv', new THREE.Float32BufferAttribute(lot.uv, 2));
-    geo.computeBoundingSphere();
-    return geo;
-  };
-  return { peinture: construire(lots.peinture), details: construire(lots.details) };
-}
-
-// Charge les cinq modèles en parallèle. Renvoie, par gabarit :
-//   { peinture, details, demiL, demiW, hauteur }
-// plus `palette`, la texture partagée des détails. Renvoie null si le kit
-// est absent : les appelants retombent alors sur les silhouettes en boîte.
+// Charge les modèles en parallèle. Renvoie, par gabarit :
+//   { peinture, details, demiL, demiW, hauteur, roues, rayonRoue }
+// plus `palette`, la texture partagée des détails. Renvoie null si les
+// fichiers manquent : les appelants retombent alors sur les silhouettes en
+// boîte.
 export async function chargerFlotte() {
-  const loader = new GLTFLoader();
-  const palette = await lirePalette(`${BASE}Textures/colormap.png`);
   const flotte = {
-    // Palette rendue par Babylon : chargée depuis le fichier, sans
-    // retournement vertical (convention glTF, origine en haut).
-    palette: textureFichier(`${BASE}Textures/colormap.png`, { flipY: false }),
+    // Palette chargée depuis le fichier, sans retournement vertical : les UV
+    // de la conversion ont leur origine en haut à gauche.
+    palette: textureFichier(`${BASE}palette.png`, { flipY: false }),
   };
   flotte.palette.wrapS = flotte.palette.wrapT = THREE.ClampToEdgeWrapping;
-  await Promise.all(Object.entries(MODELES).map(async ([type, spec]) => {
-    const gltf = await loader.loadAsync(`${BASE}${spec.fichier}.glb`);
-    const racine = gltf.scene;
-    racine.updateMatrixWorld(true);
-    const morceaux = [];
-    // Les quatre roues du kit (500 sommets chacune, 4 000 indices par
-    // voiture, plus que la caisse) sont remplacées par les cylindres à dix
-    // faces déjà instanciés par parkedcars.js : seule leur position est
-    // retenue ici. La roue de secours d'un 4x4 (`wheel-back`) reste dans
-    // la caisse.
-    const roues = [];
-    const centre = new THREE.Vector3();
-    racine.traverse((o) => {
-      if (!o.isMesh) return;
-      if (/^wheel-(front|back)-(left|right)$/.test(o.name)) {
-        o.getWorldPosition(centre);
-        roues.push(centre.clone());
-        return;
+  try {
+    const sources = new Map();
+    await Promise.all(Object.entries(MODELES).map(async ([type, spec]) => {
+      if (!sources.has(spec.fichier)) {
+        sources.set(spec.fichier, fetch(`${BASE}${spec.fichier}.json`).then((r) => {
+          if (!r.ok) throw new Error(`${spec.fichier}: ${r.status}`);
+          return r.json();
+        }));
       }
-      const g = o.geometry.clone();
-      g.applyMatrix4(o.matrixWorld);
-      // Les tangentes ne servent pas (pas de carte de normales) et gênent la
-      // fusion, qui exige les mêmes attributs sur toutes les pièces.
-      g.deleteAttribute('tangent');
-      morceaux.push(g.index ? g.toNonIndexed() : g);
-    });
-    const fusion = mergeGeometries(morceaux, false);
-    // Mise à l'échelle axe par axe (l'axe Z du kit est l'axe long, avant
-    // vers +Z, comme dans le jeu), puis sol à y = 0 et centrage en x, z.
-    // Le sol de référence est le bas des roues (centre à 0,3 dans le kit,
-    // rayon 0,3), la caisse seule flottant au-dessus.
-    fusion.computeBoundingBox();
-    let bb = fusion.boundingBox;
-    const kx = spec.largeur / (bb.max.x - bb.min.x);
-    const ky = spec.hauteur / bb.max.y;
-    const kz = spec.longueur / (bb.max.z - bb.min.z);
-    const dx = -(bb.min.x + bb.max.x) / 2, dz = -(bb.min.z + bb.max.z) / 2;
-    fusion.scale(kx, ky, kz);
-    fusion.translate(dx * kx, 0, dz * kz);
-    fusion.computeBoundingBox();
-    bb = fusion.boundingBox;
-    const lots = separer(fusion, palette);
-    flotte[type] = {
-      ...lots,
-      // Rayon de roue suivant la HAUTEUR : il remplit ainsi les passages de
-      // roue de la caisse aplatie. 0,33 m (berline) à 0,44 m (fourgon), au
-      // lieu de 0,43 à 0,53 m quand tout suivait la longueur.
-      roues: roues.map((r) => ({ x: (r.x + dx) * kx, y: r.y * ky, z: (r.z + dz) * kz })),
-      rayonRoue: 0.3 * ky,
-      demiL: (bb.max.z - bb.min.z) / 2,
-      demiW: (bb.max.x - bb.min.x) / 2,
-      hauteur: bb.max.y,
-    };
-  }));
+      flotte[type] = construire(await sources.get(spec.fichier), spec);
+    }));
+  } catch (erreur) {
+    console.warn('Flotte indisponible, silhouettes en boîte :', erreur);
+    return null;
+  }
   return flotte;
+}
+
+// Met un modèle converti aux cotes du gabarit, axe par axe. Les roues
+// suivent la HAUTEUR pour leur rayon : elles remplissent ainsi les passages
+// de roue de la caisse mise à l'échelle.
+function construire(src, spec) {
+  const geo = (lot) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(lot.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(lot.nrm, 3));
+    if (lot.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(lot.uv, 2));
+    return g;
+  };
+  const peinture = geo(src.peinture);
+  const details = geo(src.details);
+  // Étendue commune aux deux lots : c'est la caisse entière qui doit
+  // atteindre les cotes, pas chaque lot séparément.
+  peinture.computeBoundingBox();
+  details.computeBoundingBox();
+  const bb = peinture.boundingBox.clone().union(details.boundingBox);
+  const kx = spec.largeur / (bb.max.x - bb.min.x);
+  const ky = spec.hauteur / bb.max.y;
+  const kz = spec.longueur / (bb.max.z - bb.min.z);
+  for (const g of [peinture, details]) {
+    g.scale(kx, ky, kz);
+    g.computeBoundingSphere();
+  }
+  return {
+    peinture,
+    details,
+    roues: src.roues.map((r) => ({ x: r.x * kx, y: r.y * ky, z: r.z * kz })),
+    rayonRoue: src.roues[0].r * ky,
+    demiL: spec.longueur / 2,
+    demiW: spec.largeur / 2,
+    hauteur: spec.hauteur,
+  };
 }
