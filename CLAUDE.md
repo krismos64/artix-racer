@@ -43,11 +43,18 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 5. **`src/lieux.ts`** : table des lieux-dits affichés dans le HUD.
 6. Jeu autour du rendu : `car.ts` (Ferrari, conduite arcade sans moteur
    physique, vue conducteur), `game.ts` (modes balade et Tour d'Artix,
-   score), `arcade.ts` (motion design : champ de vision, secousse, combo de
-   dérapage, compte à rebours, couche DOM sans appel de dessin), `fumee.ts`
+   score), `arcade.ts` (motion design, couche DOM sans appel de dessin :
+   champ de vision, secousse, arrêt sur image, combo de dérapage, compte à
+   rebours, départ parfait, frôlements, ralenti d'arrivée via
+   `echelleTemps` que main.ts applique au seul temps du JEU), `fumee.ts`
    (fumée et poussière, un seul système de particules), `audio.ts` (moteur
    et turbo synthétisés, musique, touche M), `minimap.ts`, `profil.ts`
    (outils de mesure en console), `config.ts` (profils graphiques).
+   ATTENTION, deux circulations coexistent : `three-city/traffic.js`
+   (véhicules rgsdev instanciés, le rendu voulu) et `src/traffic.ts`
+   (12 voitures en boîtes Babylon, 6 maillages chacune, qui portent les
+   collisions et les frôlements). Doublon hérité, à fusionner (voir
+   JOURNAL.md, pistes du 4 octobre).
 
 Un seul moteur produit le visuel (la couche 1, convertie par la couche 2). Une
 version Babylon concurrente du rendu (chunks, bâtiments, mairie, église) a

@@ -18,6 +18,13 @@ Journal de bord tenu par session de travail. Entrées antéchronologiques.
 - **Arrivée** : échelle de temps du jeu à 0,3 pendant 0,8 s puis retour en
   0,6 s (mesuré : 6 m/s puis 17,6 m/s), secousse et nitro coupées, temps
   final affiché 2,6 s. La couche arcade garde le temps réel.
+- **Piste prioritaire pour la prochaine session** : `src/traffic.ts`
+  dessine 12 voitures en boîtes (caisse, cabine, 4 roues : jusqu'à 72
+  appels de dessin à moins de 620 m) EN PLUS de la circulation rgsdev de
+  `three-city/traffic.js`. C'est elle qui porte collisions et frôlements.
+  À fusionner : brancher collisions et frôlements sur les agents de
+  `traffic.js` (positions lisibles), puis retirer `src/traffic.ts`.
+  Vérifier d'abord en jeu si les boîtes se voient.
 
 ## 2026-10-04 (suite 5) : motion design, lot 1 (comparé avec Codex)
 
