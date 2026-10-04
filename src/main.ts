@@ -1051,7 +1051,29 @@ async function start(): Promise<void> {
   const begin = (mode: GameMode): void => {
     playing = true;
     paused = false;
-    startScreen.classList.add('hidden');
+    // Sortie de l'écran titre : l'illustration s'avance et s'efface (0,7 s)
+    // pendant que la caméra plonge depuis 22 m de haut vers sa place de
+    // poursuite, par l'interpolation habituelle. Le premier départ seul y
+    // a droit ; la caméra conducteur, rigide, ne s'interpole pas.
+    if (!startScreen.classList.contains('hidden')) {
+      startScreen.classList.add('sortie');
+      const finSortie = (event: AnimationEvent): void => {
+        if (event.animationName !== 'titre-sortie') return;
+        startScreen.removeEventListener('animationend', finSortie);
+        startScreen.classList.add('hidden');
+        startScreen.classList.remove('sortie');
+      };
+      startScreen.addEventListener('animationend', finSortie);
+      if (cameraMode !== 1) {
+        car.forward(forward);
+        cameraPosition.set(
+          car.root.position.x - forward.x * 34,
+          car.root.position.y + 22,
+          car.root.position.z - forward.z * 34,
+        );
+        plongee = 1;
+      }
+    }
     pauseScreen.classList.add('hidden');
     hudElements.forEach((element) => element.classList.remove('hidden'));
     lancerSession(mode);
@@ -1098,6 +1120,7 @@ async function start(): Promise<void> {
   startScreen.classList.remove('hidden');
 
   let hudTimer = 0;
+  let plongee = 0;
   let capPrecedent = car.heading;
   let lacetLisse = 0;
   let nomCandidat: string | null = null;
@@ -1160,11 +1183,16 @@ async function start(): Promise<void> {
       // Arrêt sur image après un choc franc : la voiture, le chrono et la
       // circulation attendent ; caméra, secousse et passants continuent.
       const gele = arcade.gele;
-      if (!arcade.fige && !gele) car.update(dt, input);
+      // Temps du JEU : ralenti à l'arrivée. La couche arcade garde le temps
+      // réel, sinon le ralenti ralentirait sa propre sortie.
+      const dtJeu = dt * arcade.echelleTemps;
+      arcade.accelerateur = input.down('z', 'w', 'arrowup', 'throttle');
+      if (!arcade.fige && !gele) car.update(dtJeu, input);
       // Passants et touffes d'herbe : logique Three animée, rendu Babylon.
-      faithful.vivant?.update(dt, performance.now() / 1000, car.root.position.x, car.root.position.z);
-      if (!gele && traffic.update(dt, car.root.position.x, car.root.position.z, performance.now() / 1000)) car.hitTraffic();
-      if (!arcade.fige && !gele) session.update(dt, car.root.position.x, car.root.position.z, car.speed);
+      faithful.vivant?.update(dtJeu, performance.now() / 1000, car.root.position.x, car.root.position.z);
+      if (!gele && traffic.update(dtJeu, car.root.position.x, car.root.position.z, performance.now() / 1000, car.speed)) car.hitTraffic();
+      for (const f of traffic.frolements.splice(0)) arcade.frolement(f.x, f.z, car, session);
+      if (!arcade.fige && !gele) session.update(dtJeu, car.root.position.x, car.root.position.z, car.speed);
       arcade.update(dt, car, session);
       fumee.update(car, world, nuitActive);
       audio.update(car.speed, car.boosting, car.drifting);
@@ -1257,7 +1285,11 @@ async function start(): Promise<void> {
     if (cameraMode === 1) {
       cameraPosition.copyFrom(desiredCamera);
     } else {
-      const cameraLerp = 1 - Math.exp(-dt * (cameraMode === 0 ? 7.5 : 5));
+      // Pendant la plongée d'entrée (1 s), interpolation trois fois plus
+      // lente : à 7,5 par seconde, la descente de 22 m se bouclait en 0,3 s
+      // et se lisait comme un saut de caméra.
+      plongee = Math.max(0, plongee - dt);
+      const cameraLerp = 1 - Math.exp(-dt * (cameraMode === 0 ? 7.5 : 5) * (plongee > 0 ? .33 : 1));
       Vector3.LerpToRef(cameraPosition, desiredCamera, cameraLerp, cameraPosition);
     }
     // Champ dynamique et secousse : la couche arcade pose la caméra.

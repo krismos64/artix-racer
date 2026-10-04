@@ -18,7 +18,18 @@ interface TrafficCar {
   speed: number;
   active: boolean;
   lastCollision: number;
+  // Frôlement en cours : distance minimale et position du véhicule à ce
+  // moment, vitesse du joueur la plus haute pendant l'approche.
+  frole: { distance: number; x: number; z: number; vitesse: number } | null;
 }
+
+// Frôlement : passer à moins de 5 m d'un véhicule (contact à 2,55 m), à plus
+// de 50 km/h, puis s'en éloigner à 9 m sans l'avoir touché. Validé APRÈS le
+// dépassement seulement : le récompenser à l'approche paierait aussi les
+// collisions imminentes.
+const FROLE_ENTREE = 5;
+const FROLE_SORTIE = 9;
+const FROLE_VITESSE = 14;
 
 const COLORS = ['#dfb13a', '#4178a8', '#d85a4f', '#e5e2d8', '#3d4a51'];
 
@@ -67,12 +78,26 @@ export class TrafficSystem {
         speed: 7.5 + (i * 1.71) % 7.5,
         active: true,
         lastCollision: -10,
+        frole: null,
       });
     }
   }
 
-  update(dt: number, playerX: number, playerZ: number, now: number): boolean {
+  // Frôlements validés depuis le dernier appel (position du véhicule frôlé) :
+  // l'appelant les lit puis vide la liste.
+  readonly frolements: { x: number; z: number }[] = [];
+  private joueurAvant: [number, number] | null = null;
+
+  update(dt: number, playerX: number, playerZ: number, now: number, playerSpeed = 0): boolean {
     let collided = false;
+    // Téléportation du joueur (touche R, réapparition) : plus de 25 m en une
+    // image, soit 1 500 m/s. Les approches en cours sont oubliées, sinon le
+    // saut lui-même « éloigne » le véhicule et valide un frôlement fictif.
+    if (this.joueurAvant && Math.hypot(playerX - this.joueurAvant[0], playerZ - this.joueurAvant[1]) > 25) {
+      for (const car of this.cars) car.frole = null;
+      this.frolements.length = 0;
+    }
+    this.joueurAvant = [playerX, playerZ];
     for (let carIndex = 0; carIndex < this.cars.length; carIndex++) {
       const car = this.cars[carIndex];
       if (carIndex >= this.densityCount) {
@@ -115,6 +140,7 @@ export class TrafficSystem {
       if (shouldBeActive !== car.active) {
         car.active = shouldBeActive;
         car.root.setEnabled(shouldBeActive);
+        car.frole = null;
       }
       if (!shouldBeActive) continue;
 
@@ -123,6 +149,19 @@ export class TrafficSystem {
       if (distance < 2.55 && now - car.lastCollision > 1.2) {
         car.lastCollision = now;
         collided = true;
+      }
+      if (distance < 2.55) car.frole = null;
+      else if (distance < FROLE_ENTREE && now - car.lastCollision > 1.5) {
+        const vitesse = Math.abs(playerSpeed);
+        if (!car.frole) {
+          if (vitesse >= FROLE_VITESSE) car.frole = { distance, x, z, vitesse };
+        } else {
+          car.frole.vitesse = Math.max(car.frole.vitesse, vitesse);
+          if (distance < car.frole.distance) Object.assign(car.frole, { distance, x, z });
+        }
+      } else if (car.frole && distance > FROLE_SORTIE) {
+        this.frolements.push({ x: car.frole.x, z: car.frole.z });
+        car.frole = null;
       }
     }
     return collided;

@@ -2,6 +2,23 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-04 (suite 6) : motion design, lot 2
+
+- **Sortie de l'écran titre** : panneau qui s'avance et s'efface (0,7 s),
+  caméra placée à 22 m de haut et 34 m en arrière, ramenée par
+  l'interpolation habituelle ralentie trois fois pendant 1 s (à pleine
+  vitesse la plongée tenait en 0,3 s). Mesuré : 16,6 m à 0,2 s, 5,8 m à 1 s.
+- **Départ parfait** (arcade.ts, `jugerDepart`) : fenêtre de 0,3 s avant
+  le GO à 0,2 s après ; pédale tenue pendant le décompte = pas de bonus.
+  Vérifié : appui 0,15 s avant le GO, +1 000 et 58 km/h 0,6 s plus tard.
+- **Frôlement** (traffic.ts) : entrée à 5 m, sortie à 9 m, 14 m/s minimum,
+  payé seulement après dépassement. Relecture Codex : un R pendant une
+  approche validait un frôlement fictif ; les approches sont oubliées dès
+  que le joueur saute de plus de 25 m en une image.
+- **Arrivée** : échelle de temps du jeu à 0,3 pendant 0,8 s puis retour en
+  0,6 s (mesuré : 6 m/s puis 17,6 m/s), secousse et nitro coupées, temps
+  final affiché 2,6 s. La couche arcade garde le temps réel.
+
 ## 2026-10-04 (suite 5) : motion design, lot 1 (comparé avec Codex)
 
 - Propositions croisées avec Codex (`codex.sh idees`) : convergence sur la

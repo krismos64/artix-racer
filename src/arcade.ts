@@ -74,6 +74,19 @@ export class MotionArcade {
   // GO).
   private banniereActive: { element: HTMLElement; priorite: number } | null = null;
   private recordDiffere = 0;
+  // Pédale d'accélérateur, posée par la boucle de jeu à chaque image.
+  accelerateur = false;
+  private accelerateurAvant = false;
+  // Départ parfait : appui dans les 0,3 s avant le GO ou les 0,2 s après.
+  // Un appui plus tôt (pédale enfoncée pendant le décompte) l'annule : le
+  // geste récompensé est le réflexe, pas l'anticipation.
+  private departJuge = true;
+  private departTropTot = false;
+  private departArme = false;
+  private depuisGo = 0;
+  // Ralenti d'arrivée : temps restant, et échelle de temps qui en découle.
+  private ralenti = 0;
+  echelleTemps = 1;
 
   constructor(
     private readonly camera: UniversalCamera,
@@ -110,6 +123,8 @@ export class MotionArcade {
     this.banniereActive?.element.remove();
     this.banniereActive = null;
     clearTimeout(this.recordDiffere);
+    this.ralenti = 0;
+    this.echelleTemps = 1;
     if (mode !== 'challenge') {
       this.compte = 0;
       this.banniere('C’EST PARTI', 'titre', 1);
@@ -117,11 +132,36 @@ export class MotionArcade {
     }
     this.compte = 3;
     this.dernierEntier = -1;
+    this.departJuge = false;
+    this.departArme = false;
+    this.depuisGo = 0;
+    // Pédale déjà enfoncée au lancement : c'est un appui « trop tôt ».
+    this.departTropTot = this.accelerateur;
+    this.accelerateurAvant = this.accelerateur;
+  }
+
+  // Un véhicule de la circulation vient d'être frôlé puis dépassé sans
+  // contact. L'accent part du bord où le danger est passé.
+  frolement(x: number, z: number, car: ArcadeCar, session: GameSession): void {
+    const gauche = (x - car.root.position.x) * Math.cos(car.heading) - (z - car.root.position.z) * Math.sin(car.heading) > 0;
+    const gain = Math.round(300 + Math.abs(car.speed) * 10);
+    session.ajouterPoints(gain);
+    this.points(`FRÔLÉ +${gain.toLocaleString('fr-FR')}`, `frole ${gauche ? 'gauche' : 'droite'}`);
+    relancer(this.scoreEl, 'gain');
   }
 
   update(dt: number, car: ArcadeCar, session: GameSession): void {
     const vitesse = Math.abs(car.speed);
     this.arret = Math.max(0, this.arret - dt);
+
+    // Ralenti d'arrivée : 30 % pendant 0,8 s, puis retour progressif au temps
+    // réel sur 0,6 s (un retour sec se lit comme un saut d'image).
+    if (this.ralenti > 0) {
+      this.ralenti = Math.max(0, this.ralenti - dt);
+      this.echelleTemps = this.ralenti > .6 ? .3 : 1 - .7 * (this.ralenti / .6);
+    } else this.echelleTemps = 1;
+
+    this.jugerDepart(car, session, dt);
 
     if (this.compte > 0) {
       this.compte = Math.max(0, this.compte - dt);
@@ -188,6 +228,12 @@ export class MotionArcade {
         if (this.mission) relancer(this.mission, 'impulsion');
       } else {
         this.banniere('ARRIVÉE', 'go', 4);
+        // Respiration : ralenti, effets de vitesse coupés, temps final mis
+        // en avant sous la bannière.
+        this.ralenti = 1.4;
+        this.trauma = 0;
+        this.kickNitro = 0;
+        this.points(`${evenement.temps.toFixed(2).replace('.', ',')} s`, 'temps');
         if (this.mission) relancer(this.mission, 'impulsion');
         if (evenement.record) this.recordDiffere = window.setTimeout(() => this.banniere('NOUVEAU RECORD', 'record', 5), 1100);
       }
@@ -259,6 +305,33 @@ export class MotionArcade {
       // marquage se doublait d'un arc-en-ciel lisible à l'arrêt sur image.
       this.pipeline.chromaticAberration.aberrationAmount = ABERRATION_BASE + v * 3 + (car.boosting ? 2 : 0) + this.kickNitro * 7 + this.trauma * 12;
     }
+  }
+
+  private jugerDepart(car: ArcadeCar, session: GameSession, dt: number): void {
+    const appui = this.accelerateur && !this.accelerateurAvant;
+    this.accelerateurAvant = this.accelerateur;
+    if (this.departJuge) return;
+    if (this.compte > 0) {
+      if (appui) {
+        if (this.compte > .3) this.departTropTot = true;
+        else if (!this.departTropTot) this.departArme = true;
+      }
+      return;
+    }
+    // GO passé : un appui armé avant le GO paie tout de suite, sinon la
+    // fenêtre reste ouverte 0,2 s.
+    this.depuisGo += dt;
+    if (!this.departTropTot && (this.departArme || (appui && this.depuisGo <= .2))) {
+      this.departJuge = true;
+      // 47 km/h d'entrée et coup de nitro visuel : le départ se SENT avant
+      // de se lire.
+      car.speed = Math.max(car.speed, 13);
+      this.kickNitro = 1;
+      this.trauma = Math.max(this.trauma, .35);
+      session.ajouterPoints(1000);
+      this.points('DÉPART PARFAIT +1 000', 'parfait');
+      relancer(this.scoreEl, 'gain');
+    } else if (this.depuisGo > .2) this.departJuge = true;
   }
 
   private multiplicateur(): number {

@@ -259,7 +259,14 @@ règle de n'ajouter aucun appel de dessin (atlas, instances, fusion).
   Caméra poursuite qui regarde vers la sortie du virage (selon la rotation
   réelle de la voiture), arrêt sur image de 70 à 100 ms aux chocs francs,
   nom de rue qui entre en glissant après confirmation, anneau de checkpoint
-  qui jaillit, nitro en pic puis palier. Aucun maillage ajouté : caméra, pipeline existant et couche
+  qui jaillit, nitro en pic puis palier.
+- **Moments clés** : l'écran titre s'avance et s'efface pendant que la
+  caméra plonge de 22 m sur la voiture ; **départ parfait** (accélérer dans
+  les 0,3 s avant le GO ou 0,2 s après : 47 km/h d'entrée et 1 000 points,
+  annulé si la pédale était enfoncée pendant le décompte) ; **frôlement**
+  d'un véhicule de la circulation à moins de 5 m et plus de 50 km/h, payé
+  une fois dépassé, avec un accent qui entre par le bon côté ; **arrivée au
+  ralenti** (30 % pendant 0,8 s) et temps final mis en avant. Aucun maillage ajouté : caméra, pipeline existant et couche
   DOM.
 - **Fumée de pneus et poussière hors-piste** (`src/fumee.ts`) : un seul
   système de particules, un appel de dessin quand il émet.

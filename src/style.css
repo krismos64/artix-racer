@@ -481,3 +481,40 @@ kbd {
   0% { transform: translateX(-50%) scale(1.12); box-shadow: 0 0 26px #f0bd38aa; }
   100% { transform: translateX(-50%) scale(1); }
 }
+
+/* Sortie de l'écran titre : le panneau s'avance vers le joueur et s'efface
+   pendant que la caméra plonge sur la voiture (main.ts, begin). */
+#start-screen.sortie {
+  pointer-events: none;
+  animation: titre-sortie .7s cubic-bezier(.5, 0, .75, 0) forwards;
+}
+@keyframes titre-sortie {
+  to { opacity: 0; transform: scale(1.18); }
+}
+
+/* Frôlement : l'accent entre par le bord où le véhicule est passé, puis
+   rejoint le centre en montant. */
+.points-volants.frole { top: 46%; color: #6fd8ff; text-shadow: 0 2px 0 #0008, 0 0 18px #6fd8ff66; animation-name: frole-gauche; }
+.points-volants.frole.droite { animation-name: frole-droite; }
+@keyframes frole-gauche {
+  0% { opacity: 0; transform: translate(-260%, 0) skewX(-10deg); }
+  22% { opacity: 1; transform: translate(-70%, 0) skewX(-10deg); }
+  100% { opacity: 0; transform: translate(-50%, -60px) skewX(-10deg); }
+}
+@keyframes frole-droite {
+  0% { opacity: 0; transform: translate(160%, 0) skewX(-10deg); }
+  22% { opacity: 1; transform: translate(-30%, 0) skewX(-10deg); }
+  100% { opacity: 0; transform: translate(-50%, -60px) skewX(-10deg); }
+}
+.points-volants.parfait { top: 47%; color: #8ef06a; text-shadow: 0 2px 0 #0008, 0 0 22px #8ef06a88; }
+/* Temps final : tenu plus longtemps que des points, c'est le résultat. */
+.points-volants.temps {
+  top: 40%;
+  color: #fff;
+  font-size: clamp(30px, 4.4vw, 54px);
+  animation-duration: 2.6s;
+  animation-timing-function: cubic-bezier(.1, .9, .2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  #start-screen.sortie { animation-duration: .01s; }
+}
