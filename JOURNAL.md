@@ -2,6 +2,22 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-04 (suite 4) : audit de la documentation
+
+- **README** confronté au code : port 5173 (et non 5180), touche M ajoutée,
+  touches U, K et V retirées (`contours.js` et l'ancien `arcade.js`
+  n'existent plus), Rapier et la physique à quatre roues remplacés par la
+  conduite arcade réelle de `car.ts`, section Son ramenée à ce que fait
+  `audio.ts`, 12 foyers nocturnes à 62 m, 911 lampadaires, 22 600 fenêtres,
+  nouvelle section sur le chantier d'octobre, limites connues à jour.
+- **ATTRIBUTIONS** : AudiR8 et Rapier retirés, `music1.mp3`, textures
+  `bati/*` ambientCG et `fumee.png` ajoutées.
+- **CLAUDE.md** : couche « jeu » (car, game, arcade, fumee, audio) et
+  `flotte.js` dans l'architecture.
+- Piège trouvé : `data/panoramax-inventaire.json` manque localement, ce qui
+  casse `npm run vue` et `npm run mesure`. Documenté dans CLAUDE.md avec la
+  commande de reconstruction.
+
 ## 2026-10-04 (suite 3) : les pistes de Codex, d'un coup
 
 - **Traces d'usure** : coulures sous un appui sur deux environ (texture de

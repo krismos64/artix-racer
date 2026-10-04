@@ -8,10 +8,10 @@ Tout tourne en local, hors ligne, sans compte ni clé d'API.
 ## Lancer le jeu
 
 ```bash
-cd artix-racer && npm install && npm run dev
+npm install && npm run dev
 ```
 
-Puis ouvrir http://localhost:5180 dans **Chrome ou Safari** (pas dans un
+Puis ouvrir http://localhost:5173 dans **Chrome ou Safari** (pas dans un
 navigateur intégré à un éditeur : l'animation y est bridée et le jeu paraît
 saccadé alors qu'il tourne à 60 fps dans un vrai navigateur).
 
@@ -35,8 +35,9 @@ npm run build && npm run preview
 | T | Relancer le chrono |
 | L | Ambiance d'éclairage : Midi, Fin de journée, Nuit |
 | 1 / 2 / 3 | Profil graphique : Performance, Équilibré, Qualité |
+| M | Couper ou relancer la musique |
 | P ou Échap | Pause |
-| Entrée | Démarrer en balade libre |
+| Entrée | Démarrer en balade libre (l'écran titre propose aussi le Tour d'Artix chronométré) |
 
 ## D'où vient la ville
 
@@ -167,11 +168,11 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
   herbe, béton de trottoir, pavés, grave, écorce. C'est le relief de la
   normale qui accroche la lumière rasante, ce qu'un grain de canvas ne
   pouvait pas rendre, et ce qui distingue enfin le trottoir de la chaussée.
-- **Chaîne des Pyrénées** peinte en trois plans de crêtes emboîtés, chacun
-  avec son dégradé de brume : c'est la perspective atmosphérique, et non le
-  relief, qui donne la distance. Le pic du Midi d'Ossau y porte sa silhouette
-  à deux dents et sa neige, volontairement grossi (à sa cote réelle, 62,6 km
-  et 2,26° de haut, il serait invisible).
+- **Chaîne des Pyrénées** : panorama peint par Codex
+  (`public/textures/fond/pyrenees.png`), posé sur des arcs qui suivent la
+  caméra, sous le plan lointain et hors brouillard. Le relief est
+  volontairement grossi : à sa cote réelle (62,6 km, 2,26° de haut) le pic
+  du Midi d'Ossau serait invisible.
 - **Occlusion ambiante et flou de mouvement** en profil Qualité : ils exigent
   une pré-passe qui redessine la ville, d'où leur réservation au profil le
   plus lourd.
@@ -180,7 +181,8 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 - **Volets** sur les habitations, ouverts de part et d'autre de chaque baie :
   couleur relevée sur les panoramiques Panoramax quand elle est détectée,
   sinon palette des teintes réellement vues à Artix (bordeaux, vert, bleu-gris,
-  bois). C'est le détail qui distingue une rue béarnaise d'une maquette.
+  bois). Depuis octobre 2026, la texture des volets et des fenêtres vient
+  d'images Codex, avec des variantes (persiennes, menuiseries PVC sans volets).
 - **Murets en galets roulés du gave**, texture et relief dédiés : l'appareil
   des murs anciens de la plaine, immédiatement reconnaissable.
 - **Façades en pierre apparente** (meulière, pierre, fort grain mesuré sur
@@ -195,11 +197,12 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
   micro-relief du couvert herbeux.
 - **Feuillage découpé par texture alpha** : les couronnes se dentellent en
   paquets de feuilles et deviennent poreuses, le ciel passant par les vides.
+  La texture de feuilles est une image Codex depuis octobre 2026.
 - **Trois ambiances d'éclairage** sur la touche L : midi, fin de journée aux
   ombres longues, nuit. Chaque bascule re-rend la sonde d'environnement et
   ajuste ciel, brouillard, exposition et noirceur des ombres.
 - **Nuit complète et ÉCLAIRÉE** : phares, optiques et feux émissifs, lanternes
-  allumées, halos de lumière sodium au sol sous les 357 lampadaires
+  allumées, halos de lumière sodium au sol sous les 911 lampadaires
   (permanents, sans attendre le passage du joueur), fenêtres des habitations
   éclairées. Douze sources réelles de 260 cd portant à 62 m suivent le
   joueur : la chaussée et les façades sont lisibles, une rue éclairée au
@@ -208,7 +211,8 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
   réels, s'arrêtent pour discuter, traversent aux passages ; touffes d'herbe
   3D sur les bas-côtés. Silhouettes aux proportions d'adultes de 1,60 à
   1,86 m (buste à épaules, cou, chevelure, chaussures), en six maillages
-  instanciés qui coûtent 0,4 fps pour 110 personnes.
+  instanciés qui coûtent 0,4 fps pour 110 personnes. Depuis octobre
+  2026 : visage peint, manches courtes ou longues, mains.
 - **Haies de clôture** (`src/three-city/haies.js`) : quatre espèces relevées
   sur Street View, laurier-palme, cyprès de Leyland, troène doré et charmille
   sur tronc. Volumes à flancs dressés et crête dentelée, avec un grain de
@@ -217,7 +221,8 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
   toutes en périphérie ; les 13 km du bourg sont déduits des rues
   résidentielles, avec une trouée sur deux pour les entrées de garage.
 - **Lignes aériennes** : 357 poteaux triangulés depuis les panoramiques
-  (+ 77 interpolés), reliés par 210 portées de caténaires paraboliques.
+  (+ 77 interpolés), reliés par 210 portées de caténaires paraboliques, et
+  des branchements qui descendent du réseau vers les façades voisines.
 - **Circulation légère** : une douzaine de véhicules parcourent les voies du
   bourg, roulent à droite, respectent les sens uniques et freinent derrière
   le joueur.
@@ -239,6 +244,34 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
   râteau sur un tiers des cheminées, toutes tournées vers le même émetteur.
 - **Surfaces végétales nuancées** : plaques d'herbe jaunie et taches de
   terre, en tuile de 34 m, qui cassent les aplats verts uniformes.
+
+### Motion design arcade et bâti ordinaire (chantier d'octobre 2026)
+
+La fidélité stricte a été assouplie pour le bâti que personne n'a modélisé à
+la main : Codex (OpenAI) a généré les textures de fenêtres, volets, portes,
+génoise, feuillage, fumée, le panorama des Pyrénées et l'écran titre, avec la
+règle de n'ajouter aucun appel de dessin (atlas, instances, fusion).
+
+- **Motion design** (`src/arcade.ts`) : champ de vision qui s'ouvre avec la
+  vitesse et la nitro, secousse et flash aux chocs, combo de
+  dérapage à paliers, compte à rebours avant le Tour d'Artix, bannières
+  animées en CSS. Aucun maillage ajouté : caméra, pipeline existant et couche
+  DOM.
+- **Fumée de pneus et poussière hors-piste** (`src/fumee.ts`) : un seul
+  système de particules, un appel de dessin quand il émet.
+- **Écran titre** illustré (`public/images/titre.jpg`).
+- **Trois couvertures** lues dans les matériaux MAJIC : tuile, ardoise et bac
+  acier, en textures ambientCG. Crépi des murs en ambientCG lui aussi.
+- **Génoise** sous l'égout et **soubassement** au pied des façades.
+- **Portes sur la façade côté rue**, portes de garage, et **vitrines en
+  profondeur** (parallaxe dans la carte de relief) sur les rez-de-chaussée
+  commerçants, écartées autour des services publics.
+- **Plaques de rue émaillées** aux carrefours, aux vrais noms OSM, écrites par
+  `scripts/preparer-plaques.mjs` sur un fond Codex sans texte (un générateur
+  d'images déforme les lettres).
+- **Ombres de contact au pied des murs** (mélange multiplicatif) et
+  **coulures** sous les appuis de fenêtre.
+- **Parc automobile rgsdev** (voir « Le véhicule »).
 
 ### Le centre-bourg modélisé à la main
 
@@ -313,11 +346,10 @@ rafraîchie que deux fois par seconde.
 
 ### Ombres
 
-Le décor projette ses ombres, le véhicule non. La carte d'ombre du soleil n'est
-pas recalculée à chaque image et son volume reste resserré autour de la voiture :
-une ombre de bâtiment, immobile, s'en accommode, celle d'un véhicule lancé à
-50 km/h décrochait. La carrosserie continue de recevoir les ombres du décor,
-sans quoi elle resterait lumineuse au pied d'un immeuble.
+Ombres en cascades (CSM) du soleil, jusqu'à 330 m de la caméra, stabilisées
+pour ne pas scintiller en roulant. La Ferrari projette et reçoit les ombres ;
+les véhicules de la flotte et les murs ajoutent une ombre de contact peinte,
+qui assoit les volumes là où la carte d'ombre manque de finesse.
 
 ### LiDAR HD : la forme réelle de chaque toiture
 
@@ -423,66 +455,39 @@ longe.
 
 | Composant | Rôle |
 | --- | --- |
-| [Babylon.js](https://babylonjs.com) | Rendu 3D (PBR, ciel analytique, IBL, SSAO2, pipeline post-process) |
+| [Babylon.js](https://babylonjs.com) | Rendu 3D (PBR, ciel HDR, IBL, ombres CSM, SSAO2, pipeline post-process) |
 | [Three.js](https://threejs.org) | Génération de la ville (géométries et matériaux, convertis vers Babylon au chargement) |
-| [Rapier](https://rapier.rs) | Moteur physique (Rust compilé en WebAssembly) |
-| Web Audio API | Sons et musique, synthétisés en temps réel |
-| Overpass API | Extraction des données OpenStreetMap |
+| Web Audio API | Moteur et turbo synthétisés, musique lue depuis un fichier |
+| Overpass API, Géoplateforme IGN | Extraction des données OpenStreetMap, BD TOPO, LiDAR HD et orthophotos |
 
-### Physique du véhicule
+### Conduite
 
-Modèle à quatre roues indépendantes, dans l'esprit des simulateurs :
+Modèle arcade volontaire (`src/car.ts`), sans moteur physique : une vitesse
+scalaire, un cap, et le relief lu dans l'index spatial (`world.ts`).
 
-- suspension ressort/amortisseur par roue, raideur calculée pour que la charge
-  statique enfonce le ressort d'un tiers de sa course
-- adhérence par cercle de friction : les efforts longitudinaux et latéraux se
-  partagent une réserve d'adhérence proportionnelle à la charge sur la roue
-- moteur avec courbe de couple de V10 atmosphérique (pic vers 4 500 tr/min,
-  régime maximum 8 500), boîte 6 rapports, **propulsion arrière**, valeurs
-  calées sur l'Audi R8, le modèle affiché jusqu'au 04/09/2026
-- appui aérodynamique et traînée fonction du carré de la vitesse
-- le frein à main annule l'adhérence latérale arrière, ce qui permet le drift
+- vitesse de pointe de 187 km/h, 238 km/h sous nitro ; la jauge de nitro se
+  vide en six secondes et se recharge en roulant
+- hors chaussée, l'accélération tombe à 40 % et la vitesse plafonne à
+  65 km/h, ce qui se sent immédiatement au volant
+- le frein à main en virage déclenche un dérapage qui resserre le virage de
+  72 % et alimente le combo de dérapage
+- l'angle de braquage se réduit avec la vitesse, pour garder la voiture
+  tenable à haute allure
 
-Le véhicule et sa physique ont été recalés le 19/08/2026 sur l'Audi R8 alors
-affichée, jusque-là restés sur les valeurs d'une compacte générique héritées
-de l'origine du projet (masse, couple, traction avant). Le modèle a changé le
-04/09/2026 pour une Ferrari 458, mais la physique n'a PAS été recalée : la 458
-est une propulsion à V8 de cylindrée voisine, les écarts avec la R8 (répartition
-des masses, transmission intégrale sur la R8) restent dans le bruit d'un modèle
-arcade. Chiffres de performance à remesurer sur une base propre avant de les
-republier ici.
-
-L'adhérence chute hors chaussée (coefficient 0,72 sur l'herbe contre 1,15 sur
-l'asphalte), ce qui se sent immédiatement au volant.
+L'ancien modèle à quatre roues indépendantes (suspension, boîte six rapports,
+cercle de friction) appartenait au moteur Three.js retiré le 19 septembre
+2026, avec le moteur physique Rapier.
 
 ### Son
 
-Tous les bruits sont synthétisés, aucun n'est un enregistrement. La musique,
-elle, est un fichier lu en boucle (`public/audio/music1.mp3`). La boucle
-générative décrite plus bas reste dans le code et reprend la main si le
-fichier est absent ou illisible, plutôt que de laisser le jeu muet.
+- **Moteur** : oscillateur en dent de scie passé dans un filtre passe-bas,
+  dont la fréquence suit la vitesse (de 58 à 243 Hz)
+- **Turbo** : sifflement sinusoïdal à 920 Hz, audible sous nitro
+- **Musique** : `public/audio/music1.mp3` lue en boucle, coupée et relancée
+  par la touche `M`
 
-- **Moteur** : une table d'onde périodique contenant les **cinq explosions
-  d'un cycle quatre temps** d'un V10 à 90°, calé sur l'Audi R8 alors affichée
-  (quatre jusqu'au 19/08/2026, pour le moteur générique d'origine). Le modèle
-  affiché est depuis une 458, dont le vrai moteur est un V8 : le son n'a pas
-  été refait, c'est un écart assumé,
-  avec attaque raide et décroissance exponentielle, et un léger déséquilibre
-  entre cylindres. Un banc d'oscillateurs continus produit un bourdonnement
-  de synthétiseur ; c'est la granularité des détonations qui donne le grain
-  d'un vrai moteur. La table est convertie en série de Fourier (64
-  harmoniques) pour alimenter deux voix désaccordées, auxquelles s'ajoutent
-  bruit d'admission et sifflement de turbo
-- **Crépitement à la décélération** : détonations irrégulières dans
-  l'échappement quand on lève le pied à haut régime
-- **Soupape de décharge** : chuintement bref au passage de rapport
-- **Roulement** : bruit rose filtré, dont la fréquence dépend de la vitesse et
-  du revêtement
-- **Crissements** : bruit résonant proportionnel au glissement réel des pneus
-- **Chocs** : composante métallique filtrée plus un grave de tôle, l'amplitude
-  suivant la violence de l'impact
-- **Musique de secours** : boucle électronique générative à 128 BPM sur une grille
-  Am - F - C - G, avec basse, nappe, arpège et batterie
+Le son démarre au premier appui de touche ou clic : les navigateurs bloquent
+l'audio tant que la page n'a pas reçu d'interaction.
 
 ### Rendu
 
@@ -494,23 +499,20 @@ fichier est absent ou illisible, plutôt que de laisser le jeu muet.
   R+1 et hangars agricoles au lieu d'aligner des blocs identiques
 - **toitures à deux pans** avec faîtage orienté selon le grand axe du bâtiment
   (calculé par analyse en composantes principales de l'emprise) et débord de
-  toit marqué, comme sur les maisons béarnaises. Couverture différenciée :
-  tuile canal pour l'habitat, bac acier pour les hangars, ardoise pour l'église
+  toit marqué, comme sur les maisons béarnaises. Couverture lue dans les
+  matériaux MAJIC : tuile, ardoise ou bac acier, chacune en texture ambientCG
 - les équipements identifiés d'Artix (Église Saint-Pierre, mairie, gendarmerie,
   Intermarché, Super U, McDonald's, groupe scolaire) reçoivent une hauteur et
   des matériaux conformes à leur usage
-- carrosserie modélisée par sections transversales successives, ce qui donne un
-  vrai galbe de caisse plutôt qu'un profil extrudé plat
 - le terrain affleure la chaussée : un sol plus bas créerait une marche
   verticale au bord de la route, plus haute que le rayon des roues, et la
   voiture ne pourrait plus remonter après une sortie de route
 - **relief réel** interpolé depuis les 2 900 altitudes de sol mesurées par
   l'IGN : Artix présente 38 m de dénivelé sur la zone de jeu, et la route
   monte et descend pour de vrai. Routes, bâtiments, haies, arbres et
-  lampadaires sont posés sur ce terrain, et la physique roule sur un
-  heightfield qui l'épouse
-- **16 800 fenêtres** générées à partir du nombre d'étages réel de chaque
-  bâtiment : c'est ce qui distingue le plus nettement une façade d'un bloc
+  lampadaires sont posés sur ce terrain, et la voiture en suit l'altitude
+- **environ 22 600 fenêtres** (14 200 à volets, 8 400 en PVC) générées à
+  partir du nombre d'étages réel de chaque bâtiment : c'est ce qui distingue le plus nettement une façade d'un bloc
   coloré
 - ciel photographique HDR servant aussi d'éclairage d'ambiance
 - **110 passants** marchant sur les 11,6 km de cheminements piétons réellement
@@ -520,12 +522,12 @@ fichier est absent ou illisible, plutôt que de laisser le jeu muet.
   conversation et font un pas de côté. Chacun a sa taille, son allure, ses
   vêtements et sa cadence de marche : un groupe uniforme se repère
   immédiatement comme artificiel
-- cycle jour/nuit complet avec allumage automatique des phares et des
-  lampadaires à la tombée du jour
-- traces de pneus laissées au sol lors des glissements
-- sols en photos de matière CC0 (ambientCG) avec cartes de normales ; le
-  reste des textures (enduits, tuiles, feuillages, marquage) est généré en
-  canvas
+- trois ambiances sur la touche `L` (midi, fin de journée, nuit) ; la nuit
+  allume phares, lampadaires et fenêtres
+- fumée de pneus au dérapage, poussière hors chaussée
+- sols, enduits et couvertures en photos de matière CC0 (ambientCG) avec
+  cartes de normales ; menuiseries, portes, génoise et feuillage en images
+  Codex ; le marquage et quelques grains restent générés en canvas
 - les **maillages instanciés ne sont dessinés qu'à portée utile** : un
   `InstancedMesh` n'étant écarté qu'en bloc par le frustum culling, les
   3 500 arbres, les lampadaires et les véhicules garés étaient chacun
@@ -540,65 +542,25 @@ fichier est absent ou illisible, plutôt que de laisser le jeu muet.
 ### Profils graphiques
 
 Trois profils sous les touches `1`, `2` et `3` : **Performance**, **Équilibré** (par défaut)
-et **Qualité**. Chacun règle d'un bloc le pixel ratio, la résolution de
-l'occlusion ambiante, les ombres et la taille de leur carte, les distances de
-brouillard, le nombre de lampadaires réellement calculés, l'effectif des
-passants et l'anticrénelage.
+et **Qualité** (`src/config.ts`). Chacun règle d'un bloc l'échelle de rendu,
+les distances de brouillard, les ombres (activation, taille de carte, filtrage,
+nombre de cascades), l'occlusion ambiante et le flou de mouvement. Ces deux
+derniers ne sont actifs qu'en Qualité : ils exigent une pré-passe qui redessine
+toute la ville.
 
-Le changement de profil ne reconstruit pas la ville. Les lampadaires sont
-alloués une fois pour le plus gros profil et le courant en éteint une partie ;
-les passants gardent leurs maillages instanciés et seul le nombre d'instances
-dessinées change.
+Le changement de profil ne reconstruit pas la ville.
 
-S'y ajoute un ajustement automatique de la résolution, que la touche `U`
-désactive : le rendu perd en finesse quand le temps de frame reste durablement
-au-dessus du budget, et la retrouve lentement quand la marge revient. Deux
-seuils distincts et un délai minimal entre deux ajustements évitent que la
-netteté ne batte en permanence, et un plancher garde l'image lisible.
+S'y ajoute un ajustement automatique de la résolution, toujours actif : le
+rendu perd en finesse quand la cadence reste durablement sous 60 images par
+seconde, et la retrouve lentement quand la marge revient. Deux seuils
+distincts évitent que la netteté ne batte en permanence, et un plancher garde
+l'image lisible.
 
-Mesuré à l'arrêt au centre-bourg, à midi, ajustement automatique coupé :
-
-| Profil | Résolution de rendu | Temps de frame |
-| --- | --- | --- |
-| Performance | 1600 x 683 | 16,7 ms |
-| Équilibré | 2400 x 1024 | 16,6 ms |
-| Qualité | 3200 x 1366 | 16,7 ms |
-
-Les trois tiennent 60 fps à l'arrêt, y compris Qualité qui rend quatre fois
-plus de pixels que Performance : à l'arrêt au centre-bourg, la résolution n'est
-pas le facteur limitant. L'écart se creuse en roulage.
-
-### Rendu dessin animé
-
-La touche `K` bascule un rendu stylisé, en deux effets qui partagent la même
-passe d'écran (`contours.js`).
-
-Les **contours de silhouette** cernent d'un trait sombre les ruptures de
-profondeur et d'orientation. Ils soulignent la géométrie relevée sans toucher
-aux couleurs : contreforts de l'église, bandeaux d'immeuble, décrochements de
-toiture deviennent lisibles. La détection porte sur la courbure de la
-profondeur, et non sur son écart brut, sans quoi une chaussée vue en enfilade
-déclencherait un contour à chaque pixel.
-
-L'**ombrage en paliers** quantifie la luminance de l'image en six niveaux, puis
-remet la teinte d'origine au rapport. Quantifier les trois canaux séparément
-tirerait les couleurs vers les primaires et détruirait les teintes de façade
-relevées sur photographie. Le ciel et les surfaces très sombres en sont exclus :
-un dégradé de ciel s'y couperait en bandes, une chaussée y perdrait son
-marquage.
-
-L'ensemble coûte 2,6 images par seconde, dont 0,2 pour les seuls contours. La
-passe emprunte les tampons de profondeur et de normales que l'occlusion
-ambiante calcule déjà, et n'ajoute donc aucun rendu de géométrie.
-
-### Grade arcade
-
-La touche `V` bascule un grade couleur (`arcade.js`) : contraste en S,
-saturation renforcée, vignettage doux aux bords, léger grain animé d'une
-image à l'autre. La passe s'applique **après** `OutputPass`, sur l'image déjà
-tone-mappée et en espace sRGB, jamais avant : sur l'image linéaire, la même
-courbe de contraste écrasait la chaussée en noir plein. Coût nul mesuré, une
-seule passe plein écran sans échantillonnage voisin.
+Le coût dominant est le nombre d'appels de dessin, pas la résolution. Mesuré
+le 4 septembre 2026 en conduite (1440 × 683, image complète 8,81 ms) : la
+géométrie prend 84 % du temps, le remplissage de pixels 12 %, les ombres et le
+post-process le reste. Les petits maillages statiques sont donc fusionnés par
+matériau et par cellule de 300 m (`ThreeCityConverter.fusionner`).
 
 ### Stationnement et mobilier
 
@@ -631,9 +593,10 @@ et la réverbération du ciel sur la couche nuageuse donnent une clarté de fond
 que reproduit l'ambiance nocturne, virant au bleu nuit avec un rebond de sol
 orangé, la teinte que prend une chaussée sous éclairage public.
 
-Vingt foyers sont calculés en lumière réelle, réaffectés en continu aux
-lampadaires les plus proches du véhicule parmi les 911 de la commune ; les
-autres ne sont représentés que par leur lanterne émissive. Leur portée de 45 m
+Douze foyers sont calculés en lumière réelle, réaffectés en continu aux
+lampadaires les plus proches du véhicule parmi les 911 de la commune (20
+cartographiés dans OSM, les autres déduits le long des voies) ; les autres ne
+sont représentés que par leur lanterne émissive. Leur portée de 62 m
 correspond à l'inter-distance d'une rue de bourg, de sorte que les flaques de
 lumière se recouvrent au lieu de laisser la voie dans le noir entre deux mâts.
 
@@ -652,7 +615,10 @@ Les principales constantes sont regroupées et commentées :
   photographies
 - `src/audio.ts` → `MUSIQUE`, niveaux des bus audio
 - `src/config.ts` → les trois profils de qualité (brouillard, ombres, SSAO)
-- `src/car.ts` → le modèle du véhicule piloté
+- `src/arcade.ts` → motion design : champ de vision, secousses, paliers du
+  combo de dérapage
+- `src/fumee.ts` → fumée de pneus et poussière hors-piste
+- `src/three-city/flotte.js` → gabarits et cotes des véhicules du parc
 
 Depuis la console du navigateur : `__profil()` découpe le temps de frame,
 `__repartition()` classe les appels de dessin par matériau, `__comparer()`
@@ -670,7 +636,7 @@ carrosserie extérieure. Le modèle est à l'échelle réelle, empattement mesur
 2,65 m, la cote officielle de la 458.
 
 Le chargeur (`src/car.ts`) met le modèle à la longueur cible de 4,35 m, pose le
-bas des pneus à la hauteur qu'attend la physique, et lui fait faire un
+bas des pneus à la hauteur qu'attend la conduite, et lui fait faire un
 demi-tour : le modèle regarde -Z (roues avant à z = -1,16, arrière à +1,50)
 quand la scène attend l'inverse. Les roues sont retrouvées par leurs noms
 `wheel_fl`, `wheel_fr`, `wheel_rl`, `wheel_rr`.
@@ -713,9 +679,7 @@ est utilisé ici dans un projet strictement personnel, jamais mis en ligne.
 Toute publication demanderait de tirer ce point au clair ou de remplacer le
 fichier. Voir `ATTRIBUTIONS.md`.
 
-L'ancien modèle **Audi R8** reste dans `public/models/` mais n'est plus chargé.
-Son attribution n'a jamais pu être retrouvée : il avait été retraité par
-glTF-Transform et ne porte plus ni auteur ni licence.
+L'ancien modèle **Audi R8**, d'attribution inconnue, a été retiré du dépôt.
 
 Le parc garé et la circulation utilisent le **Free Low Poly Vehicles Pack**
 de rgsdev (CC0), converti par `scripts/preparer-flotte.mjs`. Il a remplacé
@@ -736,17 +700,13 @@ aujourd'hui `ferrari.glb` sans repli.
   dans le code derrière le drapeau `PLACAGE_PHOTO`
 - les bâtiments en fond de parcelle gardent une teinte déduite de leur
   matériau BD TOPO : aucune photographie de rue ne les atteint
-- les **piétons n'ont ni visage ni mains** : la silhouette est juste en
-  proportions et se tient à la distance de conduite, mais un arrêt sur image
-  à deux mètres montre des membres en capsules et une tête lisse
-- les **feuillages** sont des lobes d'icosaèdre dentelés par texture alpha,
-  éclaircis pour le nouvel éclairage mais pas remodelés
+- les **feuillages** sont des lobes d'icosaèdre dentelés par une texture de
+  feuilles : la silhouette des arbres reste celle d'un nuage de boules
+- vus de très près, quelques détails trahissent leur nature de texture
+  (coulures, mains des passants, branchements) : ils sont réglés pour la
+  distance de conduite
 - l'ombre des **véhicules de la flotte** vient d'un voile de contact et non
   de la carte d'ombre, dont le volume est resserré autour du joueur
-- le fond de montagnes n'a plus `infiniteDistance` pour que ses trois couches
-  gardent leur profondeur : posé à 1 330 m, il ne devrait produire aucune
-  parallaxe visible, mais cela reste à confirmer sur un long trajet vers le
-  sud
 
 ## Calage sur photographies
 
@@ -800,8 +760,8 @@ sous Licence Ouverte 2.0.
 Ressources visuelles ajoutées en septembre 2026, toutes sous CC0 1.0 :
 panoramas de ciel HDR Poly Haven, photos de matière ambientCG (enrobé, herbe,
 béton, pavés, grave, écorce), modèles de véhicules (Kenney Car Kit,
-remplacé en octobre 2026 par le pack rgsdev).
+remplacé en octobre 2026 par le pack rgsdev). Textures de façade, panorama
+des Pyrénées et écran titre générés par Codex (OpenAI) en octobre 2026.
 
-Le modèle 3D du véhicule ne porte plus de métadonnées d'auteur : son
-attribution reste à établir. Le détail de chaque source figure dans
+La licence du modèle Ferrari 458 n'a pas pu être vérifiée (usage personnel). Le détail de chaque source figure dans
 `ATTRIBUTIONS.md`.

@@ -26,6 +26,7 @@ Objectif unique : le meilleur rendu visuel possible, vite.
    ville. `world.js` (bâti, routes, sols), `landmarks.js` (bâtiments
    modélisés à la main), `signage.js` (signalisation, enseignes, poteaux),
    `parking.js`, `parkedcars.js` (parc garé : flotte rgsdev + scooters),
+   `flotte.js` (chargement et mise aux cotes des modèles rgsdev),
    `traffic.js` (circulation légère), `pedestrians.js`, `touffes.js`,
    `haies.js` (haies de clôture : laurier, thuya, troène, charmille),
    `textures.js` (textures canvas procédurales).
@@ -40,6 +41,13 @@ Objectif unique : le meilleur rendu visuel possible, vite.
 4. **`src/main.ts`** : scène, ciel, lumières, ombres CSM, ambiances, pipeline
    post-process, boucle de jeu, HUD.
 5. **`src/lieux.ts`** : table des lieux-dits affichés dans le HUD.
+6. Jeu autour du rendu : `car.ts` (Ferrari, conduite arcade sans moteur
+   physique, vue conducteur), `game.ts` (modes balade et Tour d'Artix,
+   score), `arcade.ts` (motion design : champ de vision, secousse, combo de
+   dérapage, compte à rebours, couche DOM sans appel de dessin), `fumee.ts`
+   (fumée et poussière, un seul système de particules), `audio.ts` (moteur
+   et turbo synthétisés, musique, touche M), `minimap.ts`, `profil.ts`
+   (outils de mesure en console), `config.ts` (profils graphiques).
 
 Un seul moteur produit le visuel (la couche 1, convertie par la couche 2). Une
 version Babylon concurrente du rendu (chunks, bâtiments, mairie, église) a
@@ -327,6 +335,8 @@ Retirée le 19 septembre 2026.
 | `textures/facades/portes-relief.png` | relief plat, hauteur en alpha : 0 sur les vitres de devanture (parallax occlusion) | script sharp |
 | `textures/facades/plaques.jpg` | atlas des 183 plaques de rue émaillées (fond Codex sans texte, noms OSM en SVG, ordre alphabétique) | `scripts/preparer-plaques.mjs` (à relancer si les noms de voies changent) |
 | `images/titre.jpg` | illustration de l'écran titre | générée par Codex |
+| `textures/fumee.png` | bouffée de fumée, transparence tirée de la luminance | générée par Codex |
+| `audio/music1.mp3` | musique lue en boucle | fournie par l'auteur |
 | `models/flotte-rgs/*.json` | 4 véhicules rgsdev (CC0) en deux lots + palette | `scripts/preparer-flotte.mjs` (depuis le FBX) |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 
@@ -334,6 +344,10 @@ Caches locaux (gitignorés, `data/` inclus depuis le 19 septembre 2026) :
 `.panoramax-cache/` (1 Go, photos SD),
 `.panoramax-cache-hd/` (246 Mo, photos HD), `data/panoramax-inventaire.json`
 (76 365 photos inventoriées).
+L'inventaire peut manquer (absent le 4 octobre 2026) : `vue`, `mesure`,
+`fetch-sols` et `fetch-poteaux` le lisent et plantent sans lui. Le
+reconstruire avec `node scripts/panoramax-inventaire.mjs` (appel réseau à
+l'API STAC Panoramax, inclus dans `fetch-panoramax`).
 
 ## Méthode de fidélité (éprouvée)
 
