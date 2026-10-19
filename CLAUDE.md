@@ -33,6 +33,9 @@ configuration Netlify dans le dépôt, aucun déploiement automatique.
 1. **`src/three-city/*.js`** (Three.js, hérité) : génère TOUT le visuel de la
    ville. `world.js` (bâti, routes, sols), `landmarks.js` (bâtiments
    modélisés à la main), `signage.js` (signalisation, enseignes, poteaux),
+   `accotements.js` (bande entre chaussée et terrain), `terrain.js` (relief
+   interpolé sur les altitudes BD TOPO), `osm.js`, `bdtopo.js` et `poi.js`
+   (lecture des sources),
    `parking.js`, `parkedcars.js` (parc garé : flotte rgsdev + scooters),
    `flotte.js` (chargement et mise aux cotes des modèles rgsdev),
    `traffic.js` (circulation légère), `pedestrians.js`, `touffes.js`,

@@ -52,8 +52,9 @@ véhicule du joueur depuis septembre 2026.
 La licence n'a PAS pu être vérifiée : le dépôt three.js ne documente pas
 celle de ce fichier, et la page Sketchfab d'origine
 (modèle 57bf6cc56931426e87494f554df1dab6) est aujourd'hui désactivée. Le
-modèle est utilisé ici dans un projet strictement personnel, jamais mis en
-ligne. Toute publication du dépôt demanderait de tirer ce point au clair ou
+modèle est utilisé ici dans un projet personnel, montré seulement par un
+lien de test privé et non référencé sur Netlify. Toute publication ouverte
+demanderait de tirer ce point au clair ou
 de remplacer le fichier.
 
 « Ferrari » et « 458 Italia » sont des marques déposées de Ferrari S.p.A. Ce
@@ -67,8 +68,10 @@ retiré du dépôt.
 **`public/audio/music1.mp3`** : morceau fourni par l'auteur du projet, libre
 de droits pour cet usage.
 
-Les deux autres sons du jeu (moteur et sifflement de turbo) sont synthétisés
-en temps réel par la Web Audio API : aucun n'est un enregistrement.
+Les autres sons du jeu (moteur, sifflement de turbo, bande-son de l'intro)
+sont synthétisés en temps réel par la Web Audio API : aucun n'est un
+enregistrement. Les voitures de l'intro sont des silhouettes SVG dessinées
+pour le projet.
 
 ## Bibliothèques
 

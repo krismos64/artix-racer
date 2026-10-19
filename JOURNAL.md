@@ -2,6 +2,18 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-19 (suite) : lien de test Netlify, audit de la documentation
+
+- **Netlify** : projet `artix-essai-q7m4x2` (équipe gratuite), déployé à la
+  main depuis une copie de `dist` seul, non référencé (`robots.txt`,
+  `_headers` en noindex). Vérifié en ligne : écran titre atteint en 3,3 s,
+  aucune erreur. Pas de mot de passe (fonction payante).
+- **Audit de la doc** : la touche R était décrite « replacer sur la route »
+  dans le jeu, alors que `car.reset` ramène au point de départ ; mentions
+  « jamais mis en ligne » corrigées (README, ATTRIBUTIONS) ; intro ajoutée
+  au README (motion design, son, réglages) ; `accotements.js`, `terrain.js`,
+  `poi.js` ajoutés à l'architecture de CLAUDE.md.
+
 ## 2026-10-19 : touches affichées, intro animée
 
 - **Touches** : liste complète (12 commandes) sur l'écran titre et dans la

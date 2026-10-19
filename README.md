@@ -3,7 +3,8 @@
 Jeu de voiture 3D jouable au clavier, dans la ville d'**Artix (64170)**,
 Pyrénées-Atlantiques, modélisée à partir des données cartographiques réelles.
 
-Tout tourne en local, hors ligne, sans compte ni clé d'API.
+Tout tourne en local, hors ligne, sans compte ni clé d'API. Un lien de test
+privé existe sur Netlify, non référencé (voir « Lien de test »).
 
 ## Lancer le jeu
 
@@ -21,6 +22,18 @@ Pour une version optimisée :
 npm run build && npm run preview
 ```
 
+Au lancement, une intro animée et sonorisée de 6 s joue pendant le
+chargement : toute touche ou clic l'écourte, et `?intro=0` dans l'URL la
+saute (utile en développement).
+
+### Lien de test
+
+Le jeu est déployé à la main sur Netlify (offre gratuite) pour le faire
+essayer à une personne, sans être référencé : `public/robots.txt` interdit
+l'exploration et `public/_headers` pose `X-Robots-Tag: noindex`. Aucun mot de
+passe (fonction payante) : quiconque a le lien peut jouer. Pas de
+déploiement automatique ; la procédure est décrite dans `CLAUDE.md`.
+
 ## Commandes
 
 | Touche | Action |
@@ -31,13 +44,16 @@ npm run build && npm run preview
 | Espace | Frein à main (drift) |
 | Maj | Nitro |
 | C | Changer de caméra (poursuite, conducteur, aérienne) |
-| R | Réapparaître au point de départ |
-| T | Relancer le chrono |
+| R | Revenir au point de départ |
+| T | Lancer ou relancer le Tour d'Artix (chrono) |
 | L | Ambiance d'éclairage : Midi, Fin de journée, Nuit |
 | 1 / 2 / 3 | Profil graphique : Performance, Équilibré, Qualité |
 | M | Couper ou relancer la musique |
 | P ou Échap | Pause |
 | Entrée | Démarrer en balade libre (l'écran titre propose aussi le Tour d'Artix chronométré) |
+
+La liste complète s'affiche aussi dans le jeu, sur l'écran titre et dans la
+pause ; la barre du bas n'en garde que l'essentiel.
 
 ## D'où vient la ville
 
@@ -271,6 +287,11 @@ règle de n'ajouter aucun appel de dessin (atlas, instances, fusion).
 - **Fumée de pneus et poussière hors-piste** (`src/fumee.ts`) : un seul
   système de particules, un appel de dessin quand il émet.
 - **Écran titre** illustré (`public/images/titre.jpg`).
+- **Intro du lancement** (`src/intro.ts`) : trois voitures en SVG sur un
+  coucher de soleil pyrénéen et une grille synthwave, puis le titre percuté
+  (flash, secousse), sur une bande-son synthétisée. Elle joue pendant le
+  chargement : seuls transform et opacity sont animés, composés hors du fil
+  principal que la construction de la ville bloque jusqu'à 2,4 s d'un tenant.
 - **Trois couvertures** lues dans les matériaux MAJIC : tuile, ardoise et bac
   acier, en textures ambientCG. Crépi des murs en ambientCG lui aussi.
 - **Génoise** sous l'égout et **soubassement** au pied des façades.
@@ -398,7 +419,7 @@ de la photogrammétrie sur des prises de vue qui ne sont pas faites pour ça. Le
 LiDAR HD donne directement la forme mesurée des toitures, ce qu'aucune banque
 de photographies ne fournira jamais. Depuis août 2026, Street View et Google
 Maps servent toutefois d'appoint visuel (usage strictement personnel, le jeu
-n'est jamais publié) pour les bâtiments trop récents pour la campagne
+n'est pas publié) pour les bâtiments trop récents pour la campagne
 Panoramax, comme la zone commerciale est ; la géométrie continue de venir
 des données IGN et OSM.
 
@@ -468,7 +489,7 @@ longe.
 | --- | --- |
 | [Babylon.js](https://babylonjs.com) | Rendu 3D (PBR, ciel HDR, IBL, ombres CSM, SSAO2, pipeline post-process) |
 | [Three.js](https://threejs.org) | Génération de la ville (géométries et matériaux, convertis vers Babylon au chargement) |
-| Web Audio API | Moteur et turbo synthétisés, musique lue depuis un fichier |
+| Web Audio API | Moteur, turbo et bande-son de l'intro synthétisés, musique lue depuis un fichier |
 | Overpass API, Géoplateforme IGN | Extraction des données OpenStreetMap, BD TOPO, LiDAR HD et orthophotos |
 
 ### Conduite
@@ -496,9 +517,14 @@ cercle de friction) appartenait au moteur Three.js retiré le 19 septembre
 - **Turbo** : sifflement sinusoïdal à 920 Hz, audible sous nitro
 - **Musique** : `public/audio/music1.mp3` lue en boucle, coupée et relancée
   par la touche `M`
+- **Intro** (`src/intro.ts`) : passages de voitures avec effet Doppler et
+  panoramique, montée de bruit, grosse caisse, accord de ré mineur 9 et
+  arpège à 140 bpm, réverbération générée. Aucun fichier : tout est
+  synthétisé et programmé d'un bloc sur l'horloge audio
 
 Le son démarre au premier appui de touche ou clic : les navigateurs bloquent
-l'audio tant que la page n'a pas reçu d'interaction.
+l'audio tant que la page n'a pas reçu d'interaction. C'est la raison d'être
+de l'écran « appuyez sur une touche » qui précède l'intro.
 
 ### Rendu
 
@@ -625,6 +651,8 @@ Les principales constantes sont regroupées et commentées :
 - `src/three-city/landmarks.js` → les bâtiments modélisés un par un depuis les
   photographies
 - `src/audio.ts` → `MUSIQUE`, niveaux des bus audio
+- `src/intro.ts` → `TEMPS` (instants clés, partagés par l'image et le son),
+  volume général de l'intro (`bus.gain`)
 - `src/config.ts` → les trois profils de qualité (brouillard, ombres, SSAO)
 - `src/arcade.ts` → motion design : champ de vision, secousses, paliers du
   combo de dérapage
@@ -686,8 +714,9 @@ extérieures tranchait le volant, situé à 49 cm de l'œil.
 
 Elle n'a **pas pu être vérifiée** : three.js ne documente pas celle de ce
 fichier, et la page Sketchfab d'origine est aujourd'hui désactivée. Le modèle
-est utilisé ici dans un projet strictement personnel, jamais mis en ligne.
-Toute publication demanderait de tirer ce point au clair ou de remplacer le
+est utilisé ici dans un projet personnel, montré seulement par un lien de
+test privé et non référencé (voir « Lien de test »). Toute publication
+ouverte demanderait de tirer ce point au clair ou de remplacer le
 fichier. Voir `ATTRIBUTIONS.md`.
 
 L'ancien modèle **Audi R8**, d'attribution inconnue, a été retiré du dépôt.
