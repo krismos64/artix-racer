@@ -28,6 +28,7 @@ import {
 } from '@babylonjs/core';
 import './style.css';
 import { MotionArcade } from './arcade';
+import { lancerIntro } from './intro';
 import { FumeePneus } from './fumee';
 import { ArcadeAudio } from './audio';
 import { ArcadeCar, KeyboardInput } from './car';
@@ -1371,6 +1372,9 @@ async function start(): Promise<void> {
   addEventListener('resize', () => engine.resize());
 }
 
+// L'intro joue par-dessus l'écran de chargement, pendant que la ville se
+// construit : elle ne retarde pas le jeu d'une seconde.
+lancerIntro();
 start().catch((error) => {
   console.error(error);
   loadingText.textContent = error instanceof Error ? error.message : String(error);

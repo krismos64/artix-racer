@@ -256,11 +256,19 @@ kbd {
 .mode-grid button span { display: block; color: #b9c8d0; font-size: 12px; line-height: 1.45; }
 .menu-note { display: block; margin-top: 14px; color: #899aa5; }
 .pause-card { text-align: center; }
+/* Liste des touches, partagée par l'écran titre et la pause : deux colonnes
+   suffisent à tenir les douze commandes sans faire défiler l'écran titre. */
+.touches { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 22px; margin: 22px 0 0; padding: 14px 16px; border: 1px solid #ffffff1c; border-radius: 12px; background: #08111ad9; text-align: left; font-size: 12px; }
+.touches div { display: flex; gap: 10px; align-items: baseline; }
+.touches dt { flex: 0 0 96px; white-space: nowrap; }
+.touches dd { margin: 0; color: #b9c8d0; }
+.pause-card .touches { max-width: 760px; margin: 26px auto 0; }
 .pause-card p { color: #c9d4db; }
 
 .touch-controls { display: none; }
 
 @media (max-width: 760px) {
+  .touches { grid-template-columns: 1fr; }
   .help, .metrics { display: none; }
   .telemetry { left: 14px; bottom: 18px; grid-template-columns: auto auto; }
   .topbar { left: 14px; right: 14px; }
@@ -518,3 +526,229 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   #start-screen.sortie { animation-duration: .01s; }
 }
+
+/* Intro du lancement (src/intro.ts). Seuls transform et opacity sont animés :
+   l'intro joue PENDANT le chargement de la ville, qui occupe le fil principal,
+   et ces deux propriétés sont composées hors de lui. Les délais viennent des
+   variables --t-* posées par intro.ts, partagées avec la bande-son. */
+#intro {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  overflow: hidden;
+  background: #050b14;
+  cursor: pointer;
+  user-select: none;
+}
+#intro.joue { animation: intro-sortie var(--d-sortie) cubic-bezier(.5, 0, .75, 0) var(--t-fin) forwards; }
+#intro.passe { animation: intro-passe .35s ease forwards; }
+@keyframes intro-sortie { to { opacity: 0; transform: scale(1.18); } }
+@keyframes intro-passe { to { opacity: 0; } }
+
+.intro-porte {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-content: center;
+  gap: 14px;
+  text-align: center;
+  background: radial-gradient(circle at 50% 60%, #1a2c46 0, #050b14 60%);
+}
+#intro.joue .intro-porte { animation: intro-passe .3s ease forwards; }
+.intro-marque { margin: 0; font-size: clamp(34px, 6vw, 64px); font-weight: 900; letter-spacing: -.04em; transform: skewX(-10deg); }
+.intro-marque span { color: #f2c44c; }
+.intro-invite { margin: 0; color: #cfdbe3; font-size: 14px; letter-spacing: .04em; animation: intro-clignote 1.3s ease-in-out infinite alternate; }
+.intro-porte small { color: #7f93a3; font-size: 10px; letter-spacing: .2em; text-transform: uppercase; }
+@keyframes intro-clignote { from { opacity: .35; } to { opacity: 1; } }
+
+/* Scène : rien ne bouge tant que la porte n'est pas franchie. Le !important
+   est nécessaire : chaque raccourci `animation` plus bas remet
+   `animation-play-state` à running, et la scène jouait dès l'ouverture de la
+   page ; un joueur qui attendait six secondes sur la porte ratait tout. */
+.intro-cadre { position: absolute; inset: 0; }
+#intro:not(.joue) .intro-cadre * { animation-play-state: paused !important; }
+#intro.joue .intro-cadre { animation: intro-secousse .4s linear var(--t-impact); }
+/* Léger agrandissement pendant la secousse : sans lui, le décalage montrait
+   une bande noire au bord de l'écran. */
+@keyframes intro-secousse {
+  0% { transform: scale(1.03) translate(0, 0); }
+  15% { transform: scale(1.03) translate(-14px, 9px); }
+  30% { transform: scale(1.03) translate(11px, -8px); }
+  45% { transform: scale(1.03) translate(-8px, 5px); }
+  60% { transform: scale(1.03) translate(5px, -4px); }
+  80% { transform: scale(1.02) translate(-2px, 2px); }
+  100% { transform: none; }
+}
+
+/* Coucher de soleil sur les Pyrénées : l'horizon est à 58 % de la hauteur. */
+.intro-ciel {
+  position: absolute;
+  inset: 0 0 42% 0;
+  background:
+    radial-gradient(ellipse 60% 55% at 50% 100%, #ff8a3d 0, #c2473f55 35%, transparent 70%),
+    linear-gradient(#050b14 0%, #0f2036 50%, #3b2546 85%, #8a3c3c 100%);
+}
+.intro-montagnes { position: absolute; left: 0; bottom: 42%; width: 100%; height: 15vh; }
+.intro-horizon {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 58%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #f2c44c 30%, #fff3cc 50%, #f2c44c 70%, transparent);
+  box-shadow: 0 0 18px #ffb44c, 0 0 46px #ff7a3c;
+  transform: scaleX(0);
+  animation: intro-horizon .7s cubic-bezier(.2, .8, .2, 1) .05s forwards;
+}
+@keyframes intro-horizon { to { transform: scaleX(1); } }
+
+/* Sol en grille synthwave, en perspective, qui défile vers le joueur. */
+.intro-sol {
+  position: absolute;
+  left: -50%;
+  right: -50%;
+  top: 58%;
+  bottom: 0;
+  overflow: hidden;
+  perspective: 260px;
+  perspective-origin: 50% 0;
+  background: linear-gradient(#1a1030, #060a14);
+  -webkit-mask-image: linear-gradient(transparent, #000 35%);
+  mask-image: linear-gradient(transparent, #000 35%);
+}
+.intro-grille {
+  position: absolute;
+  inset: -200% 0 -60px 0;
+  background:
+    repeating-linear-gradient(#ff6fae66 0 2px, transparent 2px 60px),
+    repeating-linear-gradient(90deg, #69bff255 0 2px, transparent 2px 90px);
+  transform-origin: 50% 100%;
+  animation: intro-grille .32s linear infinite;
+}
+@keyframes intro-grille {
+  from { transform: rotateX(64deg) translateY(0); }
+  to { transform: rotateX(64deg) translateY(60px); }
+}
+
+/* Lignes de vitesse : invisibles avant la montée, en rafale jusqu'à
+   l'impact, puis discrètes derrière le titre. */
+.intro-lignes { position: absolute; inset: 0; opacity: 0; animation: intro-lignes calc(var(--t-fin) - var(--t-lignes)) linear var(--t-lignes) forwards; }
+@keyframes intro-lignes {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  25% { opacity: 1; }
+  40%, 100% { opacity: .3; }
+}
+.intro-lignes span {
+  position: absolute;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, #fff, transparent);
+  animation: intro-ligne .4s linear infinite;
+}
+@keyframes intro-ligne {
+  from { transform: translateX(110vw); }
+  to { transform: translateX(-40vw); }
+}
+
+/* Voitures : traversée de bord à bord, légère inclinaison de vitesse,
+   traînée lumineuse à l'arrière. La v2 roule vers la gauche. */
+.intro-voiture { position: absolute; left: 0; transform: translateX(-120%); }
+.intro-voiture svg { display: block; width: 100%; overflow: visible; }
+.intro-voiture::before {
+  content: "";
+  position: absolute;
+  right: 92%;
+  top: 52%;
+  width: 150%;
+  height: 7%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, transparent, var(--trainee));
+  box-shadow: 0 0 22px var(--trainee);
+  filter: blur(3px);
+  opacity: .8;
+}
+.intro-roue { transform-box: fill-box; transform-origin: center; animation: intro-roue .12s linear infinite; }
+@keyframes intro-roue { to { transform: rotate(360deg); } }
+.v1 { --trainee: #ff4a3c; bottom: 4%; width: 46vw; animation: intro-droite var(--d-passage1) cubic-bezier(.35, .1, .65, .9) var(--t-passage1) both; }
+.v2 { --trainee: #f2c44c; bottom: 19%; width: 30vw; animation: intro-gauche var(--d-passage2) cubic-bezier(.35, .1, .65, .9) var(--t-passage2) both; }
+.v2 svg { transform: scaleX(-1); }
+.v2::before { right: auto; left: 92%; background: linear-gradient(270deg, transparent, var(--trainee)); }
+.v3 { --trainee: #69bff2; bottom: 31%; width: 16vw; animation: intro-droite var(--d-passage3) cubic-bezier(.35, .1, .65, .9) var(--t-passage3) both; }
+.v4 { --trainee: #ff4a3c; z-index: 2; bottom: 14%; width: 64vw; animation: intro-droite var(--d-passageFinal) cubic-bezier(.4, 0, .6, 1) var(--t-passageFinal) both; }
+/* La course finit au-delà du bord de 1,6 largeur de voiture : la traînée
+   (150 % de la voiture) restait sinon plantée à l'écran après son passage. */
+@keyframes intro-droite {
+  from { transform: translateX(calc(-100% - 4vw)) skewX(-8deg); }
+  to { transform: translateX(calc(104vw + 160%)) skewX(-8deg); }
+}
+@keyframes intro-gauche {
+  from { transform: translateX(104vw) skewX(8deg); }
+  to { transform: translateX(calc(-260% - 4vw)) skewX(8deg); }
+}
+
+/* Titre : les deux mots arrivent des bords et se percutent à l'impact. */
+.intro-titre {
+  position: absolute;
+  inset: 0 0 30% 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  z-index: 1;
+}
+.intro-mots { display: flex; gap: .22em; font-size: clamp(64px, 13vw, 210px); font-weight: 900; line-height: .9; letter-spacing: -.05em; }
+.mot { display: block; text-shadow: 0 6px 0 #0007, 0 0 40px #ffffff30; }
+.mot.racer { color: #f2c44c; text-shadow: 0 6px 0 #0007, 0 0 50px #f2c44c66; }
+.mot.artix { animation: intro-mot-gauche .5s cubic-bezier(.7, 0, .9, .6) calc(var(--t-impact) - .18s) both; }
+.mot.racer { animation: intro-mot-droite .5s cubic-bezier(.7, 0, .9, .6) calc(var(--t-impact) - .18s) both; }
+@keyframes intro-mot-gauche {
+  0% { transform: translateX(-110vw) skewX(-24deg); }
+  36% { transform: translateX(0) skewX(-10deg) scale(1.12); animation-timing-function: cubic-bezier(.2, 1.4, .4, 1); }
+  100% { transform: skewX(-10deg); }
+}
+@keyframes intro-mot-droite {
+  0% { transform: translateX(110vw) skewX(4deg); }
+  36% { transform: translateX(0) skewX(-10deg) scale(1.12); animation-timing-function: cubic-bezier(.2, 1.4, .4, 1); }
+  100% { transform: skewX(-10deg); }
+}
+.intro-souligne {
+  display: block;
+  width: 72%;
+  height: 4px;
+  margin-top: 14px;
+  background: linear-gradient(90deg, transparent, #f2c44c, #ff6f3c, transparent);
+  transform: scaleX(0);
+  animation: intro-horizon .6s cubic-bezier(.2, .8, .2, 1) calc(var(--t-impact) + .1s) forwards;
+}
+.intro-sous-titre {
+  margin: 16px 0 0;
+  color: #dfe8ee;
+  font-size: clamp(11px, 1.4vw, 16px);
+  letter-spacing: .42em;
+  opacity: 0;
+  animation: intro-sous-titre .7s ease-out calc(var(--t-impact) + .35s) forwards;
+}
+@keyframes intro-sous-titre {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+.intro-flash { position: absolute; inset: 0; z-index: 3; background: #fff; opacity: 0; pointer-events: none; animation: intro-flash .45s ease-out var(--t-impact); }
+@keyframes intro-flash {
+  0% { opacity: .9; }
+  100% { opacity: 0; }
+}
+.intro-passer {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  z-index: 4;
+  margin: 0;
+  color: #ffffff70;
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  opacity: 0;
+}
+#intro.joue .intro-passer { animation: intro-sous-titre .4s ease .8s forwards; }

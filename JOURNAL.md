@@ -2,6 +2,27 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-10-19 : touches affichées, intro animée
+
+- **Touches** : liste complète (12 commandes) sur l'écran titre et dans la
+  pause, tirée du code (car.ts, main.ts, audio.ts) et non de l'ancienne
+  aide, qui oubliait L, M, S et P. La barre du bas résume et renvoie à P.
+- **Intro** (`src/intro.ts`) : porte « appuyez sur une touche » (un
+  navigateur refuse le son sans geste), puis 5,25 s de séquence : trois
+  voitures SVG sur fond de Pyrénées et grille synthwave, montée de bruit,
+  titre percuté avec flash et secousse, sortie en 0,7 s sur l'écran titre.
+  Bande-son 100 % Web Audio (Doppler des passages, grosse caisse, accord de
+  ré mineur 9, arpège à 140 bpm, réverbération générée) : 0 octet chargé.
+  Elle joue PENDANT le chargement : mesuré, le fil principal s'y bloque
+  2,4 s d'un tenant. Seuls transform et opacity sont animés (composés hors
+  du fil principal) et le son est programmé d'un bloc sur l'horloge audio.
+  `?intro=0` la saute ; toute touche ou clic l'écourte.
+- Pièges rencontrés : le raccourci `animation` remet `animation-play-state`
+  à running (la scène jouait dès l'ouverture, d'où un `!important`) ; une
+  rotation CSS sur un `<g>` SVG remplace son attribut `transform` (roues
+  envolées) ; `stopPropagation` sur window laissait l'Entrée lancer la
+  balade derrière l'intro, il faut `stopImmediatePropagation`.
+
 ## 2026-10-04 (suite 6) : motion design, lot 2
 
 - **Sortie de l'écran titre** : panneau qui s'avance et s'efface (0,7 s),

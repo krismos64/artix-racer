@@ -48,7 +48,9 @@ Objectif unique : le meilleur rendu visuel possible, vite.
    rebours, départ parfait, frôlements, ralenti d'arrivée via
    `echelleTemps` que main.ts applique au seul temps du JEU), `fumee.ts`
    (fumée et poussière, un seul système de particules), `audio.ts` (moteur
-   et turbo synthétisés, musique, touche M), `minimap.ts`, `profil.ts`
+   et turbo synthétisés, musique, touche M), `intro.ts` (intro animée et
+   bande-son Web Audio du lancement, jouée pendant le chargement ;
+   `?intro=0` la saute), `minimap.ts`, `profil.ts`
    (outils de mesure en console), `config.ts` (profils graphiques).
    ATTENTION, deux circulations coexistent : `three-city/traffic.js`
    (véhicules rgsdev instanciés, le rendu voulu) et `src/traffic.ts`
