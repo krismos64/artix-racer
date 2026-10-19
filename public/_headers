@@ -1,0 +1,3 @@
+# Lien de test privé : aucun moteur ne doit référencer le jeu.
+/*
+  X-Robots-Tag: noindex, nofollow

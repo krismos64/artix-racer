@@ -1,9 +1,17 @@
 # Artix Racer Hybride Babylon.js
 
 Jeu de course 3D dans Artix (64170), reconstruite depuis les données publiques
-(OSM, BD TOPO, LiDAR HD, Panoramax, orthophotos IGN). Usage personnel, jamais
-mis en ligne : pas de tests automatisés, pas d'exigence de sécurité web.
+(OSM, BD TOPO, LiDAR HD, Panoramax, orthophotos IGN). Usage personnel :
+pas de tests automatisés, pas d'exigence de sécurité web.
 Objectif unique : le meilleur rendu visuel possible, vite.
+
+Exception, depuis le 19 octobre 2026 : un lien de TEST PRIVÉ sur Netlify
+(projet `artix-essai-q7m4x2`, équipe gratuite krismos64), non référencé
+(`public/robots.txt` et `public/_headers` en noindex). Déploiement MANUEL et
+ponctuel : `npm run build`, copier `dist` seul dans un dossier temporaire
+et le déployer depuis là (le connecteur Netlify envoie tout le dossier
+courant ; depuis le dépôt il emporterait les caches Panoramax). Aucune
+configuration Netlify dans le dépôt, aucun déploiement automatique.
 
 ## Commandes
 
