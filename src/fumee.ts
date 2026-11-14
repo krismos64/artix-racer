@@ -57,8 +57,10 @@ const REGLAGES: Record<Matiere, Reglage> = {
   // traînée se réduisait à des volutes à peine lisibles.
   // Moteur abîmé : fumée sombre qui monte droit du capot.
   moteur: {
-    couleur1: [.2, .2, .21, .4],
-    couleur2: [.34, .33, .33, .28],
+    // Opacité relevée de 0,4 à 0,62 : à 85 % de dégâts, la colonne se
+    // devinait à peine au-dessus du capot.
+    couleur1: [.16, .16, .17, .62],
+    couleur2: [.3, .29, .29, .46],
     morte: [.42, .42, .44],
     vie: [1.4, 2.6],
     taille: [.5, .9],
@@ -153,7 +155,7 @@ export class FumeePneus {
 
     // Fumée de capot au-delà de 40 % de dégâts, de plus en plus dense.
     if (car.degats > .4) {
-      this.resteMoteur += (10 + (car.degats - .4) * 70) * dt;
+      this.resteMoteur += (16 + (car.degats - .4) * 90) * dt;
       car.versMonde(CAPOT, this.emetteur).add(car.root.position);
       while (this.resteMoteur >= 1) {
         this.resteMoteur -= 1;

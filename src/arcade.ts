@@ -349,6 +349,16 @@ export class MotionArcade {
     this.combo.classList.remove('actif');
   }
 
+  // Annonce venue du jeu (mission livrée ou perdue) : bannière au centre,
+  // et montant éventuel en points volants.
+  annoncer(texte: string, variante: string, montant?: string): void {
+    this.banniere(texte, variante, 2);
+    if (montant) {
+      this.points(montant, 'checkpoint');
+      relancer(this.scoreEl, 'gain');
+    }
+  }
+
   // Priorités : titre 1, checkpoint 2, compte à rebours 3, arrivée 4,
   // record 5. Une annonce moins prioritaire que celle à l'écran est
   // abandonnée ; une annonce égale ou supérieure la remplace sur-le-champ.

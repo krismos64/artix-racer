@@ -17,6 +17,7 @@ import { DEFAULT_QUALITY, QUALITY, type QualityName } from './config';
 import { GameSession, type GameMode } from './game';
 import { nearestArtixPlace } from './lieux';
 import { Minimap } from './minimap';
+import { Missions } from './missions';
 import { Obstacles, type Mobile, type PlaceGaree } from './obstacles';
 // @ts-ignore : module JS hérité.
 import { geometrieRoue } from './three-city/parkedcars.js';
@@ -650,6 +651,9 @@ async function start(): Promise<void> {
   const roueFlotte = ville.flotte ? (geometrieRoue() as THREE.BufferGeometry) : null;
   const sol = new THREE.Vector3();
 
+  // Missions de livraison (touche G), en balade libre.
+  const missions = new Missions(scene, map.roads, (x, z) => world.surfaceY(x, z));
+
   // Police : étoiles de recherche, patrouilles, arrestation.
   const police = new Police(scene, world, ville.trafic?.noeuds ?? [],
     ville.flotte?.berline ?? null, ville.flotte?.palette ?? null, roueFlotte);
@@ -788,7 +792,10 @@ async function start(): Promise<void> {
   const lancerSession = (mode: GameMode): void => {
     // Départ arrêté en chrono : `car.update` est suspendu pendant le compte à
     // rebours, l'état de conduite resterait figé sur sa dernière valeur.
-    if (mode === 'challenge') car.arreter();
+    if (mode === 'challenge') {
+      car.arreter();
+      missions.arreter();
+    }
     session.start(mode);
     arcade.demarrer(mode);
   };
@@ -885,6 +892,12 @@ async function start(): Promise<void> {
       police.lever();
     }
     if (playing && !paused && (input.tapped('f') || input.tapped('e'))) basculerAPied();
+    // G : prendre une livraison, ou abandonner celle en cours. Pas pendant
+    // le Tour d'Artix, qui a déjà son parcours.
+    if (playing && !paused && input.tapped('g') && !session.objective) {
+      const lancee = missions.basculer(joueur().x, joueur().z);
+      arcade.annoncer(lancee ? 'LIVRAISON' : 'COURSE ABANDONNÉE', lancee ? 'checkpoint' : 'compte');
+    }
     if (playing && input.tapped('t')) lancerSession('challenge');
     if (input.tapped('l')) {
       ambianceIndex = (ambianceIndex + 1) % AMBIANCES.length;
@@ -945,6 +958,12 @@ async function start(): Promise<void> {
       }
       for (const f of traffic.frolements.splice(0)) arcade.frolement(f.x, f.z, car, session);
       if (!aPied && !arcade.fige && !gele) session.update(dtJeu, car.root.position.x, car.root.position.z, car.speed);
+      // Livraison en cours : arrivée ou temps écoulé.
+      const mission = missions.update(dt, joueur().x, joueur().z, aPied ? marcheur.vitesse : car.vitesseSol);
+      if (mission?.type === 'livre') {
+        session.ajouterPoints(mission.gain);
+        arcade.annoncer('LIVRÉ', 'go', `+${mission.gain.toLocaleString('fr-FR')}`);
+      } else if (mission?.type === 'echec') arcade.annoncer('TROP TARD', 'compte');
       // Poursuite : les patrouilles visent le joueur, en voiture ou à pied.
       if (arretEnCours <= 0) {
         const evenement = police.update(dt, joueur().x, joueur().z, aPied ? Math.abs(marcheur.vitesse) : car.vitesseSol);
@@ -953,6 +972,7 @@ async function start(): Promise<void> {
           arretEnCours = 2.6;
           voileArret.classList.add('actif');
           session.ajouterPoints(-2000);
+          missions.arreter();
         }
       } else {
         // Arrestation : l'écran se voile, puis le joueur repart du point de
@@ -1097,9 +1117,10 @@ async function start(): Promise<void> {
     hudTimer += dt;
     if (playing && hudTimer >= .09) {
       const status = session.status;
-      missionTitle.textContent = status.title;
-      missionDetail.textContent = status.detail;
-      missionProgress.style.width = `${Math.round(status.progress * 100)}%`;
+      const course = missions.statut(joueur().x, joueur().z);
+      missionTitle.textContent = course?.titre ?? status.title;
+      missionDetail.textContent = course?.detail ?? (session.objective ? status.detail : 'G : prendre une livraison');
+      missionProgress.style.width = `${Math.round((course?.progression ?? status.progress) * 100)}%`;
       scoreEl.textContent = String(status.score).padStart(6, '0');
       const jp = joueur();
       const etoiles = '★'.repeat(police.niveau) + '☆'.repeat(3 - police.niveau);
@@ -1129,7 +1150,7 @@ async function start(): Promise<void> {
       }
       const place = nearestArtixPlace(jp.x, jp.z);
       placeNameEl.textContent = place ? `${place.name} · ${place.detail}` : 'Commune d’Artix · 64170';
-      minimap.update(hudTimer, jp.x, jp.z, capJoueur(), session.objective);
+      minimap.update(hudTimer, jp.x, jp.z, capJoueur(), session.objective ?? missions.objectif);
       hudTimer = 0;
     }
     resolutionTimer += dt;

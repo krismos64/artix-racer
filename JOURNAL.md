@@ -2,6 +2,24 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 5) : missions de livraison, vérifications en retard
+
+- **Missions** (`src/missions.ts`, touche G en balade libre) : une course
+  vers un lieu-dit à plus de 250 m, en temps limité (distance à 27 km/h de
+  moyenne, plus 15 s). On s'y rend comme on veut, en voiture ou à pied ;
+  il faut s'arrêter dans l'anneau (moins de 22 km/h). Chaque livraison
+  enchaîne sur la suivante avec une prime de 25 % par course de la série ;
+  temps écoulé, arrestation ou abandon (G) cassent la série. Destination
+  posée sur la chaussée la plus proche du lieu, marquée par un faisceau de
+  140 m qui s'élargit avec la distance et par un point sur la minicarte.
+  Vérifié : course de 373 m livrée, 5 561 points, série ×2 lancée.
+- **Vérifié à l'écran** (écrit la veille sans essai) : mur à 90 km/h, 22 %
+  de dégâts, « ÉTAT 78 % », touche R qui remet à neuf ; fumée de capot
+  (opacité relevée, elle se devinait à peine) ; une étoile en prenant une
+  voiture à son conducteur ; conducteur qui surgit et s'enfuit.
+- **Non fait** : fin de course par le temps écoulé non jouée jusqu'au bout,
+  dégâts visibles sur la carrosserie, panneaux solides, barrages.
+
 ## 2026-11-14 (suite 4) : police, dégâts, poteaux solides, conducteur qui s'enfuit
 
 - **Police** (`src/police.ts`) : les infractions font monter un niveau de

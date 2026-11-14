@@ -69,7 +69,8 @@ fictifs et voitures réalistes.
    calculée), `obstacles.ts` (voitures garées, arbres et mâts solides ;
    `world.bloque` les combine au bâti ; c'est aussi par lui qu'on prend une
    voiture garée), `police.ts` (étoiles de recherche, patrouilles qui
-   suivent les voies par A*, arrestation, sirène synthétisée), `traffic.ts` (chocs et frôlements, lus sur les véhicules de
+   suivent les voies par A*, arrestation, sirène synthétisée),
+   `missions.ts` (livraisons en temps limité, touche G), `traffic.ts` (chocs et frôlements, lus sur les véhicules de
    `three-city/traffic.js` ; il ne dessine rien), `vitrages.ts` (faux
    intérieurs derrière les vitres, calculés dans le matériau), `game.ts`
    (modes balade et Tour d'Artix, score), `arcade.ts` (motion design, couche
