@@ -65,7 +65,9 @@ fictifs et voitures réalistes.
 6. Jeu autour du rendu : `car.ts` (Ferrari, modèle de conduite à deux
    essieux avec dérive des pneus et transfert de charge, vue conducteur),
    `pieton.ts` (joueur à pied, touche F : personnage articulé, marche
-   calculée), `traffic.ts` (chocs et frôlements, lus sur les véhicules de
+   calculée), `obstacles.ts` (voitures garées, arbres et mâts solides ;
+   `world.bloque` les combine au bâti ; c'est aussi par lui qu'on prend une
+   voiture garée), `traffic.ts` (chocs et frôlements, lus sur les véhicules de
    `three-city/traffic.js` ; il ne dessine rien), `vitrages.ts` (faux
    intérieurs derrière les vitres, calculés dans le matériau), `game.ts`
    (modes balade et Tour d'Artix, score), `arcade.ts` (motion design, couche
@@ -103,8 +105,9 @@ listés dans le premier point.
   - Ciel : colonne u du panorama sur (u - 0,5) × 2π de +X vers +Z, et
     `backgroundRotation` tourne dans le sens INVERSE de l'angle donné.
   - Ajouter ou montrer une lumière en cours de partie recompile tous les
-    matériaux (gel d'une à trois secondes à la première nuit). Créer les
-    lumières au démarrage et basculer `visible`.
+    matériaux (gel de plusieurs secondes). Toutes les lumières sont créées
+    au démarrage et restent VISIBLES, à intensité nulle le jour ; une seule
+    paire de projecteurs sert à tous les véhicules (main.ts).
   - Juger des ombres en fin de journée (touche L), voiture tournée : à
     midi, depuis le point de départ, elles tombent derrière les objets.
   - `__comparer()` doit faire avancer le compteur d'images du moteur
@@ -123,6 +126,9 @@ listés dans le premier point.
   - Conduite : toute retouche se juge sur les trois mesures du journal du
     14 novembre (0 à 100, virage à 130 km/h, frein à main), sol plat forcé
     en console, pas au ressenti d'un trajet.
+  - Tout ce qui se déplace interroge `world.bloque`, jamais
+    `collidesBuilding` seul, et doit pouvoir SORTIR d'un obstacle où il a
+    été posé (test de recouvrement avant de bloquer).
   - Outils console : `__camLibre(x, y, z, cx, cy, cz)`, `__ville`,
     `?ao=voir`, `?csm=0`.
 - Le projet est un JEU LOCAL : `npm run dev` sert des fichiers statiques, rien

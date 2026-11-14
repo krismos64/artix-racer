@@ -203,6 +203,16 @@ export class ArtixWorld {
     return best?.name ?? null;
   }
 
+  // Obstacles ponctuels (voitures garées, arbres, mâts), branchés par
+  // main.ts une fois la ville construite.
+  obstacles: { collision(x: number, z: number, rayon: number): boolean } | null = null;
+
+  // Un disque de ce rayon est-il arrêté ici, par un bâtiment ou un obstacle ?
+  // C'est la question que posent la voiture et le marcheur.
+  bloque(x: number, z: number, rayon: number): boolean {
+    return (this.obstacles?.collision(x, z, rayon) ?? false) || this.collidesBuilding(x, z, rayon);
+  }
+
   collidesBuilding(x: number, z: number, radius = 0): boolean {
     // La chaussée visible reste toujours prioritaire. Les anciens colliders
     // circulaires des repères débordaient largement sur les rues et créaient

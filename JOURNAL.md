@@ -2,6 +2,35 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 2) : obstacles solides, voitures garées à prendre, nuit sans gel
+
+- **Obstacles** (`src/obstacles.ts`) : voitures garées (rectangle orienté),
+  fûts d'arbres et mâts de lampadaires (disques) rangés dans une grille de
+  24 m. `ArtixWorld.bloque(x, z, rayon)` combine bâti et obstacles ; la
+  voiture et le marcheur ne posent plus que cette question. Un pied d'arbre
+  ou un mât tombé sur la chaussée est ignoré, sinon un obstacle invisible
+  barrerait la rue. Vérifié : la voiture s'arrête contre un platane.
+- **Prendre une voiture garée** (touche F, à pied, à moins de 1,5 m de sa
+  caisse) : l'instance du parc est effacée (`VoituresGarees.retirer`) et un
+  `ArcadeCar` habillé du même modèle et de la même teinte prend sa place
+  (`habillerFlotte`). La voiture quittée reste où elle est, devient un
+  obstacle, et on peut y remonter. Vérifié avec un break : pris, conduit,
+  Ferrari restée sur place. Les scooters et la circulation ne se prennent pas.
+- **Nuit sans gel** : lampes de rue et projecteurs restent présents le jour
+  à intensité nulle, et le jeu n'a plus qu'UNE paire de projecteurs,
+  accrochée au véhicule conduit. Coût de jour : dans le bruit de mesure
+  (10,9 à 11,4 ms contre 10,5). Bascule mesurée : 0,8 s (chargement et
+  préfiltrage du ciel), contre plusieurs secondes de recompilation avant.
+- **À pied** : la caméra d'épaule se rapproche quand un mur est dans son
+  dos ; le personnage a des yeux et un nez.
+- **Tour d'Artix** rejoué en partie : compte à rebours, anneau, checkpoint
+  validé et score fonctionnent. Aucun tour complet chronométré.
+- **Pièges** : un véhicule ou un marcheur posé DANS un obstacle doit pouvoir
+  en sortir (descente de voiture dans une place serrée), d'où le test de
+  recouvrement avant de bloquer un déplacement.
+- **Non fait** : prendre un véhicule de la circulation, passants qui fuient
+  ou se font renverser, panneaux et poteaux électriques solides, dégâts.
+
 ## 2026-11-14 (suite) : ombres, faux intérieurs, conduite, circulation, marche à pied
 
 Quatre chantiers enchaînés sur la branche `port-three-natif`, chacun vérifié

@@ -6,6 +6,17 @@ import type { ArtixWorld } from './world';
 const ROTATION_ROUE = new THREE.Euler();
 const QUATERNION_ROUE = new THREE.Quaternion();
 
+// Modèle de la flotte rgsdev, tel que le prépare three-city/flotte.js.
+export interface ModeleFlotte {
+  peinture: THREE.BufferGeometry;
+  details: THREE.BufferGeometry;
+  roues: Array<{ x: number; y: number; z: number }>;
+  rayonRoue: number;
+  demiL: number;
+  demiW: number;
+  hauteur: number;
+}
+
 export interface SpawnPoint {
   x: number;
   z: number;
@@ -82,6 +93,8 @@ const ADHERENCE_TERRE = .8;
 // Pas d'intégration plafonné : le modèle devient instable au-delà de 1/100 s
 // (les forces latérales sont raides), d'où des sous-pas à 120 Hz.
 const PAS_MAX = 1 / 120;
+// Encombrement de la caisse pour les murs et les obstacles : un disque.
+const RAYON_CAISSE = 1.05;
 
 export class ArcadeCar {
   readonly root: THREE.Group;
@@ -123,6 +136,13 @@ export class ArcadeCar {
   private readonly rouesAvant: THREE.Object3D[] = [];
   private readonly reposRoues = new Map<THREE.Object3D, THREE.Quaternion>();
 
+  // Œil de la vue conducteur, dans le repère du châssis. Celui de la
+  // Ferrari est réglé sur son volant ; un véhicule de la flotte n'a pas
+  // d'habitacle, sa vue se pose au-dessus du capot.
+  readonly oeil = new THREE.Vector3(.36, 1.02, -.55);
+  // Vrai pour la Ferrari : elle seule a un intérieur à découper.
+  aCabine = true;
+
   // Vitesse le long du cap, en m/s (négative en marche arrière). La couche
   // arcade la lit partout, et l'écrit pour le départ parfait.
   get speed(): number {
@@ -162,37 +182,28 @@ export class ArcadeCar {
     return cible.copy(local).applyQuaternion(this.root.quaternion);
   }
 
-  // Éclairage nocturne du véhicule : deux projecteurs de phares et quatre
-  // plaques émissives (optiques blanches à l'avant, feux rouges à l'arrière).
-  // Construit à la création et seulement masqué le jour : ajouter une
-  // lumière en cours de partie fait recompiler tous les matériaux.
+  // Feux du véhicule la nuit : quatre plaques émissives (optiques blanches à
+  // l'avant, feux rouges à l'arrière). Les PROJECTEURS, eux, appartiennent
+  // au jeu et suivent le véhicule conduit (main.ts) : en créer deux par
+  // voiture prise ferait recompiler tous les matériaux à chaque fois.
   private nightNodes: THREE.Group | null = null;
+  // Demi-longueur de la caisse, pour poser feux et projecteurs.
+  demiLongueur = 2.02;
 
   setNight(active: boolean): void {
     if (!this.nightNodes) {
+      if (!active) return;
       const rig = new THREE.Group();
       rig.name = 'car-nuit';
       const feuMat = new THREE.MeshBasicMaterial({ color: 0xff2a1e });
       const optiqueMat = new THREE.MeshBasicMaterial({ color: 0xfff3d2 });
       for (const cote of [-1, 1]) {
-        // Faisceau étroit, quasi horizontal : l'énergie se dépose entre
-        // quinze et trente-cinq mètres devant le véhicule. Demi-angle de
-        // 0,29 rad, pénombre sur la moitié extérieure du cône : c'est le
-        // bord du cône, seul à frôler la chaussée proche, qui écrasait le
-        // premier plan dans les premiers réglages.
-        const phare = new THREE.SpotLight(0xffe9c0, 1500, 70, .29, .5, 2);
-        phare.position.set(cote * .58, .68, 1.9);
-        phare.target.position.set(cote * .58 + cote * .04 * 20, .68 - .055 * 20, 1.9 + 20);
-        rig.add(phare, phare.target);
-
         const optique = new THREE.Mesh(new THREE.PlaneGeometry(.3, .11), optiqueMat);
-        optique.position.set(cote * .58, .66, 2.02);
-        rig.add(optique);
-
+        optique.position.set(cote * .58, .66, this.demiLongueur);
         const feu = new THREE.Mesh(new THREE.PlaneGeometry(.34, .1), feuMat);
-        feu.position.set(cote * .55, .74, -2.05);
+        feu.position.set(cote * .55, .74, -this.demiLongueur - .03);
         feu.rotation.y = Math.PI;
-        rig.add(feu);
+        rig.add(optique, feu);
       }
       this.root.add(rig);
       this.nightNodes = rig;
@@ -281,6 +292,46 @@ export class ArcadeCar {
       console.warn('Modèle Ferrari indisponible, voiture de secours utilisée.', error);
       this.buildFallback();
     }
+  }
+
+  // Habille la voiture d'un modèle de la flotte (voiture garée que le joueur
+  // vient de prendre) : caisse teintée, détails à la palette du kit, quatre
+  // roues qui tournent et braquent. Remplace `loadModel`.
+  habillerFlotte(modele: ModeleFlotte, palette: THREE.Texture, couleur: number, echelle: number, geometrieRoue: THREE.BufferGeometry): void {
+    const caisse = new THREE.Mesh(modele.peinture, new THREE.MeshPhysicalMaterial({
+      color: couleur, roughness: .38, metalness: .12, clearcoat: 1, clearcoatRoughness: .08,
+    }));
+    const details = new THREE.Mesh(modele.details, new THREE.MeshStandardMaterial({
+      map: palette, roughness: .3, metalness: .05,
+    }));
+    const corps = new THREE.Group();
+    corps.scale.setScalar(echelle);
+    corps.add(caisse, details);
+    caisse.castShadow = details.castShadow = true;
+    caisse.receiveShadow = details.receiveShadow = true;
+    const gomme = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .6 });
+    const rayon = modele.rayonRoue / .31;
+    for (const r of modele.roues) {
+      // Pivot au moyeu : il porte la rotation de roulage et le braquage. Le
+      // cylindre de la roue a son axe en Y, couché ici le long de X.
+      const pivot = new THREE.Group();
+      pivot.name = r.z > 0 ? 'wheel_f' : 'wheel_r';
+      pivot.position.set(r.x, r.y, r.z);
+      const roue = new THREE.Mesh(geometrieRoue, gomme);
+      roue.rotation.z = Math.PI / 2;
+      roue.scale.set(rayon, 1, rayon);
+      roue.castShadow = true;
+      pivot.add(roue);
+      corps.add(pivot);
+      this.wheels.push(pivot);
+      this.reposRoues.set(pivot, pivot.quaternion.clone());
+      if (r.z > 0) this.rouesAvant.push(pivot);
+    }
+    this.root.add(corps);
+    this.buildContactShadow();
+    this.aCabine = false;
+    this.demiLongueur = modele.demiL * echelle + .02;
+    this.oeil.set(0, modele.hauteur * .8 * echelle, modele.demiL * .42 * echelle);
   }
 
   private reglerMateriau(source: THREE.MeshStandardMaterial): THREE.Material {
@@ -531,13 +582,15 @@ export class ArcadeCar {
     const nx = p.x + vx * h, nz = p.z + vz * h;
     this.lastX = p.x;
     this.lastZ = p.z;
-    if (!this.world.collidesBuilding(nx, nz, 1.05)) {
+    // Déjà en recouvrement (réapparition contre un mur, véhicule pris dans
+    // une place serrée) : on laisse sortir, sinon la voiture reste soudée.
+    if (!this.world.bloque(nx, nz, RAYON_CAISSE) || this.world.bloque(p.x, p.z, RAYON_CAISSE - .25)) {
       p.x = nx;
       p.z = nz;
       return 0;
     }
-    const libreX = !this.world.collidesBuilding(nx, p.z, 1.05);
-    const libreZ = !this.world.collidesBuilding(p.x, nz, 1.05);
+    const libreX = !this.world.bloque(nx, p.z, RAYON_CAISSE);
+    const libreZ = !this.world.bloque(p.x, nz, RAYON_CAISSE);
     let rx = 0, rz = 0;
     if (libreX && (!libreZ || Math.abs(vx) >= Math.abs(vz))) { p.x = nx; rx = vx * .82; }
     else if (libreZ) { p.z = nz; rz = vz * .82; }

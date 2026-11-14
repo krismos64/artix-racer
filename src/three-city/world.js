@@ -3966,6 +3966,8 @@ export function buildWorld(scene, data) {
     collisionTris: new Float32Array(collisionTris),
     // Foyers lumineux, pour l'éclairage public nocturne.
     foyers: lamps?.userData.foyers ?? [],
+    // Pieds des arbres, pour les collisions.
+    troncs: trees?.userData.troncs ?? [],
     lampHeads: lamps?.userData.lampHeads ?? null,
     // Matériau du vitrage : son émission est pilotée par le cycle jour/nuit,
     // pour que les pièces déclarées éclairées s'allument à la tombée du jour.
@@ -4647,6 +4649,8 @@ function plantTrees(data, relief = null) {
   if (branches.instanceColor) branches.instanceColor.needsUpdate = true;
   if (leaves.instanceColor) leaves.instanceColor.needsUpdate = true;
   group.add(trunks, branches, leaves);
+  // Pieds des fûts, pour les collisions (src/obstacles.ts).
+  group.userData.troncs = positions.map(([x, z, h]) => ({ x, z, h }));
   // Exposé pour le découpage spatial : les trois maillages partagent le même
   // ordre d'instances et doivent être réordonnés ensemble, sinon le feuillage
   // d'un arbre se retrouverait sur le fût d'un autre.

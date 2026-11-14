@@ -48,6 +48,7 @@ export class Marcheur {
     const cuir = new THREE.MeshStandardMaterial({ color: 0x1e1c1a, roughness: .6 });
     const cheveux = new THREE.MeshStandardMaterial({ color: 0x3a2a1c, roughness: .95 });
     const ombre = (mesh: THREE.Mesh): THREE.Mesh => { mesh.castShadow = true; return mesh; };
+    const regard = new THREE.MeshStandardMaterial({ color: 0x1a1512, roughness: .4 });
 
     // Buste : du bassin (0,83) aux épaules (1,41), plus large en haut, aplati
     // d'avant en arrière. Les épaules font 0,42 m de large, la tête 0,19.
@@ -71,7 +72,18 @@ export class Marcheur {
     chevelure.scale.set(.97, 1.16, 1.06);
     chevelure.position.set(0, 1.625, -.012);
     chevelure.rotation.x = -.28;
-    this.buste.add(torse, carrure, cou, tete, chevelure);
+    // Visage : deux yeux et l'arête du nez. À la distance de la caméra
+    // d'épaule, c'est ce qui dit de quel côté regarde le personnage.
+    const visage: THREE.Mesh[] = [];
+    for (const cote of [1, -1]) {
+      const oeil = new THREE.Mesh(new THREE.SphereGeometry(.011, 8, 6), regard);
+      oeil.position.set(cote * .034, 1.632, .093);
+      visage.push(oeil);
+    }
+    const nez = new THREE.Mesh(new THREE.ConeGeometry(.013, .04, 6), peau);
+    nez.position.set(0, 1.605, .104);
+    nez.rotation.x = .35;
+    this.buste.add(torse, carrure, cou, tete, chevelure, nez, ...visage);
 
     for (const cote of [1, -1]) {
       // Bras : épaule à 1,39 m, coude 0,30 m plus bas, main au bout.
@@ -135,9 +147,11 @@ export class Marcheur {
     const p = this.root.position;
     const dx = Math.sin(this.heading) * this.vitesse * dt;
     const dz = Math.cos(this.heading) * this.vitesse * dt;
-    if (!this.world.collidesBuilding(p.x + dx, p.z + dz, RAYON)) { p.x += dx; p.z += dz; }
-    else if (!this.world.collidesBuilding(p.x + dx, p.z, RAYON)) p.x += dx;
-    else if (!this.world.collidesBuilding(p.x, p.z + dz, RAYON)) p.z += dz;
+    // Déjà pris dans un obstacle (descente de voiture dans une place
+    // serrée) : on laisse sortir.
+    if (!this.world.bloque(p.x + dx, p.z + dz, RAYON) || this.world.bloque(p.x, p.z, RAYON - .12)) { p.x += dx; p.z += dz; }
+    else if (!this.world.bloque(p.x + dx, p.z, RAYON)) p.x += dx;
+    else if (!this.world.bloque(p.x, p.z + dz, RAYON)) p.z += dz;
     else this.vitesse = 0;
     const sol = this.world.surfaceY(p.x, p.z);
     p.y += (sol - p.y) * Math.min(1, dt * 16);

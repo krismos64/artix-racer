@@ -750,6 +750,11 @@ export class VoituresGarees {
       m.compose(pos, q, ech);
       const j = idx[type] ?? 0;
       idx[type] = j + 1;
+      // Rangs de l'instance, pour la retirer quand le joueur prend le
+      // véhicule (voir `retirer`).
+      p.rang = i;
+      p.rangType = j;
+      p.echelle = e1;
       this.caisses[type].setMatrixAt(j, m);
       this.details[type]?.setMatrixAt(j, m);
       col.setHex(p.couleur);
@@ -857,6 +862,10 @@ export class VoituresGarees {
     }
 
     this.group.add(...tousLesMeshes);
+    // Véhicules posés, avec leur gabarit de collision (demiL, demiW) : lus
+    // par src/obstacles.ts, et par le jeu quand le joueur en prend un.
+    this.places = places;
+    this._tous = tousLesMeshes;
     // Exposé pour le découpage spatial (`spatial.js`) : uniquement les
     // maillages indexés par véhicule (les caisses, réparties par silhouette,
     // ne respectent pas ce contrat et restent dessinées en permanence).
@@ -867,4 +876,23 @@ export class VoituresGarees {
     };
     scene.add(this.group);
   }
+
+  // Efface un véhicule garé : toutes ses instances passent à l'échelle
+  // nulle. Le joueur vient d'en prendre le volant, un vrai véhicule conduit
+  // le remplace au même endroit.
+  retirer(place) {
+    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    this.caisses[place.type].setMatrixAt(place.rangType, zero);
+    this.details[place.type]?.setMatrixAt(place.rangType, zero);
+    for (let n = 0; n < 4; n++) this.roues.setMatrixAt(place.rang * 4 + n, zero);
+    for (let n = 0; n < 2; n++) {
+      this.feuxAr.setMatrixAt(place.rang * 2 + n, zero);
+      this.feuxAv.setMatrixAt(place.rang * 2 + n, zero);
+      this.retros.setMatrixAt(place.rang * 2 + n, zero);
+    }
+    this.ombres.setMatrixAt(place.rang, zero);
+    for (const mesh of this._tous) mesh.instanceMatrix.needsUpdate = true;
+    place.retire = true;
+  }
 }
+

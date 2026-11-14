@@ -17,6 +17,9 @@ import { DEFAULT_QUALITY, QUALITY, type QualityName } from './config';
 import { GameSession, type GameMode } from './game';
 import { nearestArtixPlace } from './lieux';
 import { Minimap } from './minimap';
+import { Obstacles, type Mobile, type PlaceGaree } from './obstacles';
+// @ts-ignore : module JS hérité.
+import { geometrieRoue } from './three-city/parkedcars.js';
 import { Marcheur } from './pieton';
 import type { ContexteMesure } from './profil';
 import { TrafficSystem } from './traffic';
@@ -355,6 +358,20 @@ async function start(): Promise<void> {
   let nuitActive = false;
   let lampesTimer = 9;
   const INTENSITE_LAMPE = 260 * PI;
+  // Projecteurs de phares : une seule paire pour tout le jeu, accrochée au
+  // véhicule conduit. Faisceau étroit, quasi horizontal : l'énergie se
+  // dépose entre quinze et trente-cinq mètres devant la voiture.
+  const INTENSITE_PHARE = 1500;
+  const phares = new THREE.Group();
+  phares.name = 'projecteurs';
+  const projecteurs: THREE.SpotLight[] = [];
+  for (const cote of [-1, 1]) {
+    const phare = new THREE.SpotLight(0xffe9c0, 0, 70, .29, .5, 2);
+    phare.position.set(cote * .58, .68, 0);
+    phare.target.position.set(cote * .58 + cote * .8, .68 - 1.1, 20);
+    phares.add(phare, phare.target);
+    projecteurs.push(phare);
+  }
   // Exposition de base. L'ACES de Three multiplie l'entrée par 1/0,6 avant
   // sa courbe, celui de Babylon non : à exposition égale, l'image sortait
   // 1,67 fois plus claire (planche de bord blanche en vue conducteur).
@@ -391,16 +408,18 @@ async function start(): Promise<void> {
       vitrages.emissiveIntensity = a.fenetres;
     }
     // Éclairage nocturne : phares et feux du véhicule, lanternes émissives et
-    // pool de lampes de rue autour du joueur. Les lampes sont MASQUÉES le
-    // jour plutôt que réglées à zéro : douze lumières ponctuelles évaluées
-    // par pixel coûteraient en plein midi sans rien éclairer.
+    // pool de lampes de rue autour du joueur. Lampes et projecteurs restent
+    // PRÉSENTS le jour, à intensité nulle : changer le nombre de lumières
+    // visibles fait recompiler tous les matériaux, soit une à trois secondes
+    // de gel au premier passage en nuit (constaté le 14 novembre 2026).
     nuitActive = a.nom === 'Nuit';
     carNuit?.setNight(nuitActive);
     if (lanternes) {
       lanternes.emissive.set('#ffc878');
       lanternes.emissiveIntensity = nuitActive ? 1.7 : 0;
     }
-    for (const lampe of lampesPool) lampe.visible = nuitActive;
+    if (!nuitActive) for (const lampe of lampesPool) lampe.intensity = 0;
+    for (const phare of projecteurs) phare.intensity = nuitActive ? INTENSITE_PHARE : 0;
     if (lampesGlow) lampesGlow.visible = nuitActive;
     lampesTimer = 9;
     // Panorama : tourné pour que son soleil tombe à l'azimut de la lumière,
@@ -528,7 +547,11 @@ async function start(): Promise<void> {
   const world = new ArtixWorld(ville.terrain as any, map);
 
   await progress(82, 'Chargement du véhicule…');
-  const car = new ArcadeCar(scene, world, spawn);
+  // `car` est le véhicule que le joueur conduit (ou vient de quitter).
+  // `voitures` garde tous ceux qu'il a pris : la Ferrari, puis chaque
+  // voiture garée dont il a pris le volant.
+  let car = new ArcadeCar(scene, world, spawn);
+  const voitures: ArcadeCar[] = [car];
   await car.loadModel();
   (window as any).__car = car;
 
@@ -537,7 +560,7 @@ async function start(): Promise<void> {
   // assurent la continuité au loin. Portée et intensité franches : à 70 cd
   // sur 30 m, seule une flaque au pied du mât s'allumait, alors qu'un bourg
   // éclairé au sodium se traverse sans phares.
-  carNuit = car;
+  carNuit = { setNight: (active) => car.setNight(active) };
   lanternes = ville.lanternes;
   vitrages = ville.vitrages;
   foyersLampes = ville.foyers;
@@ -545,12 +568,16 @@ async function start(): Promise<void> {
     const lampe = new THREE.PointLight(0xffcf92, INTENSITE_LAMPE, 62, 2);
     lampe.name = `lampe-rue-${i}`;
     lampe.position.set(0, -100, 0);
-    lampe.visible = false;
+    lampe.intensity = 0;
     scene.add(lampe);
     lampesPool.push(lampe);
   }
-  // Phares construits dès maintenant et masqués : voir ArcadeCar.setNight.
-  car.setNight(false);
+  // Projecteurs accrochés au nez du véhicule conduit.
+  const accrocherPhares = (): void => {
+    phares.position.z = car.demiLongueur - .12;
+    car.root.add(phares);
+  };
+  accrocherPhares();
 
   // Flaques de lumière sous TOUS les lampadaires : sans elles, les rues au
   // loin restaient noires et les lampes semblaient s'allumer au passage du
@@ -607,26 +634,77 @@ async function start(): Promise<void> {
   // vivante, les lampadaires, la minicarte et le HUD suivent ce point.
   const joueur = (): THREE.Vector3 => (aPied ? marcheur.root.position : car.root.position);
   const capJoueur = (): number => (aPied ? marcheur.heading : car.heading);
+  // Obstacles solides : voitures garées, arbres, mâts de lampadaires, et
+  // les véhicules que le joueur a laissés derrière lui.
+  const places = (ville.parc?.places ?? []) as PlaceGaree[];
+  const obstacles = new Obstacles(places, ville.troncs, ville.foyers, (x, z) => world.isOnRoad(x, z));
+  world.obstacles = obstacles;
+  let mobiles: Mobile[] = [];
+  obstacles.mobiles = () => mobiles;
+  const majMobiles = (): void => {
+    // En voiture, celle qu'on conduit ne se bloque pas elle-même.
+    mobiles = voitures.filter((v) => aPied || v !== car)
+      .map((v) => ({ x: v.root.position.x, z: v.root.position.z, r: 1.25 }));
+  };
+  const roueFlotte = ville.flotte ? (geometrieRoue() as THREE.BufferGeometry) : null;
+  const sol = new THREE.Vector3();
+
+  // Véhicule à portée du marcheur : d'abord ceux qu'il a déjà conduits,
+  // sinon une voiture garée dont le modèle est chargé.
+  const vehiculeAPortee = (): { voiture?: ArcadeCar; place?: PlaceGaree } | null => {
+    const p = marcheur.root.position;
+    let voiture: ArcadeCar | undefined, distance = 3.4;
+    for (const v of voitures) {
+      const d = sol.copy(v.root.position).setY(p.y).distanceTo(p);
+      if (d < distance) { distance = d; voiture = v; }
+    }
+    if (voiture) return { voiture };
+    const place = roueFlotte ? obstacles.vehiculeProche(p.x, p.z, 1.5) : null;
+    return place && ville.flotte?.[place.type] ? { place } : null;
+  };
+
   const basculerAPied = (): void => {
     if (!aPied) {
       // On ne saute pas d'une voiture lancée : il faut être presque arrêté.
       if (car.vitesseSol > 2.5) return;
       car.arreter();
-      // Portière conducteur à gauche : (cos cap, -sin cap). Si un mur s'y
-      // trouve, on descend de l'autre côté.
+      // Portière conducteur à gauche : (cos cap, -sin cap). Si un mur ou un
+      // obstacle s'y trouve, on descend de l'autre côté.
       const p = car.root.position;
       const gx = Math.cos(car.heading), gz = -Math.sin(car.heading);
-      const cote = world.collidesBuilding(p.x + gx * 1.7, p.z + gz * 1.7, .4) ? -1 : 1;
-      marcheur.placer(p.x + gx * 1.7 * cote, p.z + gz * 1.7 * cote, car.heading);
+      const cote = world.bloque(p.x + gx * 1.9, p.z + gz * 1.9, .35) ? -1 : 1;
+      marcheur.placer(p.x + gx * 1.9 * cote, p.z + gz * 1.9 * cote, car.heading);
       marcheur.root.visible = true;
       aPied = true;
       if (cameraMode === 1) car.setVueCabine(false);
-    } else {
-      if (marcheur.root.position.distanceTo(car.root.position) > 3.4) return;
-      marcheur.root.visible = false;
-      aPied = false;
-      car.setVueCabine(cameraMode === 1);
+      majMobiles();
+      return;
     }
+    const cible = vehiculeAPortee();
+    if (!cible) return;
+    let suivante = cible.voiture;
+    if (cible.place && roueFlotte) {
+      // Voiture garée : son instance est effacée et un vrai véhicule conduit
+      // prend sa place, même modèle, même teinte, même cap.
+      const place = cible.place;
+      suivante = new ArcadeCar(scene, world, { x: place.x, z: place.z, heading: place.cap });
+      suivante.habillerFlotte(ville.flotte![place.type], ville.flotte!.palette, place.couleur,
+        place.echelle ?? 1, roueFlotte);
+      ville.parc!.retirer(place);
+      voitures.push(suivante);
+    }
+    if (!suivante) return;
+    // L'ancienne voiture éteint ses phares : chaque projecteur allumé compte
+    // dans le plafond de lumières des matériaux.
+    if (suivante !== car) car.setNight(false);
+    car = suivante;
+    (window as any).__car = car;
+    accrocherPhares();
+    car.setNight(nuitActive);
+    marcheur.root.visible = false;
+    aPied = false;
+    car.setVueCabine(cameraMode === 1);
+    majMobiles();
   };
   const audio = new ArcadeAudio();
   const traffic = new TrafficSystem(ville.circulation);
@@ -721,7 +799,6 @@ async function start(): Promise<void> {
   // mangeait 69 % de la hauteur de l'image à 12 cm de recul, 38 % à 55 cm,
   // la position réelle d'un conducteur adossé. 1,02 m de hauteur laisse
   // 19 cm sous le pavillon d'une 458.
-  const OEIL_LOCAL = new THREE.Vector3(.36, 1.02, -.55);
   // Ligne de regard, en DÉPLACEMENT depuis l'œil : plongée de 0,7 m sur
   // 20 m, soit 2°, l'angle sous lequel un conducteur regarde la chaussée
   // trente mètres devant lui.
@@ -764,6 +841,7 @@ async function start(): Promise<void> {
       car.reset();
       marcheur.root.visible = false;
       aPied = false;
+      majMobiles();
     }
     if (playing && !paused && (input.tapped('f') || input.tapped('e'))) basculerAPied();
     if (playing && input.tapped('t')) lancerSession('challenge');
@@ -838,7 +916,14 @@ async function start(): Promise<void> {
       // visée un peu au-dessus de sa tête pour garder la rue dans le cadre.
       const p = marcheur.root.position;
       const fx = Math.sin(marcheur.heading), fz = Math.cos(marcheur.heading);
-      desiredCamera.set(p.x - fx * 4.4, p.y + 2.2, p.z - fz * 4.4);
+      // La caméra recule depuis la tête par pas de 0,55 m et s'arrête au
+      // dernier point libre : dos à un mur, elle se rapproche au lieu de
+      // passer à l'intérieur du bâtiment.
+      let recul = 4.4;
+      for (let d = .55; d <= 4.4; d += .55) {
+        if (world.collidesBuilding(p.x - fx * d, p.z - fz * d, .3)) { recul = Math.max(.6, d - .55); break; }
+      }
+      desiredCamera.set(p.x - fx * recul, p.y + 2.2, p.z - fz * recul);
       cameraTarget.set(p.x + fx * 3, p.y + 1.5, p.z + fz * 3);
     } else if (cameraMode === 0) {
       desiredCamera.set(
@@ -860,7 +945,7 @@ async function start(): Promise<void> {
       // visuels compris : une caméra posée sur la seule position du véhicule
       // ignorait cette assiette, et l'habitacle semblait glisser devant
       // l'œil à chaque coup d'accélérateur.
-      car.versMonde(OEIL_LOCAL, oeilMonde);
+      car.versMonde(car.oeil, oeilMonde);
       desiredCamera.copy(car.root.position).add(oeilMonde);
       car.versMonde(REGARD_LOCAL, regardMonde);
       cameraTarget.copy(desiredCamera).add(regardMonde);
@@ -916,7 +1001,10 @@ async function start(): Promise<void> {
     speedEl.textContent = String(Math.round(Math.abs(aPied ? marcheur.vitesse : car.speed) * 3.6));
     // Invite contextuelle : remonter en voiture quand on est à sa portée.
     const invitation = !playing ? '' : aPied
-      ? (marcheur.root.position.distanceTo(car.root.position) < 3.4 ? 'F  monter en voiture' : '')
+      ? ((): string => {
+        const cible = vehiculeAPortee();
+        return cible?.voiture ? 'F  monter en voiture' : cible?.place ? 'F  prendre ce véhicule' : '';
+      })()
       : (car.vitesseSol < 2.5 ? 'F  descendre de voiture' : '');
     if (invite.textContent !== invitation) {
       invite.textContent = invitation;
@@ -982,6 +1070,9 @@ async function start(): Promise<void> {
     }
   };
   renderer.setAnimationLoop(image);
+  // Ciels du soir et de la nuit téléchargés d'avance, une fois le jeu
+  // lancé : la première bascule d'ambiance n'attend plus le réseau.
+  setTimeout(() => { void obtenirCiel('soir'); void obtenirCiel('nuit'); }, 4000);
 
   // Mesures à la demande : `__comparer()` donne le coût réel hors vsync,
   // `__profil()` les compteurs du moteur, `__repartition()` les maillages

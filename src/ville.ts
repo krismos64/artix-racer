@@ -59,6 +59,11 @@ export interface Ville {
   vivant: { update(dt: number, temps: number, x: number, z: number): void } | null;
   // Agents de la circulation, lus par les collisions (src/traffic.ts).
   circulation: AgentCirculation[];
+  // Parc garé (pour retirer un véhicule que le joueur prend), flotte de
+  // modèles, pieds d'arbres.
+  parc: AnyRecord | null;
+  flotte: AnyRecord | null;
+  troncs: Array<{ x: number; z: number; h: number }>;
   stats: { maillages: number; fusionnes: number };
 }
 
@@ -377,7 +382,7 @@ export async function construireVille(
   } catch (error) {
     console.warn('Flotte de véhicules indisponible, silhouettes en boîte :', error);
   }
-  new (VoituresGarees as any)(
+  const parc = new (VoituresGarees as any)(
     statique, data, terrain, ROAD_Y, data.poi?.passages ?? [], spawn,
     [...(parkings.places ?? []), ...(world.placesEpi ?? [])], 880, flotte,
   );
@@ -482,6 +487,9 @@ export async function construireVille(
     spawn,
     vivant,
     circulation: agentsCirculation,
+    parc,
+    flotte,
+    troncs: (world.troncs ?? []) as Array<{ x: number; z: number; h: number }>,
     foyers: (world.foyers ?? []) as Array<{ x: number; y: number; z: number }>,
     lanternes: (world.lampHeads as THREE.MeshStandardMaterial | null) ?? null,
     vitrages: (maillageVitrages?.material as THREE.MeshStandardMaterial | undefined) ?? null,
