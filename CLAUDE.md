@@ -45,6 +45,7 @@ fictifs et voitures réalistes.
    sources), `parking.js`, `parkedcars.js` (parc garé : flotte rgsdev +
    scooters), `flotte.js` (chargement et mise aux cotes des modèles rgsdev),
    `traffic.js` (circulation légère), `pedestrians.js`, `touffes.js`,
+   `arbres.js` (chargement des arbres modélisés dans Blender),
    `haies.js` (haies de clôture : laurier, thuya, troène, charmille),
    `textures.js` (textures canvas procédurales).
 2. **`src/ville.ts`** : assemble la ville dans la scène. Il ne fait que ce
@@ -425,6 +426,7 @@ listés dans le premier point.
 | `textures/fumee.png` | bouffée de fumée, transparence tirée de la luminance | générée par Codex |
 | `audio/music1.mp3` | musique lue en boucle | fournie par l'auteur |
 | `models/flotte-rgs/*.json` | 4 véhicules rgsdev (CC0) en deux lots + palette | `scripts/preparer-flotte.mjs` (depuis le FBX) |
+| `models/arbres/*.json` | 4 essences d'arbres (écorce + feuillage, hauteur 1) | `scripts/blender/arbres.py` (Blender sans interface) |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 
 Caches locaux (gitignorés, `data/` inclus depuis le 19 septembre 2026) :

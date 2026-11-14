@@ -2,6 +2,33 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 7) : arbres modélisés dans Blender
+
+- **`scripts/blender/arbres.py`** génère quatre essences (platane taillé en
+  tête de chat, feuillu libre, peuplier, saule) en 9 s, sans interface :
+  `Blender --background --python scripts/blender/arbres.py -- <dossier>`
+  (le dossier reçoit une planche de contrôle rendue par Cycles). Chaque
+  arbre a une vraie charpente (fût évasé, charpentières, rameaux, en tubes
+  effilés) et une centaine de cartes de feuillage posées au bout des
+  rameaux. Sortie : `public/models/arbres/*.json`, hauteur 1, pied à
+  l'origine, 530 à 690 triangles par arbre.
+- **Dans le jeu** (`three-city/arbres.js`, `plantTrees`) : deux maillages
+  instanciés par essence, à la hauteur de chaque arbre, orientation et
+  carrure variées. Les arbres procéduraux restent en repli si les fichiers
+  manquent. 3 500 arbres : 328 platanes, 934 feuillus, 1 376 saules,
+  862 peupliers.
+- **Vent** : les sommets du feuillage se balancent dans le matériau
+  (`positionNode`, ville.ts), d'autant plus qu'ils sont hauts dans l'arbre.
+- **Mesuré** au point de départ : 10,96 ms par image (10,53 avant), ombres
+  3,74 ms. En vue rasante sur une allée entière, 55 images par seconde :
+  les cartes détourées se recouvrent et coûtent en remplissage.
+- **Pièges** : normale d'éclairage du feuillage très relevée vers le ciel
+  (une feuille laisse passer la lumière) et albédo relevé de moitié, sinon
+  la moitié de la couronne opposée au soleil sort vert-noir, l'occlusion
+  par sommet assombrissant déjà le cœur.
+- **Non fait** : niveaux de détail (un arbre lointain coûte autant qu'un
+  proche), cyprès du centre (toujours un cône), haies et touffes.
+
 ## 2026-11-14 (suite 6) : bande-son synthétisée, Blender installé
 
 - **`audio.ts` réécrit** (101 → 400 lignes), tout en synthèse Web Audio,

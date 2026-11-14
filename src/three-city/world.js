@@ -4536,6 +4536,75 @@ function plantTrees(data, relief = null) {
     group.add(cypres);
   }
 
+  // ---- Arbres modélisés dans Blender ------------------------------------
+  // Quand les modèles sont chargés (data.arbres, voir arbres.js), chaque
+  // essence a ses deux maillages instanciés : écorce et feuillage. Le modèle
+  // mesure 1 de haut, l'instance lui donne la hauteur de l'arbre.
+  if (data.arbres) {
+    const essenceDe = ([, , , aligne, essence]) => (aligne ? 'platane'
+      : essence === 'saule' ? 'saule' : essence === 'peuplier' ? 'peuplier' : 'feuillu');
+    const effectifs = {};
+    for (const p of positions) effectifs[essenceDe(p)] = (effectifs[essenceDe(p)] ?? 0) + 1;
+    // L'occlusion des modèles passe par la couleur de sommet.
+    const ecorceMat = trunkMat.clone();
+    ecorceMat.vertexColors = true;
+    const feuillageMat = leafMat.clone();
+    feuillageMat.vertexColors = true;
+    feuillageMat.name = 'feuillage-arbres';
+    // Albédo relevé de moitié : l'occlusion par sommet des modèles assombrit
+    // déjà le cœur du houppier, la teinte d'origine le rendait vert-noir.
+    feuillageMat.color.multiplyScalar(1.55);
+    const maillages = {};
+    for (const [nom, n] of Object.entries(effectifs)) {
+      const ecorce = new THREE.InstancedMesh(data.arbres[nom].ecorce, ecorceMat, n);
+      const feuillage = new THREE.InstancedMesh(data.arbres[nom].feuilles, feuillageMat, n);
+      ecorce.name = `arbres-ecorce-${nom}`;
+      feuillage.name = `arbres-feuillage-${nom}`;
+      ecorce.castShadow = true;
+      feuillage.castShadow = true;
+      maillages[nom] = { ecorce, feuillage, rang: 0 };
+      group.add(ecorce, feuillage);
+    }
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const col = new THREE.Color();
+    const AXE = new THREE.Vector3(0, 1, 0);
+    positions.forEach((p, i) => {
+      const [x, z, h] = p;
+      const nom = essenceDe(p);
+      const lot = maillages[nom];
+      const sol = relief ? relief.hauteurRoute(x, z) : 0;
+      // Chaque arbre a son orientation et sa corpulence : une allée de
+      // modèles identiques se repère au premier coup d'œil.
+      q.setFromAxisAngle(AXE, hash(i * 6.7) * Math.PI * 2);
+      const carrure = h * (0.88 + hash(i * 5.1) * 0.26);
+      m.compose(new THREE.Vector3(x, sol - 0.05, z), q, new THREE.Vector3(carrure, h, carrure));
+      lot.ecorce.setMatrixAt(lot.rang, m);
+      lot.feuillage.setMatrixAt(lot.rang, m);
+      // Écorce : gris clair du platane, brun des autres feuillus.
+      const e = hash(i * 8.3);
+      if (nom === 'platane' || e > 0.7) col.setHSL(0.11, 0.06 + e * 0.04, 0.62 + e * 0.10);
+      else col.setHSL(0.07, 0.22 + e * 0.10, 0.42 + e * 0.10);
+      lot.ecorce.setColorAt(lot.rang, col);
+      // Feuillage : mêmes teintes que les arbres procéduraux.
+      const t = hash(i * 3.7);
+      if (nom === 'saule') col.setHSL(0.23, 0.14 + t * 0.08, 0.46 + t * 0.10);
+      else if (nom === 'peuplier') col.setHSL(0.27, 0.30 + t * 0.10, 0.36 + t * 0.08);
+      else if (t > 0.55) col.setHSL(0.24 + t * 0.03, 0.32 + t * 0.10, 0.44 + t * 0.08);
+      else col.setHSL(0.26 + t * 0.04, 0.36 + t * 0.14, 0.36 + t * 0.09);
+      lot.feuillage.setColorAt(lot.rang, col);
+      lot.rang++;
+    });
+    for (const lot of Object.values(maillages)) {
+      lot.ecorce.instanceMatrix.needsUpdate = true;
+      lot.feuillage.instanceMatrix.needsUpdate = true;
+      if (lot.ecorce.instanceColor) lot.ecorce.instanceColor.needsUpdate = true;
+      if (lot.feuillage.instanceColor) lot.feuillage.instanceColor.needsUpdate = true;
+    }
+    group.userData.troncs = positions.map(([x, z, h]) => ({ x, z, h }));
+    return group;
+  }
+
   const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, positions.length);
   const branches = new THREE.InstancedMesh(branchGeo, trunkMat, positions.length);
   const leaves = new THREE.InstancedMesh(leafGeo, leafMat, positions.length);

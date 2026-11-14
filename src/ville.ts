@@ -7,9 +7,11 @@
 // Il ne reste ici que ce que le rendu demande en plus de la génération :
 // ombres, fusion des petits maillages, et trois matériaux à nœuds.
 import * as THREE from 'three/webgpu';
-import { materialColor, texture } from 'three/tsl';
+import { cos, materialColor, positionGeometry, positionLocal, sin, texture, time, vec3 } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Accotements } from './three-city/accotements.js';
+// @ts-ignore : module JS, comme les autres imports three-city.
+import { chargerArbres } from './three-city/arbres.js';
 import { parseBDTopo } from './three-city/bdtopo.js';
 import { buildLandmarks } from './three-city/landmarks.js';
 import { findSpawn, parseOSM } from './three-city/osm.js';
@@ -143,6 +145,18 @@ function adapterMateriau(source: THREE.Material, nomMaillage: string, vus: Map<T
     // elles passent dans la couleur, à leur propre répétition.
     standard.colorNode = materialColor.mul(texture(standard.lightMap).rgb);
     standard.lightMap = null;
+  }
+  if (materiau.name === 'feuillage-arbres') {
+    // Vent dans les houppiers : chaque sommet se balance, d'autant plus
+    // qu'il est haut dans l'arbre (hauteur du modèle, de 0 à 1, au carré).
+    // La phase vient de la position dans le monde : deux arbres voisins ne
+    // bougent pas ensemble. Un frémissement rapide s'ajoute au balancement.
+    const hauteur: any = positionGeometry.y.mul(positionGeometry.y);
+    const pos: any = positionLocal;
+    const phase: any = pos.x.mul(.17).add(pos.z.mul(.13));
+    const balancement: any = vec3(sin(time.mul(1.1).add(phase)), 0, cos(time.mul(.85).add(phase.mul(1.3)))).mul(.11);
+    const fremissement: any = vec3(sin(time.mul(3.9).add(pos.x.mul(2.3)).add(pos.y.mul(1.7))), sin(time.mul(3.1).add(pos.z.mul(2.9))), 0).mul(.03);
+    standard.positionNode = pos.add(balancement.add(fremissement).mul(hauteur));
   }
   if (nomMaillage === 'vitrages') {
     // Émission baie par baie et faux intérieurs : remplace le
@@ -364,6 +378,10 @@ export async function construireVille(
       )];
     }
   }
+
+  // Arbres modélisés dans Blender : chargés avant la génération, qui est
+  // synchrone. Absents, la ville plante ses arbres procéduraux.
+  data.arbres = await chargerArbres();
 
   await progress?.(42, 'Génération des routes, toits et façades…');
   // Tout le statique va dans un groupe à part : c'est lui qu'on prépare et
