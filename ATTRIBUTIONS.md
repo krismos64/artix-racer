@@ -68,18 +68,22 @@ retiré du dépôt.
 **`public/audio/music1.mp3`** : morceau fourni par l'auteur du projet, libre
 de droits pour cet usage.
 
-Les autres sons du jeu (moteur, sifflement de turbo, bande-son de l'intro)
-sont synthétisés en temps réel par la Web Audio API : aucun n'est un
-enregistrement. Les voitures de l'intro sont des silhouettes SVG dessinées
+Tous les autres sons du jeu (moteur, pneus, chocs, klaxons, pas, sirène,
+oiseaux, signaux, bande-son de l'intro) sont synthétisés en temps réel par
+la Web Audio API : aucun n'est un enregistrement. Les voitures de l'intro sont des silhouettes SVG dessinées
 pour le projet.
 
 ## Bibliothèques
 
-- **Three.js**, licence MIT, © Three.js authors
-- **Babylon.js**, licence Apache 2.0, © Babylon.js contributors
+- **Three.js** (génération de la ville et rendu), licence MIT, © Three.js authors
 - **earcut**, licence ISC, © Mapbox
 - **sharp** (scripts hors ligne), licence Apache 2.0, © Lovell Fuller et les contributeurs
 - **Vite**, licence MIT, © Evan You et les contributeurs Vite
+- **Blender** (outil hors ligne, non redistribué : modélisation des arbres,
+  conversion du personnage), licence GPL, © Blender Foundation
+
+Babylon.js (licence Apache 2.0) assurait le rendu jusqu'au 14 novembre 2026
+et reste utilisé sur la branche `master`.
 
 ## Ressources visuelles CC0 (chantier de septembre 2026)
 
@@ -95,6 +99,10 @@ converties en JPG 1K par `scripts/preparer-textures.mjs`. https://ambientcg.com
 Également `public/textures/bati/*` (Plaster003, RoofingTiles006,
 RoofingTiles003, CorrugatedSteel005, octobre 2026), passées en gris clair
 par `scripts/preparer-bati.mjs` pour être teintées par bâtiment.
+
+**Arbres** : `public/models/arbres/*.json`, cinq essences générées pour le
+projet par `scripts/blender/arbres.py` (aucune source externe ; le feuillage
+porte la texture `feuillage.png` générée par Codex, citée plus bas).
 
 **Animated Human, par Quaternius** : `public/models/personnages/humain.glb`
 et ses six palettes de tenues (`tenue-*.png`). Personnage riggé (41 os) avec

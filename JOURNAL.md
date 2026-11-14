@@ -2,6 +2,33 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 10) : audit de la documentation
+
+Toute la documentation relue contre le code de la branche `port-three-natif`.
+
+- **README.md** : il décrivait encore un jeu de course rendu par Babylon.
+  Ajouts : présentation en monde ouvert, section « Ce qu'on y fait », touches
+  F et G, branches et état du lien de test (il sert toujours la version
+  Babylon du 19 octobre). Réécrits : conduite (modèle à deux essieux, profils,
+  dégâts, obstacles), son, ombres, profils graphiques et mesures, tableau des
+  composants (Three.js WebGPU, Blender), réglages, outils de console, autres
+  véhicules, limites connues. Retirés : flou de mouvement, grain, parallaxe
+  des vitrines, pré-passe, « une douzaine de véhicules », grille d'instances
+  de l'ancien moteur, « sans repli » (une voiture de secours existe).
+- **CLAUDE.md** : quinze pièges décrivaient Babylon ou le pont (matériaux
+  figés, SkyMaterial, plafond de lumières, `invertNormalMapY`, compteur GPU,
+  texture d'opacité, culling forcé, `getDirectionToRef`, colonne u - 0,75).
+  Réécrits pour le rendu natif ou retirés. Architecture complétée
+  (`world.bloque`, rôle de ville.ts), branches, commandes Blender, mesure de
+  référence corrigée (7,72 ms et non 7,45).
+- **ATTRIBUTIONS.md** : Babylon retiré des bibliothèques de la branche,
+  Blender ajouté comme outil, arbres et sons décrits.
+- **Écran titre** : l'accroche parlait d'« une conduite arcade immédiate ».
+- **Skills du projet** (`fidelite-artix`, `modeliser-artix`) : rien à
+  changer, ils ne citent ni le pont ni Babylon.
+- **Non touchés** : les commentaires de `src/three-city/*.js` qui parlent du
+  pont (ils expliquent la forme du code), et les entrées passées du journal.
+
 ## 2026-11-14 (suite 9) : personnages animés, et une chaussée trop basse de 17,5 cm
 
 - **Personnage** : « Animated Human » de Quaternius (CC0, OpenGameArt),

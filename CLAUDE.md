@@ -1,9 +1,14 @@
 # Artix Racer
 
-Jeu de course 3D dans Artix (64170), reconstruite depuis les données publiques
-(OSM, BD TOPO, LiDAR HD, Panoramax, orthophotos IGN). Usage personnel :
-pas de tests automatisés, pas d'exigence de sécurité web.
-Objectif unique : le meilleur rendu visuel possible, vite.
+Jeu en monde ouvert dans Artix (64170), reconstruite depuis les données
+publiques (OSM, BD TOPO, LiDAR HD, Panoramax, orthophotos IGN) : on y
+conduit, on y marche, on prend des voitures, on livre, on fuit la police.
+Usage personnel : pas de tests automatisés, pas d'exigence de sécurité web.
+Objectif : le meilleur rendu visuel et le jeu le plus agréable, vite.
+
+Branches : le travail se fait sur `port-three-natif` (rendu Three.js natif,
+depuis le 14 novembre 2026). `master` garde l'ancien rendu Babylon, comme
+référence.
 
 Exception, depuis le 19 octobre 2026 : un lien de TEST PRIVÉ sur Netlify
 (projet `artix-essai-q7m4x2`, équipe gratuite krismos64), non référencé
@@ -12,11 +17,16 @@ ponctuel : `npm run build`, copier `dist` seul dans un dossier temporaire
 et le déployer depuis là (le connecteur Netlify envoie tout le dossier
 courant ; depuis le dépôt il emporterait les caches Panoramax). Aucune
 configuration Netlify dans le dépôt, aucun déploiement automatique.
+Le lien sert toujours la version du 19 octobre (rendu Babylon) : rien n'a
+été redéployé depuis le port.
 
 ## Commandes
 
 - `npm run dev` : serveur Vite (http://localhost:5173)
 - `npm run build` : `tsc --noEmit` puis build Vite (le type-check EST la CI)
+- Modèles : `Blender --background --python scripts/blender/arbres.py -- <dossier>`
+  (arbres, avec planche de contrôle) et `scripts/blender/personnage.py`
+  (personnage animé, depuis son .blend d'origine)
 - Pipelines de données (voir « Sources » plus bas) :
   `fetch-panoramax`, `fetch-facades-photo`, `fetch-centre`, `fetch-sols`,
   `fetch-poteaux`
@@ -51,14 +61,16 @@ fictifs et voitures réalistes.
 2. **`src/ville.ts`** : assemble la ville dans la scène. Il ne fait que ce
    que le rendu demande en plus de la génération : ombres portées et reçues,
    enroulement des triangles aligné sur les normales, fusion des petits
-   maillages par matériau et cellule de 300 m, et trois matériaux repris
-   (émission des vitrages par attribut, lightmap d'herbe passée en couleur,
-   marquages au sol éclairés).
+   maillages par matériau et cellule de 300 m, volumes d'ombre des bâtiments
+   modélisés, et les matériaux repris (vitrages : émission par attribut et
+   faux intérieurs ; lightmap d'herbe passée en couleur ; marquages au sol
+   éclairés ; vent dans le feuillage des arbres). Il charge aussi les arbres
+   Blender et expose au jeu le parc garé, la circulation et les passants.
 3. **`src/world.ts`** : `ArtixWorld` est un pur INDEX SPATIAL. Il ne dessine
-   rien : il ne répond qu'aux cinq questions que la boucle de jeu pose à
-   chaque image (`surfaceY`, `isOnRoad`, `roadNameAt`, `collidesBuilding`,
-   `estMineral`), via une grille de cellules de 256 m. Ne rien y ajouter qui
-   dessine.
+   rien : il ne répond qu'aux questions que la boucle de jeu pose à chaque
+   image (`surfaceY`, `isOnRoad`, `roadNameAt`, `collidesBuilding`,
+   `estMineral`, et `bloque` qui ajoute les obstacles au bâti), via une
+   grille de cellules de 256 m. Ne rien y ajouter qui dessine.
 4. **`src/main.ts`** : rendu, ciel HDR, lumières, ombres en cascade
    (`CSMShadowNode`), ambiances, pipeline de post-traitement, boucle de jeu,
    HUD.
@@ -88,14 +100,15 @@ fictifs et voitures réalistes.
 
 Historique : une version Babylon concurrente du rendu a vécu des mois dans
 `world.ts` sans jamais être exécutée (retirée le 19 septembre 2026), puis un
-pont Three→Babylon a converti la ville jusqu'au 14 novembre 2026. Plusieurs
-pièges ci-dessous parlent encore du « pont » : ceux qui ne valent plus sont
-listés dans le premier point.
+pont Three→Babylon (`three-city-bridge.ts`) a converti la ville jusqu'au
+14 novembre 2026. Les pièges ci-dessous sont à jour pour le rendu natif ;
+quand l'un d'eux vient de l'époque du pont, il le dit. Des commentaires de
+`src/three-city/*.js` parlent encore du pont : ils décrivent pourquoi le
+code a cette forme, pas le rendu actuel.
 
 ## Pièges connus (coûteux à redécouvrir)
 
-- **Rendu Three natif (depuis le 14 novembre 2026)**. Ce qui a changé par
-  rapport aux pièges du pont décrits plus bas :
+- **Rendu Three natif (depuis le 14 novembre 2026)** :
   - Les matériaux gardent leur `side` d'origine et un `MeshBasicMaterial`
     reste non éclairé. `onBeforeCompile` est toujours ignoré (rendu à
     nœuds) : écrire `material.colorNode` ou `material.emissiveNode` en TSL,
@@ -170,8 +183,8 @@ listés dans le premier point.
   alors borner ces maillages à `effectifMax + visibles`, sinon tous les
   membres droits disparaissent. Mesuré sur les passants : neuf maillages
   coûtaient 5,5 fps, six n'en coûtent que 0,4.
-- Repère **main droite** (`scene.useRightHandedSystem = true`), hérité de
-  Three.js. Z croît vers le sud. Ne jamais convertir les géométries.
+- Repère **main droite**, celui de Three.js. Z croît vers le sud. Ne jamais
+  convertir les géométries.
 - Géoréférencement : `ORIGIN = { lat: 43.39743, lon: -0.57224 }` dans
   `src/three-city/osm.js`, projection Mercator locale, `project(lat, lon)`.
 - **Poser un modèle sur une emprise BD TOPO** : toujours utiliser le centre de
@@ -191,10 +204,6 @@ listés dans le premier point.
 - Avant de croire une mesure de `__comparer()`, vérifier que la machine est
   au repos (`ps -Ao pcpu,command | sort -rn | head`) : d'autres tâches
   lourdes font varier le résultat de 12 à 20 ms d'une passe à l'autre.
-- Matériaux Babylon : `freeze()` après configuration ; `unfreeze()` avant
-  d'animer une propriété (émission des vitrages la nuit).
-- SkyMaterial : au-delà de turbidité 3, le ciel vire au vert moutarde sous
-  ACES.
 - Les nœuds de signalisation sont dans `artix-poi.json` sous la clé `poi`
   (pas `elements`).
 - Le SSL de python3 est cassé sur cette machine : utiliser `curl` pour les
@@ -208,9 +217,10 @@ listés dans le premier point.
 - `ecarterDeChaussee` (osm.js) : tout objet ponctuel posé près d'une voie
   (lampadaire, poteau) doit y passer, les positions OSM et les
   triangulations tombent parfois sur la chaussée.
-- Le pont Three→Babylon convertit `instanceColor` mais IGNORE les
-  `vertexColors` de géométrie : un mesh qui s'appuie dessus ressort blanc.
-  Matériaux séparés par teinte dans les landmarks.
+- Couleurs de sommet : Three ne lit l'attribut `color` d'une géométrie que
+  si le matériau porte `vertexColors: true`. Sans ce drapeau, le maillage
+  ressort de la couleur du matériau. Les landmarks, écrits à l'époque du
+  pont (qui ignorait ces couleurs), séparent leurs matériaux par teinte.
 - Sur une emprise quasi carrée, `boiteOrientee` (PCA) ne donne pas un cap
   fiable (la Poste, îlot 23 × 23, était tournée de 90°) : caler sur une
   arête mesurée.
@@ -226,57 +236,53 @@ listés dans le premier point.
 - Les POI OSM d'Artix ne sont pas tous à jour : bibliothèque déplacée,
   Leader Price fermé, « Intermarché » = ancien nom du Leclerc. Vérifier
   l'actualité sur l'imagerie la plus récente avant de poser une enseigne.
-- Un élément de FOND (backdrop) doit échapper au brouillard
-  (`applyFog = false`) ET tenir sous `camera.maxZ` : les Pyrénées ont vécu
-  des mois dans la scène sans jamais être visibles, clippées par le plan
-  lointain et noyées par le fog. Même piège pour le ciel : une BOÎTE de
-  2 900 m a ses coins à 2 500 m, au-delà du plan lointain ; le ciel est une
-  SPHÈRE.
+- Un élément de FOND (backdrop) doit échapper au brouillard (`fog: false`
+  sur son matériau) ET tenir sous `camera.far` : les Pyrénées ont vécu des
+  mois dans la scène sans jamais être visibles, coupées par le plan lointain
+  et noyées par le brouillard. Le ciel, lui, n'est plus une géométrie : c'est
+  `scene.background`, que le plan lointain ne coupe pas.
 - Ciel HDR : le disque solaire doit être PLAFONNÉ dans le fichier
-  (`scripts/ciel-soleil.mjs`, plafond 12), sinon il entre dans l'IBL et
-  éclaire tout sans ombre. Babylon projette la colonne u du panorama sur
-  l'angle (u - 0,75) × 2π de +X vers +Z (mesuré en jeu, pas (u - 0,5)).
-  `__regarder(x, y, z)` dans la console force la caméra vers une direction.
-- Le coût dominant est le NOMBRE D'APPELS DE DESSIN de la passe principale
-  (14 µs de JS par maillage PBR, cascades d'ombre comprises), pas la
-  résolution : `ThreeCityConverter.fusionner` regroupe les petits maillages
-  statiques par matériau et cellule de 300 m. Tout maillage retrouvé par son
-  nom après conversion doit être dans `PROTEGES_FUSION`. SSAO et flou de
-  mouvement exigent une pré-passe qui redessine la ville : profil Qualité
-  seulement. Mesuré le 4 septembre 2026 en conduite (1440 × 683, 303 maillages
-  actifs, image complète 8,81 ms) : géométrie 7,36 ms (84 %), remplissage de
-  pixels 1,05 ms (12 %), ombres 0,25 ms, post-process 0,11 ms. Diviser les
-  pixels par 4 ne rend que 1 ms : tout upscaler (FSR, TAA, et DLSS s'il était
-  possible sur le web) attaque les 12 % et laisse les 84 % intacts.
-- **Le compteur GPU de Babylon ment tant que le vsync cadence la boucle** :
-  `gpuFrameTimeCounter` mesure alors l'intervalle entre deux images, ~12 ms
-  quoi qu'on fasse. Scène entièrement vidée de ses maillages, il affichait
-  encore 11,64 ms, ce qui fait conclure à tort que le GPU sature. Pour un
-  chiffre décisionnel : `__comparer()` (src/profil.ts) sort de la boucle
-  d'affichage, dessine en rafale et pose une barrière `readPixels`. Elle
-  restaure les boucles d'origine à la fin, sinon la logique de jeu reste figée.
-  `__profil()` donne le découpage CPU, `__repartition()` classe les appels de
-  dessin par matériau.
-- **Une texture d'opacité ne suffit pas** : tant que le matériau reste en
-  mode opaque (`transparencyMode` à null), Babylon ne lit JAMAIS le canal
-  alpha et peint le quad entier. Poser `hasAlpha`,
-  `useAlphaFromAlbedoTexture` et `transparencyMode = ALPHABLEND`. Ce piège a
-  coûté quatre corrections inutiles du dessin de la texture des Pyrénées, le
-  voile gris venant du matériau et non du canvas.
-- Fond de montagnes : trois ARCS de cylindre peints (110° autour du sud,
-  rayons 1 330 à 1 420 m), rattachés au nœud `fond-pyrenees` qui suit la
-  caméra en plan. Des plans plats de 3 600 m avaient, vus de biais, leurs
-  côtés à plus de 2 000 m : coupés par le plan lointain (1 600 m), ils
-  barraient le ciel d'un pan gris à bord vertical. Pas d'`infiniteDistance`
-  (il écrase les couches à la même profondeur ; le nœud parent garde leurs
-  rayons). UV v = 1 au PIED : à l'envers, la brume montait au-dessus des
-  crêtes en rideau de pluie, et la chaîne est restée illisible des mois.
-  Pied SOUS l'horizon, bords estompés, Ossau placé en angle (azimut 169,9°)
-  et exagéré 2,5 fois en hauteur (invisible à sa cote réelle de 2,26°).
-- Éclairage nocturne : les matériaux convertis plafonnent à 10 lumières
-  simultanées (`maxSimultaneousLights`, three-city-bridge). Au-delà les
-  lampes surnuméraires s'éteignent en silence. Le pool en compte 12, jamais
-  toutes proches à la fois.
+  (`scripts/ciel-soleil.mjs`, plafond 12), sinon il entre dans l'éclairage
+  d'ambiance et éclaire tout sans ombre. Three projette la colonne u du
+  panorama sur l'angle (u - 0,5) × 2π de +X vers +Z, et `backgroundRotation`
+  tourne dans le sens INVERSE de l'angle donné (mesuré en jeu ; Babylon
+  utilisait u - 0,75). `__regarder(x, y, z)` dans la console force la caméra
+  vers une direction.
+- Le coût dominant est la GÉOMÉTRIE (appels de dessin et triangles), pas la
+  résolution : `fusionner` (ville.ts) regroupe les petits maillages
+  statiques par matériau et cellule de 300 m, et les arbres ont deux niveaux
+  de détail. Mesuré le 14 novembre 2026 au point de départ (1440 × 690,
+  Équilibré, machine au repos, avant les personnages animés) : image complète
+  7,72 ms, dont ombres 1,60 ms et remplissage de pixels 1,33 ms. Baisser la
+  résolution ne rend qu'une milliseconde : un upscaler n'attaque pas le
+  poste qui pèse. L'occlusion ambiante (profil Qualité) reconstruit ses
+  normales depuis la profondeur, sans seconde passe de géométrie. Le flou de
+  mouvement n'a pas été repris après le port.
+- **Un chronomètre posé autour d'une image ment tant que le vsync cadence la
+  boucle** : il mesure l'intervalle entre deux images, 12 à 16 ms quoi qu'on
+  dessine, ce qui fait conclure à tort que le GPU sature. Pour un chiffre
+  décisionnel : `__comparer()` (src/profil.ts) sort de la boucle d'affichage,
+  dessine en rafale et attend que le GPU ait tout exécuté. Elle relance la
+  boucle à la fin, sinon la logique de jeu reste figée. `__profil()` donne
+  les compteurs du moteur, `__repartition()` classe les maillages visibles
+  par matériau.
+- **Une texture à canal alpha ne suffit pas** : tant que le matériau n'a ni
+  `transparent: true` ni `alphaTest`, Three ne lit pas l'alpha et peint le
+  quad entier. Ce piège a coûté quatre corrections inutiles du dessin de la
+  texture des Pyrénées (sous Babylon, même cause), le voile gris venant du
+  matériau et non de l'image.
+- Fond de montagnes : un ARC de cylindre peint (110° autour du sud, rayon
+  1 380 m), rattaché au nœud `fond-pyrenees` qui suit la caméra en plan. Des
+  plans plats de 3 600 m avaient, vus de biais, leurs côtés à plus de
+  2 000 m : coupés par le plan lointain (1 600 m), ils barraient le ciel
+  d'un pan gris à bord vertical. UV v = 0 au PIED (bas de l'image) : à
+  l'envers, la brume montait au-dessus des crêtes en rideau de pluie. Pied
+  SOUS l'horizon, bords estompés par l'alpha de sommet. Le panorama est une
+  image Codex ; le pic d'Ossau dessiné à son azimut a disparu avec elle.
+- Éclairage nocturne : douze lampes de rue et deux projecteurs, tous créés
+  au démarrage et présents en permanence (intensité nulle le jour). Three
+  n'a pas de plafond de lumières par matériau, mais chaque lumière se paie
+  par pixel et en ajouter une recompile tous les matériaux.
 - Marquage au sol : les seuils se lisent dans `ROAD_WIDTH` (osm.js). Rives à
   partir de 5,60 m hors `service` et `track`, axe médian à partir de 6,20 m.
   Une rue résidentielle fait 6 m : deux rives, pas d'axe.
@@ -284,31 +290,30 @@ listés dans le premier point.
   signage.js) : les cases d'atlas cadraient souvent la haie devant le mur.
   Réactiver les deux drapeaux ensemble, sinon enseignes manquantes.
 - Les textures de fichier passent par `textureFichier`/`matiere`
-  (textures.js) : le pont ne lit que `image.src`, jamais les pixels ; ne pas
-  leur appliquer `carteRelief` (canvas vide). Cartes de normales OpenGL :
-  `invertNormalMapY = true` en repère main droite.
-- Le pont force `backFaceCulling = false` et `twoSidedLighting` sur TOUS les
-  matériaux (garde-fou contre les nappes cadastrales à l'envers). Un volume
-  ouvert par le dessous montre donc son intérieur éclairé comme une face
-  avant, et ressort délavé, presque translucide : les haies ont vécu ça
+  (textures.js), qui posent `needsUpdate` une fois l'image décodée. Ne pas
+  leur appliquer `carteRelief` : à la création, l'image n'est pas encore
+  chargée (canvas vide). Les cartes de normales ambientCG sont en convention
+  OpenGL, celle de Three : aucun réglage.
+- Beaucoup de matériaux de la ville sont à deux faces (`DoubleSide`). Un
+  volume ouvert par le dessous montre alors son intérieur éclairé comme une
+  face avant, et ressort délavé, presque translucide : les haies ont vécu ça
   au-dessus de la place pavée. Fermer les volumes, même sur une face
   invisible.
-- **Éclairage à l'envers des nappes (corrigé le 3 octobre 2026)** : avec
-  `twoSidedLighting`, Babylon retourne la normale selon l'ENROULEMENT vu par
-  la caméra. Matériau converti laissé à `sideOrientation = null` en repère
-  main droite, il prenait le DESSUS des nappes Three pour leur face arrière :
-  sol, zones, trottoirs et toits n'ont jamais reçu le soleil (herbe
-  vert-noir, toits bruns). Le pont pose `sideOrientation` antihoraire ET
-  aligne l'enroulement de chaque triangle sur sa normale stockée (sinon les
-  nappes tracées à l'envers, comme l'enrobé des parkings, passent au noir).
-  Test décisif d'un sol trop sombre : inverser `sun.direction.y` dans la
-  console ; s'il s'allume, c'est ce piège.
-- Le pont IGNORE tout `onBeforeCompile` (shaders Three modifiés). Ce qui
-  doit varier par sommet passe par des attributs qu'il transmet : `color`,
-  `uv`, et `uv1` (second jeu d'UV, lu par une texture dont `channel = 1`,
-  converti en `coordinatesIndex = 1`). C'est ainsi que les vitrages
-  choisissent baie par baie entre émission noire et carreaux allumés
-  (`fenetre-nuit.jpg`, moitié gauche noire, moitié droite allumée).
+- **Éclairage à l'envers des nappes** : un matériau à deux faces retourne
+  la normale selon l'ENROULEMENT vu par la caméra. Une nappe dont les
+  triangles sont enroulés à l'envers de leur normale (polygone cadastral
+  horaire, enrobé des parkings) est donc éclairée par en dessous et ressort
+  noire sous le soleil. `alignerEnroulement` (ville.ts) réaligne chaque
+  triangle sur sa normale stockée. Test décisif d'un sol trop sombre :
+  couper l'ambiance dans la console (`__scene.environmentIntensity = 0`) ;
+  s'il passe au noir alors que ses voisins restent éclairés, c'est ce piège.
+- Le rendu à nœuds IGNORE tout `onBeforeCompile` (shaders Three modifiés).
+  Ce qui doit varier par sommet passe par des attributs lus en TSL :
+  `attribute('nom', 'vec3')`, `uv(1)` pour le second jeu d'UV. C'est ainsi
+  que les vitrages choisissent baie par baie entre émission noire et
+  carreaux allumés (`fenetre-nuit.jpg`, quatre cases : noire, française
+  allumée, noire, PVC allumée) et calculent leur faux intérieur
+  (src/vitrages.ts).
 - Baies et volets du bâti ordinaire : textures générées par Codex
   (`public/textures/facades/`). Le dormant est un CADRE de quatre montants :
   plaque pleine 7,5 cm devant la vitre, il l'avait masquée depuis le début.
@@ -317,7 +322,7 @@ listés dans le premier point.
   règle que la teinte. Le bac acier, c'est 164 bâtiments mais un TIERS de la
   surface de toit (hangars, commerces) : sous une texture de tuile canal, il
   faisait de chaque zone d'activité un village. Tout nouveau maillage de
-  toiture doit rejoindre `PROTEGES_FUSION` et `shadowMeshes` du pont.
+  toiture doit rejoindre `PROTEGES_FUSION` et `PORTEURS_OMBRE` (ville.ts).
 - Toit d'un bâtiment ordinaire (world.js) : deux-pans/croupe/pyramide si
   l'emprise est simple (au plus un sommet rentrant, remplissage 0,72),
   quelle que soit son élancement ; sinon couverture à faible pente. Un
@@ -329,15 +334,12 @@ listés dans le premier point.
   en parallèle est utile, mais récupérer les originaux dans
   `~/.codex/generated_images/` et les identifier à l'œil.
 - **Ombres et salissures par mélange MULTIPLICATIF, pas par transparence.**
-  Un `MeshBasicMaterial` de Three est converti en PBR ÉCLAIRÉ : son noir
-  reçoit le reflet du ciel, et à 40 % d'opacité ce gris se confond avec le
-  sol (ruban invisible) ; en non éclairé, l'alpha de l'albédo était ignoré
-  (bande noire opaque). La parade : carte en niveaux de gris (blanc = aucun
-  effet), `alphaMode = ALPHA_MULTIPLY`, `unlit`, réglés côté Babylon dans
-  main.ts sur le maillage `ombres-pied`. Le pont pose désormais aussi
-  `useAlphaFromAlbedoTexture` sur tout matériau Three transparent texturé.
-  Ne PAS rendre tous les MeshBasicMaterial non éclairés : les marquages au
-  sol en sont, et brilleraient la nuit.
+  La carte `ombres.png` est en niveaux de gris (blanc = aucun effet) : le
+  fond est multiplié par elle. `adapterMateriau` (ville.ts) donne au
+  maillage `ombres-pied` un matériau non éclairé en `MultiplyBlending` avec
+  `premultipliedAlpha`, sans brouillard. Les autres `MeshBasicMaterial`
+  opaques (marquages au sol) y sont convertis en Lambert : non éclairés,
+  ils brilleraient la nuit.
 - Les zones de jardin (`data.areas`) sont triangulées à grandes mailles :
   entre leurs sommets, leur surface plane passe au-dessus du relief. Un
   décor posé au ras de `relief.hauteurEn` y disparaît dessous.
@@ -348,11 +350,10 @@ listés dans le premier point.
   2,32 m de haut. Roues = cylindres instanciés à jante argentée
   (`geometrieRoue`, couleur de sommet) : noires unies, elles disparaissaient
   dans l'ombre des passages de roue.
-- Nuance sans texture ni appel de dessin supplémentaire : l'attribut `color`
-  de géométrie EST transmis par le pont (`vertexData`) et lu par défaut
-  (`mesh.useVertexColors` vaut true). Le piège des `vertexColors` cité plus
-  haut concerne les landmarks, pas une limite du pont. Une couleur par facette
-  suffit à casser les aplats d'une surface unie (flancs de haie).
+- Nuance sans texture ni appel de dessin supplémentaire : une couleur par
+  sommet (attribut `color`, matériau en `vertexColors: true`) suffit à
+  casser les aplats d'une surface unie (flancs de haie) ou à porter une
+  occlusion calculée à la génération (houppiers des arbres Blender).
 - Une emprise BD TOPO d'équipement public peut couvrir TOUT un groupe de
   bâtiments d'un seul tenant : celle du groupe scolaire Jean Moulin (535) fait
   5 856 m² et 47 sommets, extrudée en bloc plein de 8,1 m qui avalait les
@@ -370,25 +371,30 @@ listés dans le premier point.
   maillages de terrain et de voirie couvrent 5,6 km et sont légitimement sur
   la chaussée, ils noient le signal. Sans ce filtre, le contrôle remontait
   48 faux positifs (trottoirs, bordures) pour 5 vrais.
-- Véhicule du joueur : `public/models/ferrari.glb` (Ferrari 458 de l'exemple
+- Véhicule de départ : `public/models/ferrari.glb` (Ferrari 458 de l'exemple
   three.js), chargé par `src/car.ts`. Il regarde -Z, d'où le demi-tour du
   pivot ; ses roues s'appellent `wheel_fl/fr/rl/rr`. Licence NON vérifiable
   (page Sketchfab désactivée) : usage personnel assumé, voir ATTRIBUTIONS.md.
+  Les autres véhicules conduits sont des modèles de la flotte rgsdev, pris
+  dans le parc garé ou la circulation (`habillerFlotte`), chacun avec son
+  profil de conduite (`PROFILS`). Une seule instance d'`ArcadeCar` par
+  véhicule pris ; `car` (main.ts) désigne celui que le joueur conduit.
 - Vue conducteur (`cameraMode === 1` dans main.ts) : elle NE s'interpole PAS,
   sinon l'habitacle flotte à chaque accélération, et elle passe par
-  `getDirectionToRef` pour suivre le tangage de la caisse. Le cadrage est
-  commandé par le RECUL de l'œil, pas par sa hauteur : le volant occupe 69 %
-  de l'image à 12 cm de recul, 38 % à 55 cm. Les sièges sont masqués, mais
-  `interior_dark` mêle sièges et planche de bord dans une seule primitive :
-  il est découpé à l'exécution (`decouperCabine`), pas masqué en entier.
-- Ne JAMAIS compter sur le back-face culling pour cacher une face : le pont
-  le désactive sur tous les matériaux (garde-fou contre les nappes cadastrales
-  inversées), et la scène étant en repère main droite, Babylon inverse en plus
-  sa convention d'enroulement. Un STOP en deux plans dos à dos se lisait donc
-  EN MIROIR depuis la voie opposée, et le rétablir par exception rouvrait les
-  trous ailleurs. La parade est de donner du VOLUME : une `BoxGeometry` mince
-  à six matériaux (face texturée sur +Z, tôle sur les cinq autres) ne dépend
-  d'aucune convention. Même logique que pour les haies, fermées par le dessous.
+  `car.versMonde` pour suivre le tangage de la caisse. Le cadrage est
+  commandé par le RECUL de l'œil (`car.oeil`), pas par sa hauteur : le
+  volant occupe 69 % de l'image à 12 cm de recul, 38 % à 55 cm. Les sièges
+  sont masqués, mais `interior_dark` mêle sièges et planche de bord dans une
+  seule primitive : il est découpé à l'exécution (`decouperCabine`), pas
+  masqué en entier. Un véhicule de la flotte n'a pas d'habitacle : sa vue
+  conducteur est une caméra de capot.
+- Ne JAMAIS compter sur le back-face culling pour cacher une face : les
+  matériaux de la ville sont souvent à deux faces (les nappes cadastrales
+  arrivent enroulées dans les deux sens). Un STOP en deux plans dos à dos se
+  lisait EN MIROIR depuis la voie opposée. La parade est de donner du
+  VOLUME : une `BoxGeometry` mince à six matériaux (face texturée sur +Z,
+  tôle sur les cinq autres) ne dépend d'aucune convention. Même logique que
+  pour les haies, fermées par le dessous.
 - Panneau de police : il se pose à DROITE de la chaussée dans le sens qu'il
   régit, c'est une règle d'implantation, pas une préférence. Droite du
   conducteur circulant selon (ux, uz) : `(-uz, ux)` en repère main droite avec
@@ -432,7 +438,7 @@ listés dans le premier point.
 | `textures/facades/*` | atlas de baies (française, PVC à volet roulant) et leur émission de nuit en 4 cases, atlas de volets (écharpe, persienne), atlas `portes` (porte, garage, devanture), génoise, feuillage | générées par Codex, détourées et assemblées à la main (voir JOURNAL.md, 3 octobre) |
 | `textures/fond/pyrenees.png` | panorama des Pyrénées, fond vert détouré | généré par Codex |
 | `textures/facades/ombres.png` | carte MULTIPLICATIVE (blanc = aucun effet) : dégradé d'ombre au pied des murs et sous la génoise, coulures sous les appuis (Codex) | script sharp (voir JOURNAL.md, 4 octobre) |
-| `textures/facades/portes-relief.png` | relief plat, hauteur en alpha : 0 sur les vitres de devanture (parallax occlusion) | script sharp |
+| `textures/facades/portes-relief.png` | relief des devantures (hauteur en alpha). PLUS UTILISÉ depuis le port : la parallaxe n'a pas été reprise, remplacée par les faux intérieurs des vitrages | script sharp |
 | `textures/facades/plaques.jpg` | atlas des 183 plaques de rue émaillées (fond Codex sans texte, noms OSM en SVG, ordre alphabétique) | `scripts/preparer-plaques.mjs` (à relancer si les noms de voies changent) |
 | `images/titre.jpg` | illustration de l'écran titre | générée par Codex |
 | `textures/fumee.png` | bouffée de fumée, transparence tirée de la luminance | générée par Codex |
@@ -491,8 +497,9 @@ jeu→WGS84 : lat = 43.39743 - z/111320 ; lon = -0.57224 + x/80887.
 - Tout en français : code commenté, commits, docs. Commentaires : expliquer le
   POURQUOI, chiffres à l'appui.
 - Jamais de tiret cadratin dans la prose. Jamais de `Co-Authored-By: Claude`.
-- Perf cible : 60 fps sur MacBook Air M4 en profil Équilibré (mesuré le
-  14 novembre 2026 : 7,45 ms par image, 1440 × 690).
+- Perf cible : 60 fps sur MacBook Air M4 en profil Équilibré (dernière
+  mesure propre, 14 novembre 2026 : 7,72 ms par image à 1440 × 690, avant
+  les personnages animés ; à refaire machine au repos).
 - Vérification : `npx tsc --noEmit` (TS) et `node --check` (JS three-city).
 - Hook projet : type-check automatique après édition d'un `.ts`.
 

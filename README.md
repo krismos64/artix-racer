@@ -1,7 +1,9 @@
 # Artix Racer
 
-Jeu de voiture 3D jouable au clavier, dans la ville d'**Artix (64170)**,
+Jeu en monde ouvert jouable au clavier, dans la ville d'**Artix (64170)**,
 Pyrénées-Atlantiques, modélisée à partir des données cartographiques réelles.
+On y conduit, on y marche, on prend le volant des voitures garées ou de la
+circulation, on livre des colis contre la montre et on sème la police.
 
 Tout tourne en local, hors ligne, sans compte ni clé d'API. Un lien de test
 privé existe sur Netlify, non référencé (voir « Lien de test »).
@@ -22,6 +24,10 @@ Pour une version optimisée :
 npm run build && npm run preview
 ```
 
+> **Branches.** Le jeu décrit ici vit sur la branche `port-three-natif`
+> (rendu Three.js natif en WebGPU, depuis le 14 novembre 2026). `master`
+> garde l'ancien rendu Babylon.js comme référence.
+
 Au lancement, une intro animée et sonorisée de 6 s joue pendant le
 chargement : toute touche ou clic l'écourte, et `?intro=0` dans l'URL la
 saute (utile en développement).
@@ -32,7 +38,9 @@ Le jeu est déployé à la main sur Netlify (offre gratuite) pour le faire
 essayer à une personne, sans être référencé : `public/robots.txt` interdit
 l'exploration et `public/_headers` pose `X-Robots-Tag: noindex`. Aucun mot de
 passe (fonction payante) : quiconque a le lien peut jouer. Pas de
-déploiement automatique ; la procédure est décrite dans `CLAUDE.md`.
+déploiement automatique ; la procédure est décrite dans `CLAUDE.md`. Le lien
+sert encore la version du 19 octobre 2026 (rendu Babylon, sans la marche à
+pied, la police ni les livraisons) : rien n'a été redéployé depuis.
 
 ## Commandes
 
@@ -42,7 +50,9 @@ déploiement automatique ; la procédure est décrite dans `CLAUDE.md`.
 | ↓ / S | Freiner, puis marche arrière |
 | ← / → ou Q / D | Diriger |
 | Espace | Frein à main (drift) |
-| Maj | Nitro |
+| Maj | Nitro ; à pied, courir |
+| F | Descendre de voiture, y remonter, prendre une voiture garée ou arrêtée |
+| G | Prendre une livraison, ou abandonner celle en cours |
 | C | Changer de caméra (poursuite, conducteur, aérienne) |
 | R | Revenir au point de départ |
 | T | Lancer ou relancer le Tour d'Artix (chrono) |
@@ -53,7 +63,32 @@ déploiement automatique ; la procédure est décrite dans `CLAUDE.md`.
 | Entrée | Démarrer en balade libre (l'écran titre propose aussi le Tour d'Artix chronométré) |
 
 La liste complète s'affiche aussi dans le jeu, sur l'écran titre et dans la
-pause ; la barre du bas n'en garde que l'essentiel.
+pause ; la barre du bas n'en garde que l'essentiel. À pied, les touches de
+conduite déplacent le personnage (avancer, reculer, tourner).
+
+## Ce qu'on y fait
+
+- **Conduire** : la Ferrari de départ, ou n'importe quelle voiture prise en
+  ville. Chaque modèle a sa conduite (une berline met 10,6 s de 0 à 100 km/h,
+  la Ferrari 4,0 s). Les chocs abîment le moteur : il perd de la puissance,
+  fume, puis cale. L'état s'affiche sous le score ; `R` remet à neuf.
+- **Marcher** (`F`, voiture arrêtée) : le personnage descend côté conducteur.
+  Caméra d'épaule, `Maj` pour courir. Les murs, les arbres, les poteaux et
+  les voitures garées sont solides, pour lui comme pour la voiture.
+- **Prendre une voiture** (`F`, à pied) : une voiture garée à moins de 1,5 m,
+  ou un véhicule de la circulation à l'arrêt (elle s'arrête quand on est à
+  pied tout près). Son conducteur s'enfuit en courant. La voiture quittée
+  reste où elle est, et on peut y remonter.
+- **Livrer** (`G`, en balade libre) : une course vers un lieu-dit à plus de
+  250 m, en temps limité, à terminer à l'arrêt dans l'anneau. Un faisceau de
+  lumière marque la destination. Chaque livraison lance la suivante avec une
+  prime de 25 % par course de la série.
+- **Fuir la police** : renverser un passant, prendre une voiture à son
+  conducteur ou accrocher la circulation fait monter un niveau de recherche
+  (une à trois étoiles). Une patrouille par étoile suit les rues jusqu'au
+  joueur. La semer (plus de 90 m pendant 12 s) fait retomber une étoile ; se
+  laisser rejoindre à l'arrêt, c'est l'arrestation et le retour au départ.
+- **Le Tour d'Artix** (`T`) : dix checkpoints contre la montre.
 
 ## D'où vient la ville
 
@@ -144,11 +179,9 @@ double sens et en retient une au hasard.
 
 Chaque panneau est un **volume** de 3 cm d'épaisseur, pas une plaque plate :
 la face texturée est sur l'avant, de la tôle grise sur les cinq autres faces.
-Le back-face culling ne pouvait pas servir ici, le pont Three vers Babylon le
-désactivant partout pour protéger les nappes cadastrales inversées, et la
-scène étant de surcroît en repère main droite où Babylon inverse sa convention
-d'enroulement : un STOP en deux plans dos à dos se lisait EN MIROIR depuis la
-voie opposée. Un objet épais n'a pas de face traversante.
+Deux plans dos à dos ne suffisaient pas : les matériaux de la ville sont
+souvent à deux faces, et un STOP se lisait EN MIROIR depuis la voie opposée.
+Un objet épais n'a pas de face traversante.
 
 **Artix ne compte aucun feu tricolore.** La circulation y est réglée par stops,
 cédez-le-passage et ronds-points, ce que le jeu reproduit fidèlement plutôt que
@@ -189,11 +222,16 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
   caméra, sous le plan lointain et hors brouillard. Le relief est
   volontairement grossi : à sa cote réelle (62,6 km, 2,26° de haut) le pic
   du Midi d'Ossau serait invisible.
-- **Occlusion ambiante et flou de mouvement** en profil Qualité : ils exigent
-  une pré-passe qui redessine la ville, d'où leur réservation au profil le
-  plus lourd.
-- **Étalonnage image** : grain animé, aberration chromatique de bord de champ,
-  courbes couleur (ombres bleutées, hautes lumières chaudes).
+- **Occlusion ambiante** en profil Qualité : elle assombrit le pied des murs,
+  le dessous des voitures et les angles de rue.
+- **Étalonnage image** : bloom, aberration chromatique de bord de champ,
+  contraste et saturation relevés, vignette légère, anticrénelage FXAA.
+- **Faux intérieurs derrière les vitres** (`src/vitrages.ts`) : chaque
+  fenêtre montre une pièce (plancher, murs, plafond) qui glisse derrière le
+  cadre quand on passe devant. Tout se calcule dans le matériau, sans
+  géométrie ni appel de dessin en plus.
+- **Ombres portées des arbres et des bâtiments**, avec un soleil fort et une
+  ambiance basse pour qu'elles se lisent sur la chaussée.
 - **Volets** sur les habitations, ouverts de part et d'autre de chaque baie :
   couleur relevée sur les panoramiques Panoramax quand elle est détectée,
   sinon palette des teintes réellement vues à Artix (bordeaux, vert, bleu-gris,
@@ -211,16 +249,19 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 - **Abribus vitrés** avec banc et cadre d'affichage.
 - Anisotropie 16 sur toutes les textures, relief du gravillon sur la chaussée,
   micro-relief du couvert herbeux.
-- **Feuillage découpé par texture alpha** : les couronnes se dentellent en
-  paquets de feuilles et deviennent poreuses, le ciel passant par les vides.
-  La texture de feuilles est une image Codex depuis octobre 2026.
+- **Arbres modélisés dans Blender** (`scripts/blender/arbres.py`) : cinq
+  essences (platane taillé en tête de chat, feuillu libre, peuplier,
+  conifère, saule), chacune avec une vraie charpente de branches et une
+  centaine de cartes de feuilles détourées. Le feuillage se balance au vent.
+  Deux niveaux de détail : seuls les arbres à moins de 170 m du joueur
+  prennent le modèle complet.
 - **Trois ambiances d'éclairage** sur la touche L : midi, fin de journée aux
-  ombres longues, nuit. Chaque bascule re-rend la sonde d'environnement et
-  ajuste ciel, brouillard, exposition et noirceur des ombres.
+  ombres longues, nuit. Chaque bascule change de panorama de ciel et ajuste
+  soleil, brouillard et exposition.
 - **Nuit complète et ÉCLAIRÉE** : phares, optiques et feux émissifs, lanternes
   allumées, halos de lumière sodium au sol sous les 911 lampadaires
   (permanents, sans attendre le passage du joueur), fenêtres des habitations
-  éclairées. Douze sources réelles de 260 cd portant à 62 m suivent le
+  éclairées. Douze sources réelles portant à 62 m suivent le
   joueur : la chaussée et les façades sont lisibles, une rue éclairée au
   sodium n'étant jamais noire entre deux lampadaires.
 - **Ville habitée** : 110 passants marchent sur les cheminements piétons
@@ -228,7 +269,11 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
   3D sur les bas-côtés. Silhouettes aux proportions d'adultes de 1,60 à
   1,86 m (buste à épaules, cou, chevelure, chaussures), en six maillages
   instanciés qui coûtent 0,4 fps pour 110 personnes. Depuis octobre
-  2026 : visage peint, manches courtes ou longues, mains.
+  2026 : visage peint, manches courtes ou longues, mains. Depuis novembre
+  2026, les 14 passants les plus proches du joueur (moins de 45 m) sont un
+  **personnage animé à squelette** (marche, course, chute), en dix-huit
+  tenues ; les plus lointains gardent leur silhouette. Ils courent quand une
+  voiture arrive vite et tombent quand elle les percute.
 - **Haies de clôture** (`src/three-city/haies.js`) : quatre espèces relevées
   sur Street View, laurier-palme, cyprès de Leyland, troène doré et charmille
   sur tronc. Volumes à flancs dressés et crête dentelée, avec un grain de
@@ -239,9 +284,10 @@ l'Intermarché, le Super U, les pharmacies, boulangeries et banques du bourg.
 - **Lignes aériennes** : 357 poteaux triangulés depuis les panoramiques
   (+ 77 interpolés), reliés par 210 portées de caténaires paraboliques, et
   des branchements qui descendent du réseau vers les façades voisines.
-- **Circulation légère** : une douzaine de véhicules parcourent les voies du
+- **Circulation légère** : vingt-quatre véhicules parcourent les voies du
   bourg, roulent à droite, respectent les sens uniques et freinent derrière
-  le joueur.
+  le joueur. On peut les percuter (le véhicule touché s'arrête trois
+  secondes), les frôler pour des points, ou leur prendre le volant.
 - **Parc automobile modelé** : citadine, berline, SUV et van low-poly
   (pack rgsdev, CC0) aux cotes réelles, pour le stationnement et la
   circulation, en carrosserie vernie teintée par instance et en détails
@@ -284,8 +330,9 @@ règle de n'ajouter aucun appel de dessin (atlas, instances, fusion).
   une fois dépassé, avec un accent qui entre par le bon côté ; **arrivée au
   ralenti** (30 % pendant 0,8 s) et temps final mis en avant. Aucun maillage ajouté : caméra, pipeline existant et couche
   DOM.
-- **Fumée de pneus et poussière hors-piste** (`src/fumee.ts`) : un seul
-  système de particules, un appel de dessin quand il émet.
+- **Fumée de pneus, poussière hors-piste et fumée de capot** d'un moteur
+  abîmé (`src/fumee.ts`) : 600 bouffées simulées dans un seul maillage, un
+  appel de dessin quand il émet.
 - **Écran titre** illustré (`public/images/titre.jpg`).
 - **Intro du lancement** (`src/intro.ts`) : trois voitures en SVG sur un
   coucher de soleil pyrénéen et une grille synthwave, puis le titre percuté
@@ -295,9 +342,10 @@ règle de n'ajouter aucun appel de dessin (atlas, instances, fusion).
 - **Trois couvertures** lues dans les matériaux MAJIC : tuile, ardoise et bac
   acier, en textures ambientCG. Crépi des murs en ambientCG lui aussi.
 - **Génoise** sous l'égout et **soubassement** au pied des façades.
-- **Portes sur la façade côté rue**, portes de garage, et **vitrines en
-  profondeur** (parallaxe dans la carte de relief) sur les rez-de-chaussée
-  commerçants, écartées autour des services publics.
+- **Portes sur la façade côté rue**, portes de garage et devantures sur les
+  rez-de-chaussée commerçants, écartées autour des services publics. La
+  parallaxe des vitrines n'a pas été reprise après le port ; les fenêtres
+  ont à la place leurs faux intérieurs.
 - **Plaques de rue émaillées** aux carrefours, aux vrais noms OSM, écrites par
   `scripts/preparer-plaques.mjs` sur un fond Codex sans texte (un générateur
   d'images déforme les lettres).
@@ -378,10 +426,13 @@ rafraîchie que deux fois par seconde.
 
 ### Ombres
 
-Ombres en cascades (CSM) du soleil, jusqu'à 330 m de la caméra, stabilisées
-pour ne pas scintiller en roulant. La Ferrari projette et reçoit les ombres ;
-les véhicules de la flotte et les murs ajoutent une ombre de contact peinte,
-qui assoit les volumes là où la carte d'ombre manque de finesse.
+Ombres en cascades (CSM) du soleil, deux cartes jusqu'à 330 m de la caméra.
+Le bâti, les arbres, les personnages et la voiture conduite projettent leur
+ombre. Les bâtiments modélisés à la main, faits de centaines de petites
+pièces, la projettent par un volume d'ombre fusionné et invisible : inscrits
+pièce par pièce, ils doublaient le coût des ombres. Les véhicules de la
+flotte et les murs ajoutent une ombre de contact peinte, qui assoit les
+volumes là où la carte d'ombre manque de finesse.
 
 ### LiDAR HD : la forme réelle de chaque toiture
 
@@ -487,40 +538,69 @@ longe.
 
 | Composant | Rôle |
 | --- | --- |
-| [Babylon.js](https://babylonjs.com) | Rendu 3D (PBR, ciel HDR, IBL, ombres CSM, SSAO2, pipeline post-process) |
-| [Three.js](https://threejs.org) | Génération de la ville (géométries et matériaux, convertis vers Babylon au chargement) |
-| Web Audio API | Moteur, turbo et bande-son de l'intro synthétisés, musique lue depuis un fichier |
+| [Three.js](https://threejs.org) 0.187 | Génération de la ville ET rendu, en WebGPU (`WebGPURenderer`) : matériaux PBR, ciel HDR, ombres en cascade, post-traitement en TSL |
+| [Blender](https://www.blender.org) 5.3, sans interface | Modélisation des arbres et conversion du personnage animé (`scripts/blender/`) ; il n'est pas nécessaire pour jouer |
+| Web Audio API | Toute la bande-son synthétisée (moteur, pneus, chocs, ville, sirène, intro), musique lue depuis un fichier |
 | Overpass API, Géoplateforme IGN | Extraction des données OpenStreetMap, BD TOPO, LiDAR HD et orthophotos |
 
 ### Conduite
 
-Modèle arcade volontaire (`src/car.ts`), sans moteur physique : une vitesse
-scalaire, un cap, et le relief lu dans l'index spatial (`world.ts`).
+Modèle à deux essieux (`src/car.ts`), sans moteur physique externe. La
+voiture a une vitesse en deux composantes (avant et latérale) et une vitesse
+de lacet. Chaque essieu produit une force latérale qui dépend de son angle
+de dérive, plafonnée par l'adhérence et par la charge qu'il porte : c'est ce
+plafond qui fait décrocher l'arrière au frein à main.
 
-- vitesse de pointe de 187 km/h, 238 km/h sous nitro ; la jauge de nitro se
-  vide en six secondes et se recharge en roulant
-- hors chaussée, l'accélération tombe à 40 % et la vitesse plafonne à
-  65 km/h, ce qui se sent immédiatement au volant
-- le frein à main en virage déclenche un dérapage qui resserre le virage de
-  72 % et alimente le combo de dérapage
-- l'angle de braquage se réduit avec la vitesse, pour garder la voiture
-  tenable à haute allure
+- **transfert de charge** : le freinage charge l'avant, l'accélération
+  l'arrière ; un essieu délesté tient moins bien
+- **propulsion** : à pleine accélération en virage, l'arrière a moins de
+  tenue latérale et peut glisser
+- **frein à main** : l'arrière ne garde que 58 % de son adhérence, ce qui
+  lance un dérapage progressif et rattrapable
+- **braquage** réduit avec la vitesse (0,55 rad à l'arrêt), pour rester
+  tenable au clavier
+- **murs** : la voiture glisse le long d'un mur au lieu de rebondir en
+  arrière
+- **relief** : hauteur, tangage et roulis lus sous les quatre roues
+- **un profil par véhicule** (`PROFILS`) : masse, moteur, tenue de route et
+  roulis diffèrent entre la Ferrari, la citadine, la berline, le break et
+  les deux utilitaires
+- **dégâts** : chaque choc au-dessus de 15 km/h abîme le moteur
 
-L'ancien modèle à quatre roues indépendantes (suspension, boîte six rapports,
-cercle de friction) appartenait au moteur Three.js retiré le 19 septembre
-2026, avec le moteur physique Rapier.
+Mesuré sur sol plat : Ferrari de 0 à 100 km/h en 4,0 s, virage stable à
+130 km/h, dérapage au frein à main rattrapé en 1,2 s ; berline de 0 à
+100 km/h en 10,6 s. Hors chaussée, l'adhérence et la vitesse de pointe
+chutent. La nitro (Ferrari et autres) se vide en six secondes et se recharge
+en roulant.
+
+Les **obstacles** (`src/obstacles.ts`) rendent solides les voitures garées,
+les fûts d'arbres, les mâts de lampadaires et les poteaux électriques.
 
 ### Son
 
-- **Moteur** : oscillateur en dent de scie passé dans un filtre passe-bas,
-  dont la fréquence suit la vitesse (de 58 à 243 Hz)
-- **Turbo** : sifflement sinusoïdal à 920 Hz, audible sous nitro
+Tout est synthétisé par la Web Audio API (`src/audio.ts`), sauf la musique :
+aucun fichier d'effet.
+
+- **Moteur** : trois oscillateurs accordés sur la fréquence d'allumage, dont
+  le régime suit la vitesse à travers une boîte à six rapports (il retombe à
+  chaque passage). Timbre différent pour la sportive, la voiture courante et
+  l'utilitaire, plus ouvert pédale enfoncée
+- **Pneus** : crissement proportionné à la dérive réelle des pneus arrière,
+  frottement grave dans l'herbe ; roulement et vent selon la vitesse
+- **Chocs** : tôle contre un mur ou une voiture, choc mat contre un passant,
+  dosés sur la vitesse perdue
+- **Ville** : klaxon d'un conducteur bloqué (placé à gauche ou à droite),
+  oiseaux le jour, grillons la nuit, à faible allure
+- **À pied** : pas sur l'enrobé ou dans l'herbe, portière
+- **Police** : sirène deux-tons (435 et 580 Hz), placée du côté de la
+  patrouille la plus proche
+- **Signaux** : mission lancée, livrée ou ratée, étoile gagnée, arrestation,
+  bip des dix dernières secondes d'une livraison
 - **Musique** : `public/audio/music1.mp3` lue en boucle, coupée et relancée
   par la touche `M`
 - **Intro** (`src/intro.ts`) : passages de voitures avec effet Doppler et
   panoramique, montée de bruit, grosse caisse, accord de ré mineur 9 et
-  arpège à 140 bpm, réverbération générée. Aucun fichier : tout est
-  synthétisé et programmé d'un bloc sur l'horloge audio
+  arpège à 140 bpm, réverbération générée
 
 Le son démarre au premier appui de touche ou clic : les navigateurs bloquent
 l'audio tant que la page n'a pas reçu d'interaction. C'est la raison d'être
@@ -553,7 +633,9 @@ de l'écran « appuyez sur une touche » qui précède l'intro.
   coloré
 - ciel photographique HDR servant aussi d'éclairage d'ambiance
 - **110 passants** marchant sur les 11,6 km de cheminements piétons réellement
-  cartographiés (153 trottoirs, sentiers et places). Ils s'arrêtent par deux
+  cartographiés (153 trottoirs, sentiers et places). Les plus proches du
+  joueur sont un personnage animé à squelette, les autres des silhouettes
+  instanciées. Ils s'arrêtent par deux
   pour discuter, gesticulent en parlant, se tournent vers leur interlocuteur,
   puis reprennent leur route. À l'approche de la voiture ils interrompent la
   conversation et font un pas de côté. Chacun a sa taille, son allure, ses
@@ -565,13 +647,11 @@ de l'écran « appuyez sur une touche » qui précède l'intro.
 - sols, enduits et couvertures en photos de matière CC0 (ambientCG) avec
   cartes de normales ; menuiseries, portes, génoise et feuillage en images
   Codex ; le marquage et quelques grains restent générés en canvas
-- les **maillages instanciés ne sont dessinés qu'à portée utile** : un
-  `InstancedMesh` n'étant écarté qu'en bloc par le frustum culling, les
-  3 500 arbres, les lampadaires et les véhicules garés étaient chacun
-  dessinés en entier où que se trouve la voiture. Une grille par famille
-  réordonne les instances par distance et n'en soumet que les proches, soit
-  une centaine d'arbres au centre-bourg au lieu de 3 500, sans différence
-  visible à l'écran
+- **arbres en deux niveaux de détail** : un `InstancedMesh` n'est écarté
+  qu'en bloc par le frustum culling, et les 3 500 arbres au modèle complet
+  doublaient le nombre de triangles de l'image. Seuls ceux à moins de 170 m
+  du joueur prennent le modèle complet (500 à 750 triangles), les autres une
+  version d'une centaine de triangles à la même silhouette
 - **filtrage anisotrope** poussé à 16 (plafonné par profil graphique) sur
   toutes les textures générées, la chaussée en premier : sa texture se
   répète 34 fois, et sans lui l'enrobé bavait dès la vingtaine de mètres
@@ -580,10 +660,8 @@ de l'écran « appuyez sur une touche » qui précède l'intro.
 
 Trois profils sous les touches `1`, `2` et `3` : **Performance**, **Équilibré** (par défaut)
 et **Qualité** (`src/config.ts`). Chacun règle d'un bloc l'échelle de rendu,
-les distances de brouillard, les ombres (activation, taille de carte, filtrage,
-nombre de cascades), l'occlusion ambiante et le flou de mouvement. Ces deux
-derniers ne sont actifs qu'en Qualité : ils exigent une pré-passe qui redessine
-toute la ville.
+les distances de brouillard, les ombres et le bloom. L'occlusion ambiante
+n'est active qu'en Qualité.
 
 Le changement de profil ne reconstruit pas la ville.
 
@@ -593,11 +671,14 @@ seconde, et la retrouve lentement quand la marge revient. Deux seuils
 distincts évitent que la netteté ne batte en permanence, et un plancher garde
 l'image lisible.
 
-Le coût dominant est le nombre d'appels de dessin, pas la résolution. Mesuré
-le 4 septembre 2026 en conduite (1440 × 683, image complète 8,81 ms) : la
-géométrie prend 84 % du temps, le remplissage de pixels 12 %, les ombres et le
-post-process le reste. Les petits maillages statiques sont donc fusionnés par
-matériau et par cellule de 300 m (`ThreeCityConverter.fusionner`).
+Le coût dominant est la géométrie (appels de dessin et triangles), pas la
+résolution. Mesuré le 14 novembre 2026 au point de départ (1440 × 690,
+Équilibré, avant les personnages animés) : image complète 7,72 ms, dont
+ombres 1,60 ms et remplissage de pixels 1,33 ms. Sous Babylon, la même scène
+coûtait 8,81 ms le 4 septembre. Les petits maillages statiques sont
+fusionnés par matériau et par cellule de 300 m (`fusionner`, `src/ville.ts`).
+Les performances n'ont pas été remesurées proprement depuis l'ajout des
+personnages animés.
 
 ### Stationnement et mobilier
 
@@ -641,28 +722,40 @@ lumière se recouvrent au lieu de laisser la voie dans le noir entre deux mâts.
 
 Les principales constantes sont regroupées et commentées :
 
-- `src/car.ts` → conduite arcade : accélération, traînée, adhérence, dérapage,
-  nitro, et le modèle du véhicule piloté. Le modèle physique détaillé (masse,
-  empattement, rapports de boîte) appartenait au moteur Three.js retiré le
-  19 septembre 2026 ; la conduite est aujourd'hui volontairement arcade
+- `src/car.ts` → modèle de conduite (courbe d'adhérence des pneus, frein à
+  main, amortissement du lacet) et `PROFILS`, le caractère de chaque véhicule
+- `src/police.ts` → vitesse des patrouilles, distance et délai pour les
+  semer, délai d'arrestation
+- `src/missions.ts` → allure de référence et marge des livraisons, primes
+- `src/pieton.ts`, `src/foule.ts` → vitesses de marche et de course, nombre
+  de passants animés et distance à laquelle ils le deviennent
+- `src/obstacles.ts` → rayons des obstacles
+- `scripts/blender/arbres.py` → forme de chaque essence (`ESSENCES`)
 - `src/three-city/world.js` → `ROAD_Y`, `GARDE_SOL`, densité des arbres,
   `PLACETTES_PAVEES` (emprises pavées non cartographiées)
 - `src/three-city/osm.js` → `ORIGIN`, `ROAD_WIDTH` (largeurs de voies)
 - `src/three-city/landmarks.js` → les bâtiments modélisés un par un depuis les
   photographies
-- `src/audio.ts` → `MUSIQUE`, niveaux des bus audio
+- `src/audio.ts` → `MUSIQUE`, rapports de boîte, timbres et niveaux des sons
 - `src/intro.ts` → `TEMPS` (instants clés, partagés par l'image et le son),
   volume général de l'intro (`bus.gain`)
-- `src/config.ts` → les trois profils de qualité (brouillard, ombres, SSAO)
+- `src/config.ts` → les trois profils de qualité (brouillard, ombres,
+  occlusion ambiante) et `ROAD_LIFT`, qui doit rester égal à `ROAD_Y`
 - `src/arcade.ts` → motion design : champ de vision, secousses, paliers du
   combo de dérapage
 - `src/fumee.ts` → fumée de pneus et poussière hors-piste
 - `src/three-city/flotte.js` → gabarits et cotes des véhicules du parc
 
-Depuis la console du navigateur : `__profil()` découpe le temps de frame,
-`__repartition()` classe les appels de dessin par matériau, `__comparer()`
-mesure le GPU hors vsync, `__regarder(x, y, z)` oriente la caméra et `__car`
-donne la voiture (utile pour se téléporter).
+Depuis la console du navigateur : `__comparer()` mesure le coût réel d'une
+image hors vsync (machine au repos, sinon le chiffre ne vaut rien),
+`__profil()` donne les compteurs du moteur, `__repartition()` classe les
+maillages visibles par matériau, `__regarder(x, y, z)` oriente la caméra,
+`__camLibre(x, y, z, cx, cy, cz)` la pose n'importe où, `__car` donne le
+véhicule conduit (utile pour se téléporter), `__police.signaler(2)` lance
+une poursuite, `__audio.niveau()` mesure le niveau sonore et `__ville` expose
+la ville construite. Dans l'URL : `?intro=0` saute l'intro, `?ao=voir`
+affiche la carte d'occlusion, `?csm=0` remplace les ombres en cascade par
+une carte unique.
 
 ## Le véhicule
 
@@ -697,7 +790,7 @@ Trois choix la distinguent des caméras extérieures :
 - **Elle ne s'interpole pas.** Les vues extérieures suivent le véhicule avec
   un lissage, ce qui les adoucit ; à l'intérieur, le même lissage faisait
   flotter l'habitacle à chaque accélération. La caméra est solidaire de la
-  caisse, tangage et roulis visuels compris, via `getDirectionToRef`.
+  caisse, tangage et roulis visuels compris (`car.versMonde`).
 - **Le recul commande le cadrage**, pas la hauteur. Le volant occupe une part
   de l'image qui dépend de sa distance à l'œil : à 12 cm de recul il mangeait
   69 % de la hauteur, à 55 cm il tombe à 38 % et dégage la route.
@@ -726,9 +819,16 @@ de rgsdev (CC0), converti par `scripts/preparer-flotte.mjs`. Il a remplacé
 le 4 octobre 2026 le Kenney Car Kit, dont le style « voiture jouet »
 jurait avec une ville reconstituée au LiDAR.
 
-Un maillage procédural de secours a existé dans `carmesh.js`, module de
-l'ancien moteur Three.js retiré le 19 septembre 2026 : le jeu charge
-aujourd'hui `ferrari.glb` sans repli.
+Si `ferrari.glb` ne se charge pas, une voiture de secours en boîtes prend sa
+place (`buildFallback`).
+
+### Les autres véhicules
+
+Les voitures prises en ville (parc garé ou circulation) reprennent le modèle
+rgsdev et la teinte de celle que l'on a vue : son instance est effacée et un
+véhicule conduit prend sa place au même endroit. Elles n'ont pas
+d'habitacle, leur vue conducteur est donc une caméra de capot. Les scooters
+ne se prennent pas.
 
 ## Limites connues
 
@@ -740,8 +840,18 @@ aujourd'hui `ferrari.glb` sans repli.
   dans le code derrière le drapeau `PLACAGE_PHOTO`
 - les bâtiments en fond de parcelle gardent une teinte déduite de leur
   matériau BD TOPO : aucune photographie de rue ne les atteint
-- les **feuillages** sont des lobes d'icosaèdre dentelés par une texture de
-  feuilles : la silhouette des arbres reste celle d'un nuage de boules
+- les **arbres** : le conifère porte la même grappe de feuilles que les
+  feuillus (crédible de loin, pas de près), on devine parfois une carte de
+  feuillage par la tranche en bord de couronne, et le passage d'un niveau de
+  détail à l'autre, à 170 m, peut se voir en roulant
+- les **personnages** : un seul modèle, en style à facettes, dont seules les
+  couleurs changent ; au-delà de 45 m les passants redeviennent des
+  silhouettes en capsules ; monter et descendre de voiture n'est pas animé
+- les **voitures prises** n'ont pas d'habitacle, et les dégâts ne déforment
+  pas la carrosserie
+- la **police** ne fait ni barrage ni poursuite à pied ; les panneaux de
+  signalisation et les haies se traversent encore
+- le **son** est réglé sur des niveaux mesurés, pas à l'oreille
 - vus de très près, quelques détails trahissent leur nature de texture
   (coulures, mains des passants, branchements) : ils sont réglés pour la
   distance de conduite
@@ -797,10 +907,9 @@ BD TOPO® © IGN, sous Licence Ouverte 2.0. Photographies de référence
 © Jean Michel Etchecolonea, CC BY-SA 3.0, via Wikimedia Commons, et Panoramax
 sous Licence Ouverte 2.0.
 
-Ressources visuelles ajoutées en septembre 2026, toutes sous CC0 1.0 :
-panoramas de ciel HDR Poly Haven, photos de matière ambientCG (enrobé, herbe,
-béton, pavés, grave, écorce), modèles de véhicules (Kenney Car Kit,
-remplacé en octobre 2026 par le pack rgsdev). Textures de façade, panorama
+Ressources visuelles sous CC0 1.0 : panoramas de ciel HDR Poly Haven, photos
+de matière ambientCG (enrobé, herbe, béton, pavés, grave, écorce), véhicules
+du pack rgsdev, personnage animé de Quaternius (novembre 2026). Textures de façade, panorama
 des Pyrénées et écran titre générés par Codex (OpenAI) en octobre 2026.
 
 La licence du modèle Ferrari 458 n'a pas pu être vérifiée (usage personnel). Le détail de chaque source figure dans
