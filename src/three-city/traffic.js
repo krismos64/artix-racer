@@ -179,6 +179,8 @@ export class Circulation {
 
     for (let i = 0; i < this.agents.length; i++) {
       const a = this.agents[i];
+      // Véhicule pris par le joueur : il a quitté la circulation.
+      if (a.retire) continue;
       const na = this.noeuds[a.noeud], nb = this.noeuds[a.cible];
       const dx = nb.x - na.x, dz = nb.z - na.z;
       const len = Math.hypot(dx, dz) || 1e-6;
@@ -203,6 +205,9 @@ export class Circulation {
       const versJoueurX = posVoiture.x - px, versJoueurZ = posVoiture.z - pz;
       const dJoueur = Math.hypot(versJoueurX, versJoueurZ);
       if (dJoueur < 12 && (versJoueurX * ux + versJoueurZ * uz) / (dJoueur || 1) > 0.5) cible = 0;
+      // Un piéton tout près, de n'importe quel côté : le conducteur attend.
+      // C'est ce qui laisse au joueur le temps d'aller jusqu'à la portière.
+      if (posVoiture.aPied && dJoueur < 4.5) cible = 0;
       for (let k2 = 0; k2 < this.agents.length && cible > 0; k2++) {
         if (k2 === i) continue;
         const b = this.agents[k2];
@@ -296,4 +301,27 @@ export class Circulation {
     }
     for (const mesh of this._tous) mesh.instanceMatrix.needsUpdate = true;
   }
+
+  // Le joueur prend le volant de ce véhicule : ses instances sont effacées,
+  // un véhicule conduit le remplace (main.ts). Renvoie sa teinte.
+  retirer(a) {
+    const couleur = new THREE.Color(0xffffff);
+    const caisse = this.caisses[a.type];
+    if (caisse.instanceColor) caisse.getColorAt(a.indexType, couleur);
+    const i = this.agents.indexOf(a);
+    caisse.setMatrixAt(a.indexType, this._zero);
+    this.details[a.type]?.setMatrixAt(a.indexType, this._zero);
+    for (let n = 0; n < 4; n++) this.roues.setMatrixAt(i * 4 + n, this._zero);
+    for (let n = 0; n < 2; n++) {
+      this.feuxAr.setMatrixAt(i * 2 + n, this._zero);
+      this.feuxAv.setMatrixAt(i * 2 + n, this._zero);
+    }
+    for (const mesh of this._tous) mesh.instanceMatrix.needsUpdate = true;
+    a.retire = true;
+    // Hors du monde : ni les autres agents ni les collisions ne le voient.
+    a._px = 1e9;
+    a._pz = 1e9;
+    return couleur.getHex();
+  }
 }
+

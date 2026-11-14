@@ -76,13 +76,32 @@ export class KeyboardInput {
 // décrocher l'arrière au frein à main ou à l'accélération en virage.
 // L'ancien modèle n'avait qu'une vitesse scalaire le long du cap : la
 // voiture suivait un rail et un « dérapage » n'était qu'un drapeau.
-const MASSE = 1500;            // kg, une 458 pèse 1 485 kg
-const INERTIE_LACET = 2300;    // kg·m², résistance à la mise en rotation
-const AVANT = 1.25;            // centre de gravité → essieu avant (m)
-const ARRIERE = 1.40;          // centre de gravité → essieu arrière (m)
-const EMPATTEMENT = AVANT + ARRIERE;
-const VOIE = 1.68;             // largeur entre roues gauches et droites
-const HAUTEUR_CG = .46;        // commande le transfert de charge au freinage
+// Ce qui distingue un véhicule d'un autre : masse, moteur, tenue de route.
+// La Ferrari fixe l'échelle ; les modèles de la flotte sont calés sur des
+// ordres de grandeur réels (une citadine met 12 s de 0 à 100 km/h, un
+// fourgon chargé 18 s et se couche dans les virages).
+export interface ProfilConduite {
+  masse: number;       // kg
+  inertie: number;     // kg·m², résistance à la mise en rotation
+  avant: number;       // centre de gravité → essieu avant (m)
+  arriere: number;     // centre de gravité → essieu arrière (m)
+  voie: number;        // largeur entre roues gauches et droites
+  hauteurCG: number;   // commande le transfert de charge et le roulis
+  accel: number;       // m/s² à l'arrêt, pleine pédale
+  pointe: number;      // m/s
+  tenue: number;       // multiplicateur d'adhérence des pneus
+  roulis: number;      // multiplicateur du roulis de caisse
+}
+
+export const PROFILS: Record<string, ProfilConduite> = {
+  ferrari: { masse: 1500, inertie: 2300, avant: 1.25, arriere: 1.40, voie: 1.68, hauteurCG: .46, accel: 10.4, pointe: 52, tenue: 1, roulis: 1 },
+  compacte: { masse: 1150, inertie: 1700, avant: 1.05, arriere: 1.45, voie: 1.50, hauteurCG: .55, accel: 3.4, pointe: 46, tenue: .78, roulis: 1.7 },
+  berline: { masse: 1400, inertie: 2400, avant: 1.20, arriere: 1.55, voie: 1.56, hauteurCG: .55, accel: 4.2, pointe: 54, tenue: .82, roulis: 1.5 },
+  break: { masse: 1750, inertie: 3000, avant: 1.25, arriere: 1.50, voie: 1.60, hauteurCG: .68, accel: 3.6, pointe: 50, tenue: .76, roulis: 2 },
+  fourgonnette: { masse: 1600, inertie: 2900, avant: 1.15, arriere: 1.60, voie: 1.58, hauteurCG: .78, accel: 2.8, pointe: 42, tenue: .7, roulis: 2.4 },
+  fourgon: { masse: 2400, inertie: 5200, avant: 1.45, arriere: 2.10, voie: 1.74, hauteurCG: .95, accel: 2.2, pointe: 38, tenue: .66, roulis: 2.8 },
+};
+
 const PESANTEUR = 9.81;
 // Courbe d'adhérence latérale (forme de Pacejka réduite à deux coefficients) :
 // la force monte vite avec la dérive, plafonne vers 8°, puis retombe un peu.
@@ -98,6 +117,9 @@ const RAYON_CAISSE = 1.05;
 
 export class ArcadeCar {
   readonly root: THREE.Group;
+  // Caractère du véhicule : la Ferrari par défaut, remplacé quand on
+  // habille la voiture d'un modèle de la flotte.
+  profil: ProfilConduite = PROFILS.ferrari;
   steering = 0;
   heading: number;
   onRoad = true;
@@ -277,7 +299,7 @@ export class ArcadeCar {
       // bord dans une seule primitive de 20 563 sommets. La masquer entière
       // ramène le dossier devant l'œil, la garder troue le tableau de bord.
       // Elle est coupée en deux à l'exécution : une copie réduite aux
-      // triangles de l'AVANT (la planche) sert en vue conducteur, l'original
+      // triangles de l'this.profil.avant (la planche) sert en vue conducteur, l'original
       // reste pour les vues extérieures.
       const garniture = gltf.scene.getObjectByName('interior_dark') as THREE.Mesh | undefined;
       if (garniture?.isMesh) {
@@ -297,7 +319,8 @@ export class ArcadeCar {
   // Habille la voiture d'un modèle de la flotte (voiture garée que le joueur
   // vient de prendre) : caisse teintée, détails à la palette du kit, quatre
   // roues qui tournent et braquent. Remplace `loadModel`.
-  habillerFlotte(modele: ModeleFlotte, palette: THREE.Texture, couleur: number, echelle: number, geometrieRoue: THREE.BufferGeometry): void {
+  habillerFlotte(modele: ModeleFlotte, palette: THREE.Texture, couleur: number, echelle: number, geometrieRoue: THREE.BufferGeometry, type = 'berline'): void {
+    this.profil = PROFILS[type] ?? PROFILS.berline;
     const caisse = new THREE.Mesh(modele.peinture, new THREE.MeshPhysicalMaterial({
       color: couleur, roughness: .38, metalness: .12, clearcoat: 1, clearcoatRoughness: .08,
     }));
@@ -370,7 +393,7 @@ export class ArcadeCar {
   }
 
   // Copie d'un maillage ne gardant que les triangles situés en deçà de
-  // `seuil` sur l'axe Z local, c'est-à-dire vers l'AVANT du véhicule (z
+  // `seuil` sur l'axe Z local, c'est-à-dire vers l'this.profil.avant du véhicule (z
   // négatif dans le repère du modèle). Le tri se fait sur le CENTRE de chaque
   // triangle : découper au sommet près laisserait des trous.
   private decouperCabine(source: THREE.Mesh, seuil: number): THREE.Mesh | null {
@@ -447,10 +470,10 @@ export class ArcadeCar {
     const p = this.root.position;
     const ax = Math.sin(this.heading), az = Math.cos(this.heading);
     const gx = Math.cos(this.heading), gz = -Math.sin(this.heading);
-    const solAvant = this.world.surfaceY(p.x + ax * AVANT, p.z + az * AVANT);
-    const solArriere = this.world.surfaceY(p.x - ax * ARRIERE, p.z - az * ARRIERE);
-    const solGauche = this.world.surfaceY(p.x + gx * VOIE / 2, p.z + gz * VOIE / 2);
-    const solDroite = this.world.surfaceY(p.x - gx * VOIE / 2, p.z - gz * VOIE / 2);
+    const solAvant = this.world.surfaceY(p.x + ax * this.profil.avant, p.z + az * this.profil.avant);
+    const solArriere = this.world.surfaceY(p.x - ax * this.profil.arriere, p.z - az * this.profil.arriere);
+    const solGauche = this.world.surfaceY(p.x + gx * this.profil.voie / 2, p.z + gz * this.profil.voie / 2);
+    const solDroite = this.world.surfaceY(p.x - gx * this.profil.voie / 2, p.z - gz * this.profil.voie / 2);
     const sol = (solAvant + solArriere + solGauche + solDroite) / 4;
     p.y += (sol - p.y) * Math.min(1, dt * 14);
 
@@ -458,10 +481,10 @@ export class ArcadeCar {
     // prend du roulis vers l'extérieur du virage, par-dessus la pente du sol.
     // Une rotation X positive baisse le nez, une rotation Z positive lève le
     // flanc gauche.
-    const tangageSol = -Math.atan2(solAvant - solArriere, EMPATTEMENT);
-    const roulisSol = Math.atan2(solGauche - solDroite, VOIE);
+    const tangageSol = -Math.atan2(solAvant - solArriere, (this.profil.avant + this.profil.arriere));
+    const roulisSol = Math.atan2(solGauche - solDroite, this.profil.voie);
     const tangage = tangageSol + Math.max(-.035, Math.min(.045, -this.accelAvant * .0032));
-    const roulis = roulisSol + Math.max(-.07, Math.min(.07, this.accelCote * .0075));
+    const roulis = roulisSol + Math.max(-.11, Math.min(.11, this.accelCote * .0075 * this.profil.roulis));
     this.visualPitch += (tangage - this.visualPitch) * Math.min(1, dt * 7);
     this.visualRoll += (roulis - this.visualRoll) * Math.min(1, dt * 7);
     this.root.rotation.set(this.visualPitch, this.heading, this.visualRoll);
@@ -481,21 +504,21 @@ export class ArcadeCar {
   // Un pas de dynamique : forces des pneus, du moteur et de l'air, puis
   // vitesses. Renvoie l'angle de dérive de l'essieu arrière.
   private integrer(h: number, throttle: number, reverse: number, freinMain: number): number {
-    const adherence = this.onRoad ? ADHERENCE_ROUTE : ADHERENCE_TERRE;
-    const vMax = this.onRoad ? (this.boosting ? 66 : 52) : 22;
+    const adherence = (this.onRoad ? ADHERENCE_ROUTE : ADHERENCE_TERRE) * this.profil.tenue;
+    const vMax = this.onRoad ? this.profil.pointe * (this.boosting ? 1.27 : 1) : 22;
 
     // Force longitudinale. Moteur : 10,4 m/s² à l'arrêt (15,2 sous nitro),
     // qui s'éteint en approchant la vitesse de pointe. Marche arrière
     // plafonnée à 40 km/h. La pédale de frein (S) freine tant qu'on avance.
     let pousse = 0;
     if (throttle) {
-      const accel = this.onRoad ? (this.boosting ? 15.2 : 10.4) : 5;
-      pousse += MASSE * accel * Math.max(0, 1 - Math.max(0, this.vAvant) / vMax);
+      const accel = this.onRoad ? this.profil.accel * (this.boosting ? 1.46 : 1) : 5;
+      pousse += this.profil.masse * accel * Math.max(0, 1 - Math.max(0, this.vAvant) / vMax);
     }
     let freinage = 0;
     if (reverse) {
       if (this.vAvant > .8) freinage = 17;
-      else pousse -= MASSE * 5.8 * Math.max(0, 1 - Math.max(0, -this.vAvant) / 11);
+      else pousse -= this.profil.masse * 5.8 * Math.max(0, 1 - Math.max(0, -this.vAvant) / 11);
     }
     // Frein à main : roues arrière bloquées, donc peu de décélération (un
     // pneu qui glisse freine moins qu'un pneu qui roule) mais plus aucun
@@ -504,26 +527,26 @@ export class ArcadeCar {
     // Air et roulement : faibles sur route, forts dans l'herbe.
     const trainee = this.onRoad ? .65 + Math.abs(this.vAvant) * .018 : 2.2 + Math.abs(this.vAvant) * .16;
     let forceAvant = pousse;
-    const resistance = MASSE * (freinage + (throttle || reverse ? trainee * .35 : trainee));
+    const resistance = this.profil.masse * (freinage + (throttle || reverse ? trainee * .35 : trainee));
     // Les freins s'opposent au mouvement sans jamais l'inverser.
-    const arretPossible = MASSE * Math.abs(this.vAvant) / h;
+    const arretPossible = this.profil.masse * Math.abs(this.vAvant) / h;
     forceAvant -= Math.sign(this.vAvant) * Math.min(resistance, arretPossible);
 
     // Charge par essieu : le freinage charge l'avant, l'accélération
     // l'arrière. Un essieu délesté a moins d'adhérence.
-    const transfert = MASSE * this.accelAvant * HAUTEUR_CG / EMPATTEMENT;
-    const chargeAvant = Math.max(MASSE * PESANTEUR * .15, MASSE * PESANTEUR * ARRIERE / EMPATTEMENT - transfert);
-    const chargeArriere = Math.max(MASSE * PESANTEUR * .15, MASSE * PESANTEUR * AVANT / EMPATTEMENT + transfert);
+    const transfert = this.profil.masse * this.accelAvant * this.profil.hauteurCG / (this.profil.avant + this.profil.arriere);
+    const chargeAvant = Math.max(this.profil.masse * PESANTEUR * .15, this.profil.masse * PESANTEUR * this.profil.arriere / (this.profil.avant + this.profil.arriere) - transfert);
+    const chargeArriere = Math.max(this.profil.masse * PESANTEUR * .15, this.profil.masse * PESANTEUR * this.profil.avant / (this.profil.avant + this.profil.arriere) + transfert);
 
     // Angle de dérive de chaque essieu : vitesse du pneu décomposée dans son
     // propre repère. À très basse vitesse, le dénominateur est plancher à
     // 2 m/s, sinon l'angle saute de ±90° au moindre frémissement.
     const d = this.steering, cd = Math.cos(d), sd = Math.sin(d);
-    const vLatAvant = this.vCote + AVANT * this.lacet;
+    const vLatAvant = this.vCote + this.profil.avant * this.lacet;
     const longAvant = this.vAvant * cd + vLatAvant * sd;
     const latAvant = -this.vAvant * sd + vLatAvant * cd;
     const deriveAvant = Math.atan2(latAvant, Math.max(2, Math.abs(longAvant)));
-    const latArriere = this.vCote - ARRIERE * this.lacet;
+    const latArriere = this.vCote - this.profil.arriere * this.lacet;
     const deriveArriere = Math.atan2(latArriere, Math.max(2, Math.abs(this.vAvant)));
 
     // L'arrière partage son adhérence entre la traction et le guidage : à
@@ -539,12 +562,12 @@ export class ArcadeCar {
     const forceLatAvant = pneu(deriveAvant, adherence * chargeAvant);
     const forceLatArriere = pneu(deriveArriere, adherenceArriere * chargeArriere);
 
-    const accelAvant = (forceAvant - forceLatAvant * sd) / MASSE;
-    const accelCote = (forceLatAvant * cd + forceLatArriere) / MASSE;
+    const accelAvant = (forceAvant - forceLatAvant * sd) / this.profil.masse;
+    const accelCote = (forceLatAvant * cd + forceLatArriere) / this.profil.masse;
     // Amortissement du lacet : il représente ce que le modèle ne calcule pas
     // (pneus déformés, carrossage) et laisse au joueur le temps de
     // contre-braquer au clavier.
-    const accelLacet = (AVANT * forceLatAvant * cd - ARRIERE * forceLatArriere) / INERTIE_LACET
+    const accelLacet = (this.profil.avant * forceLatAvant * cd - this.profil.arriere * forceLatArriere) / this.profil.inertie
       - this.lacet * 1.4;
     this.accelAvant += (accelAvant - this.accelAvant) * Math.min(1, h * 12);
     this.accelCote += (accelCote - this.accelCote) * Math.min(1, h * 12);
@@ -561,7 +584,7 @@ export class ArcadeCar {
     const lent = Math.max(0, 1 - Math.abs(this.vAvant) / 3);
     if (lent > 0) {
       this.vCote *= Math.exp(-h * 9 * lent);
-      const lacetRoulant = this.vAvant * Math.tan(d) / EMPATTEMENT;
+      const lacetRoulant = this.vAvant * Math.tan(d) / (this.profil.avant + this.profil.arriere);
       this.lacet += (lacetRoulant - this.lacet) * Math.min(1, h * 10 * lent);
     }
     this.heading += this.lacet * h;

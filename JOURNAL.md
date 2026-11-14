@@ -2,6 +2,28 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 3) : conduite par modèle, passants percutés, circulation à prendre
+
+- **Profils de conduite** (`PROFILS`, car.ts) : masse, inertie, empattement,
+  hauteur du centre de gravité, accélération, pointe, tenue et roulis par
+  modèle. Mesuré sur sol plat forcé : berline 0 à 100 km/h en 10,6 s
+  (Ferrari 4,0 s), roulis de 0,11 rad en virage. Compacte, break,
+  fourgonnette et fourgon ont leur profil mais n'ont pas été chronométrés.
+- **Passants** (pedestrians.js) : une voiture à plus de 36 km/h à moins de
+  16 m les fait courir quatre secondes ; percutés à plus de 11 km/h, ils
+  tombent à la renverse (toutes leurs pièces basculent d'un bloc autour des
+  pieds), sont projetés jusqu'à 7 m, restent trois secondes à terre et se
+  relèvent. Le joueur perd 500 points, la voiture 20 % de sa vitesse.
+  Vérifié : passant couché, projeté de 3,7 m.
+- **Prendre un véhicule de la circulation** : la circulation s'arrête quand
+  le joueur à pied est à moins de 4,5 m (sinon la voiture repartait avant
+  qu'il atteigne la portière), puis F à moins de 3,2 m. `Circulation.retirer`
+  efface les instances et renvoie la teinte.
+- Score plancher à zéro ; invite « descendre de voiture » masquée pendant le
+  Tour d'Artix.
+- **Non fait** : dégâts visibles, panneaux et poteaux solides, conducteur
+  qui sort de sa voiture, police ou conséquences, missions.
+
 ## 2026-11-14 (suite 2) : obstacles solides, voitures garées à prendre, nuit sans gel
 
 - **Obstacles** (`src/obstacles.ts`) : voitures garées (rectangle orienté),

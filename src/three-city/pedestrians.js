@@ -438,6 +438,14 @@ export class Pietons {
     // maillage/signe sont figées ici : les recréer à chaque passant allouait
     // deux tableaux et deux sous-tableaux par membre animé.
     this._m = new THREE.Matrix4();
+    // Travail de la chute d'un passant percuté.
+    this._axeChute = new THREE.Vector3();
+    this._qChute = new THREE.Quaternion();
+    this._bascule = new THREE.Matrix4();
+    this._pied = new THREE.Vector3();
+    this._pied2 = new THREE.Vector3();
+    // Passants percutés depuis la dernière lecture (lu par le jeu).
+    this.chocs = 0;
     this._q = new THREE.Quaternion();
     this._qq = new THREE.Quaternion();
     this._euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -551,7 +559,28 @@ export class Pietons {
       // restent plantés au milieu du passage, ce qui casse l'illusion.
       if (posVoiture) {
         const pp = this.position(a);
+        // Position RENDUE du passant : son pas de côté et sa projection
+        // comptent, c'est là que la voiture le touche.
+        const rx = pp.x + (a.ecart ? Math.sin(a.ecartCap) * a.ecart : 0) + (a.projX ?? 0);
+        const rz = pp.z + (a.ecart ? Math.cos(a.ecartCap) * a.ecart : 0) + (a.projZ ?? 0);
         const dv = Math.hypot(pp.x - posVoiture.x, pp.z - posVoiture.z);
+        const allure = Math.abs(posVoiture.vitesse ?? 0);
+        // Percuté : une voiture à plus de 11 km/h passe à moins de 1,2 m.
+        // Le passant tombe à la renverse, loin de la voiture, projeté
+        // d'autant plus loin qu'elle roulait vite, puis se relève.
+        if (!(a.chute > 0) && allure > 3 && Math.hypot(rx - posVoiture.x, rz - posVoiture.z) < 1.2) {
+          a.chute = 4.2;
+          a.chuteCap = Math.atan2(rx - posVoiture.x, rz - posVoiture.z);
+          const jet = Math.min(7, allure * 0.28);
+          a.projX = (a.projX ?? 0) + Math.sin(a.chuteCap) * jet;
+          a.projZ = (a.projZ ?? 0) + Math.cos(a.chuteCap) * jet;
+          a.etat = 'marche';
+          a.interlocuteur = -1;
+          this.chocs++;
+        }
+        // Fuite : une voiture lancée (plus de 36 km/h) à moins de 16 m fait
+        // courir le passant pendant quatre secondes.
+        if (allure > 10 && dv < 16) a.fuite = 4;
         if (dv < 9) {
           if (a.etat === 'discute') {
             const autre = this.agents[a.interlocuteur];
@@ -611,7 +640,10 @@ export class Pietons {
         }
       } else {
         // --- Marche ---
-        a.avance += (a.vitesse * dt) / longueur;
+        // À terre, on ne marche pas ; en fuite, on court (3,2 fois le pas).
+        if (a.fuite > 0) a.fuite -= dt;
+        const pas = a.chute > 0 ? 0 : a.fuite > 0 ? 3.2 : 1;
+        a.avance += (a.vitesse * pas * dt) / longueur;
         while (a.avance >= 1) {
           a.avance -= 1;
           const precedent = a.noeud;
@@ -629,6 +661,17 @@ export class Pietons {
         p.x += Math.sin(a.ecartCap) * a.ecart;
         p.z += Math.cos(a.ecartCap) * a.ecart;
       }
+      // Projection après un choc : elle se résorbe quand le passant s'est
+      // relevé, il regagne son trottoir en marchant.
+      if (a.projX || a.projZ) {
+        p.x += a.projX;
+        p.z += a.projZ;
+        if (!(a.chute > 0)) {
+          a.projX *= Math.exp(-dt * 0.9);
+          a.projZ *= Math.exp(-dt * 0.9);
+          if (Math.hypot(a.projX, a.projZ) < 0.03) { a.projX = 0; a.projZ = 0; }
+        }
+      }
       const sol = this.relief ? this.relief.hauteurRoute(p.x, p.z) : 0;
       const base = sol + this.roadY;
       const T = a.taille;
@@ -645,7 +688,8 @@ export class Pietons {
       q.setFromAxisAngle(axeY, cap);
 
       // Balancement des membres : cadence proportionnelle à la vitesse.
-      const cadence = a.etat === 'discute' ? 0 : temps * a.vitesse * 4.4 + a.phase;
+      const cadence = a.etat === 'discute' || a.chute > 0 ? 0
+        : temps * a.vitesse * 4.4 * (a.fuite > 0 ? 2.1 : 1) + a.phase;
       const swing = Math.sin(cadence) * 0.42;
       // Léger tangage du corps au rythme des pas.
       const bob = a.etat === 'discute' ? 0 : Math.abs(Math.sin(cadence)) * 0.022;
@@ -728,6 +772,30 @@ export class Pietons {
           qq, echelle,
         );
         this.bras.setMatrixAt(k, m);
+      }
+
+      // Chute : toutes les pièces du passant basculent d'un bloc autour de
+      // ses pieds. 0,35 s pour tomber, 3 s à terre, 0,85 s pour se relever.
+      if (a.chute > 0) {
+        a.chute -= dt;
+        const ecoule = 4.2 - a.chute;
+        const couche = ecoule < 0.35 ? ecoule / 0.35 : a.chute < 0.85 ? Math.max(0, a.chute / 0.85) : 1;
+        const angle = couche * couche * (3 - 2 * couche) * Math.PI * 0.47;
+        // Axe horizontal perpendiculaire à la direction de chute.
+        this._axeChute.set(Math.cos(a.chuteCap), 0, -Math.sin(a.chuteCap));
+        this._qChute.setFromAxisAngle(this._axeChute, angle);
+        this._bascule.makeRotationFromQuaternion(this._qChute);
+        this._bascule.setPosition(
+          this._pied.set(p.x, base, p.z).sub(this._pied2.set(p.x, base, p.z).applyQuaternion(this._qChute)));
+        const n2 = this.effectifMax;
+        for (const [mesh, rangs] of [[this.corps, [i]], [this.tete, [i]], [this.cheveux, [i]],
+          [this.jambes, [i, n2 + i]], [this.pieds, [i, n2 + i]], [this.bras, [i, n2 + i]]]) {
+          for (const k of rangs) {
+            mesh.getMatrixAt(k, m);
+            m.premultiply(this._bascule);
+            mesh.setMatrixAt(k, m);
+          }
+        }
       }
     }
 

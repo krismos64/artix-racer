@@ -56,12 +56,16 @@ export interface Ville {
   vitrages: THREE.MeshStandardMaterial | null;
   // Contenu animé (passants, circulation, touffes d'herbe), à appeler à
   // chaque image depuis la boucle de jeu.
-  vivant: { update(dt: number, temps: number, x: number, z: number): void } | null;
+  // `vitesse` : celle du véhicule du joueur (0 à pied). Renvoie le nombre
+  // de passants percutés pendant l'image.
+  vivant: { update(dt: number, temps: number, x: number, z: number, vitesse: number, aPied: boolean): number } | null;
   // Agents de la circulation, lus par les collisions (src/traffic.ts).
   circulation: AgentCirculation[];
   // Parc garé (pour retirer un véhicule que le joueur prend), flotte de
   // modèles, pieds d'arbres.
   parc: AnyRecord | null;
+  // Circulation (pour retirer un véhicule que le joueur prend).
+  trafic: AnyRecord | null;
   flotte: AnyRecord | null;
   troncs: Array<{ x: number; z: number; h: number }>;
   stats: { maillages: number; fusionnes: number };
@@ -406,6 +410,7 @@ export async function construireVille(
   // ---- Contenu animé : passants, circulation, touffes d'herbe -------------
   let vivant: Ville['vivant'] = null;
   let agentsCirculation: AgentCirculation[] = [];
+  let trafic: AnyRecord | null = null;
   try {
     // L'herbe s'écarte de la chaussée et de ses abords : grille de segments
     // de voies au pas de 100 m.
@@ -465,16 +470,19 @@ export async function construireVille(
     // Vingt-quatre véhicules : instanciés par modèle, leur nombre ne change
     // pas celui des appels de dessin.
     const circulation = new (Circulation as any)(data, terrain, ROAD_Y, 24, flotte);
-    if (circulation.effectif) agentsCirculation = circulation.agents;
+    if (circulation.effectif) { agentsCirculation = circulation.agents; trafic = circulation; }
     if (pietons.effectif) anime.add(pietons.group);
     if (circulation.effectif) anime.add(circulation.group);
     preparer(anime, vus);
     scene.add(anime);
     vivant = {
-      update(dt: number, temps: number, x: number, z: number): void {
-        if (pietons.effectif) pietons.update(Math.min(dt, .1), temps, { x, z });
-        if (circulation.effectif) circulation.update(Math.min(dt, .1), { x, z });
+      update(dt: number, temps: number, x: number, z: number, vitesse: number, aPied: boolean): number {
+        if (pietons.effectif) pietons.update(Math.min(dt, .1), temps, { x, z, vitesse });
+        if (circulation.effectif) circulation.update(Math.min(dt, .1), { x, z, aPied });
         touffes.maj(x, z, true);
+        const chocs = pietons.chocs ?? 0;
+        pietons.chocs = 0;
+        return chocs;
       },
     };
   } catch (error) {
@@ -488,6 +496,7 @@ export async function construireVille(
     vivant,
     circulation: agentsCirculation,
     parc,
+    trafic,
     flotte,
     troncs: (world.troncs ?? []) as Array<{ x: number; z: number; h: number }>,
     foyers: (world.foyers ?? []) as Array<{ x: number; y: number; z: number }>,

@@ -17,6 +17,10 @@ export interface AgentCirculation {
   _uz?: number;
   vitesse: number;
   arret?: number;
+  type?: string;
+  capLisse?: number | null;
+  // Posé quand le joueur a pris ce véhicule.
+  retire?: boolean;
 }
 
 // Frôlement : passer à moins de 5 m d'un véhicule, à plus de 50 km/h, puis
@@ -63,7 +67,7 @@ export class TrafficSystem {
 
     for (let i = 0; i < this.agents.length; i++) {
       const agent = this.agents[i], suivi = this.suivis[i];
-      if (agent._px == null || agent._pz == null) continue;
+      if (agent.retire || agent._px == null || agent._pz == null) continue;
       const dx = playerX - agent._px, dz = playerZ - agent._pz;
       const distance = Math.hypot(dx, dz);
       if (distance > FROLE_SORTIE + 4) {

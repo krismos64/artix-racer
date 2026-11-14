@@ -22,7 +22,7 @@ import { Obstacles, type Mobile, type PlaceGaree } from './obstacles';
 import { geometrieRoue } from './three-city/parkedcars.js';
 import { Marcheur } from './pieton';
 import type { ContexteMesure } from './profil';
-import { TrafficSystem } from './traffic';
+import { TrafficSystem, type AgentCirculation } from './traffic';
 import type { CityMapData } from './types';
 import { construireVille } from './ville';
 import { ArtixWorld } from './world';
@@ -651,7 +651,7 @@ async function start(): Promise<void> {
 
   // Véhicule à portée du marcheur : d'abord ceux qu'il a déjà conduits,
   // sinon une voiture garée dont le modèle est chargé.
-  const vehiculeAPortee = (): { voiture?: ArcadeCar; place?: PlaceGaree } | null => {
+  const vehiculeAPortee = (): { voiture?: ArcadeCar; place?: PlaceGaree; agent?: AgentCirculation } | null => {
     const p = marcheur.root.position;
     let voiture: ArcadeCar | undefined, distance = 3.4;
     for (const v of voitures) {
@@ -660,7 +660,15 @@ async function start(): Promise<void> {
     }
     if (voiture) return { voiture };
     const place = roueFlotte ? obstacles.vehiculeProche(p.x, p.z, 1.5) : null;
-    return place && ville.flotte?.[place.type] ? { place } : null;
+    if (place && ville.flotte?.[place.type]) return { place };
+    // Véhicule de la circulation, à l'arrêt (il freine devant un piéton) et
+    // à moins de 3 m.
+    if (!roueFlotte || !ville.trafic) return null;
+    for (const agent of ville.circulation) {
+      if (agent.retire || agent._px == null || agent._pz == null || !agent.type) continue;
+      if (agent.vitesse < 1.5 && Math.hypot(agent._px - p.x, agent._pz - p.z) < 3.2 && ville.flotte?.[agent.type]) return { agent };
+    }
+    return null;
   };
 
   const basculerAPied = (): void => {
@@ -689,8 +697,18 @@ async function start(): Promise<void> {
       const place = cible.place;
       suivante = new ArcadeCar(scene, world, { x: place.x, z: place.z, heading: place.cap });
       suivante.habillerFlotte(ville.flotte![place.type], ville.flotte!.palette, place.couleur,
-        place.echelle ?? 1, roueFlotte);
+        place.echelle ?? 1, roueFlotte, place.type);
       ville.parc!.retirer(place);
+      voitures.push(suivante);
+    } else if (cible.agent && roueFlotte && ville.trafic) {
+      // Véhicule de la circulation : il quitte le trafic, un véhicule
+      // conduit le remplace au même endroit, même cap, même teinte.
+      const agent = cible.agent;
+      const x = agent._px!, z = agent._pz!;
+      const cap = agent.capLisse ?? Math.atan2(agent._ux ?? 0, agent._uz ?? 1);
+      const couleur = ville.trafic.retirer(agent) as number;
+      suivante = new ArcadeCar(scene, world, { x, z, heading: cap });
+      suivante.habillerFlotte(ville.flotte![agent.type!], ville.flotte!.palette, couleur, 1, roueFlotte, agent.type);
       voitures.push(suivante);
     }
     if (!suivante) return;
@@ -885,7 +903,15 @@ async function start(): Promise<void> {
       arcade.accelerateur = !aPied && input.down('z', 'w', 'arrowup', 'throttle');
       if (aPied) marcheur.update(dt, input);
       else if (!arcade.fige && !gele) car.update(dtJeu, input);
-      ville.vivant?.update(dtJeu, maintenant / 1000, joueur().x, joueur().z);
+      // Passants percutés : secousse de caméra et points retirés. Un choc
+      // contre un passant ne fait pas rebondir la voiture, il la freine.
+      const renverses = ville.vivant?.update(dtJeu, maintenant / 1000, joueur().x, joueur().z,
+        aPied ? 0 : car.vitesseSol, aPied) ?? 0;
+      if (renverses > 0) {
+        car.impact = Math.max(car.impact, 9);
+        car.speed *= .8;
+        session.ajouterPoints(-500 * renverses);
+      }
       // À pied, la circulation n'a personne à percuter : seuls les chocs et
       // les frôlements en voiture comptent.
       if (!aPied && !gele && traffic.update(car.root.position.x, car.root.position.z, maintenant / 1000, car.speed)) car.hitTraffic();
@@ -1003,9 +1029,10 @@ async function start(): Promise<void> {
     const invitation = !playing ? '' : aPied
       ? ((): string => {
         const cible = vehiculeAPortee();
-        return cible?.voiture ? 'F  monter en voiture' : cible?.place ? 'F  prendre ce véhicule' : '';
+        return cible?.voiture ? 'F  monter en voiture' : cible?.place || cible?.agent ? 'F  prendre ce véhicule' : '';
       })()
-      : (car.vitesseSol < 2.5 ? 'F  descendre de voiture' : '');
+      // Pas d'invite pendant le Tour d'Artix : on y reste au volant.
+      : (car.vitesseSol < 2.5 && !session.objective && !arcade.fige ? 'F  descendre de voiture' : '');
     if (invite.textContent !== invitation) {
       invite.textContent = invitation;
       invite.classList.toggle('hidden', !invitation);

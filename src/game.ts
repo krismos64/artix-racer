@@ -174,7 +174,8 @@ export class GameSession {
 
   // Points gagnés hors du calcul de distance (combo de dérapage).
   ajouterPoints(points: number): void {
-    this.score += points;
+    // Jamais sous zéro : le compteur à six chiffres n'a pas de signe.
+    this.score = Math.max(0, this.score + points);
   }
 
   get objective(): Point2 | null {

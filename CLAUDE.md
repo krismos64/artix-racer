@@ -62,8 +62,9 @@ fictifs et voitures réalistes.
    (`CSMShadowNode`), ambiances, pipeline de post-traitement, boucle de jeu,
    HUD.
 5. **`src/lieux.ts`** : table des lieux-dits affichés dans le HUD.
-6. Jeu autour du rendu : `car.ts` (Ferrari, modèle de conduite à deux
-   essieux avec dérive des pneus et transfert de charge, vue conducteur),
+6. Jeu autour du rendu : `car.ts` (véhicule conduit : Ferrari ou modèle de
+   la flotte pris en ville, modèle de conduite à deux essieux avec dérive
+   des pneus et transfert de charge, un profil `PROFILS` par modèle),
    `pieton.ts` (joueur à pied, touche F : personnage articulé, marche
    calculée), `obstacles.ts` (voitures garées, arbres et mâts solides ;
    `world.bloque` les combine au bâti ; c'est aussi par lui qu'on prend une
