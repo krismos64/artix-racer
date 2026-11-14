@@ -2,6 +2,48 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite) : ombres, faux intérieurs, conduite, circulation, marche à pied
+
+Quatre chantiers enchaînés sur la branche `port-three-natif`, chacun vérifié
+dans Chrome.
+
+- **Ombres** : fûts et feuillages projettent leur ombre (ils ne le
+  faisaient pas, par économie). Soleil relevé (2,0 → 2,9) et ambiance
+  baissée (panorama 1,5 → 0,9, hémisphère 0,25 → 0,1) : à l'ancien dosage,
+  l'ombre d'un platane se devinait à peine. Les bâtiments modélisés à la
+  main projettent la leur par un VOLUME D'OMBRE fusionné (`volumesOmbre`,
+  ville.ts) : inscrits maillage par maillage, ils portaient les ombres de
+  3,59 à 6,90 ms et l'image à 12,96 ms, la résolution dynamique baissait.
+- **Occlusion ambiante** (profil Qualité) : rayon 2,5, carte floutée (elle
+  sortait tramée). `?ao=voir` affiche la carte seule.
+- **Faux intérieurs** (`src/vitrages.ts`) : chaque vitre montre une pièce en
+  parallaxe, calculée dans le matériau (rayon lancé dans une boîte, repère
+  tiré des dérivées de la position et des UV). Aucun appel de dessin en
+  plus. Le masque des carreaux vient de l'atlas d'émission de nuit.
+- **Conduite** (`car.ts`) : modèle à deux essieux, vitesse avant et
+  latérale, lacet, dérive des pneus plafonnée par l'adhérence, transfert de
+  charge, sous-pas à 120 Hz, glissement le long des murs. Mesuré : 0 à
+  100 km/h en 4,0 s ; virage à 130 km/h stable à 0,33 rad/s ; frein à main
+  à 74 km/h, lacet de 1,6 rad/s, rattrapé en 1,2 s. Deux réglages ont
+  compté : frein à main à 58 % d'adhérence arrière (à 42 %, tête-à-queue
+  complet en une seconde) et un amortissement du lacet de 1,4 s⁻¹.
+- **Circulation fusionnée** : les douze boîtes de `src/traffic.ts`
+  disparaissent. Ce fichier ne fait plus que lire la position des véhicules
+  de `three-city/traffic.js` (24 désormais) pour les chocs, par rectangle
+  orienté, et les frôlements. Un véhicule percuté s'arrête trois secondes.
+- **Marche à pied** (`src/pieton.ts`, touche F) : personnage articulé de
+  1,72 m, marche et course calculées (phase liée à la distance parcourue,
+  sinon les pieds patinent), caméra d'épaule, murs en glissement. On
+  descend voiture arrêtée, on remonte à moins de 3,4 m.
+- **Mesuré en fin de session** (`__comparer()`, 1440 × 690, Équilibré, au
+  départ) : 10,53 ms par image, dont ombres 4,51 ms. 60 images par seconde.
+- **Outils** : `__camLibre(x, y, z, cx, cy, cz)` pose la caméra n'importe
+  où ; `__ville` expose la ville construite (agents de circulation).
+- **Non fait** : monter dans une autre voiture que la sienne, passants qui
+  réagissent, collisions avec le mobilier, caméra à pied qui évite les
+  murs, visage du personnage. Le Tour d'Artix n'a pas été rejoué avec la
+  nouvelle conduite : ses temps de référence ne valent plus.
+
 ## 2026-11-14 : port du rendu en Three.js natif (WebGPU), branche `port-three-natif`
 
 Nouveau cap fixé par Christophe : un jeu en monde ouvert dans Artix, où l'on

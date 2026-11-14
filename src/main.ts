@@ -17,6 +17,7 @@ import { DEFAULT_QUALITY, QUALITY, type QualityName } from './config';
 import { GameSession, type GameMode } from './game';
 import { nearestArtixPlace } from './lieux';
 import { Minimap } from './minimap';
+import { Marcheur } from './pieton';
 import type { ContexteMesure } from './profil';
 import { TrafficSystem } from './traffic';
 import type { CityMapData } from './types';
@@ -518,6 +519,7 @@ async function start(): Promise<void> {
     facadesCentre: rawFacadesCentre,
   }, Math.min(16, renderer.getMaxAnisotropy()), progress);
   const map = ville.data as CityMapData;
+  (window as any).__ville = ville;
   const spawn = ville.spawn;
 
   await progress(72, 'Indexation du sol et des collisions…');
@@ -594,8 +596,40 @@ async function start(): Promise<void> {
   }
 
   const input = new KeyboardInput();
+  // Mode à pied (touche F) : le joueur descend de voiture, marche dans la
+  // ville et remonte en revenant près de la portière.
+  const marcheur = new Marcheur(scene, world);
+  let aPied = false;
+  const invite = document.createElement('div');
+  invite.className = 'invite-action hud hidden';
+  document.body.appendChild(invite);
+  // Position et cap du joueur, qu'il conduise ou qu'il marche : la ville
+  // vivante, les lampadaires, la minicarte et le HUD suivent ce point.
+  const joueur = (): THREE.Vector3 => (aPied ? marcheur.root.position : car.root.position);
+  const capJoueur = (): number => (aPied ? marcheur.heading : car.heading);
+  const basculerAPied = (): void => {
+    if (!aPied) {
+      // On ne saute pas d'une voiture lancée : il faut être presque arrêté.
+      if (car.vitesseSol > 2.5) return;
+      car.arreter();
+      // Portière conducteur à gauche : (cos cap, -sin cap). Si un mur s'y
+      // trouve, on descend de l'autre côté.
+      const p = car.root.position;
+      const gx = Math.cos(car.heading), gz = -Math.sin(car.heading);
+      const cote = world.collidesBuilding(p.x + gx * 1.7, p.z + gz * 1.7, .4) ? -1 : 1;
+      marcheur.placer(p.x + gx * 1.7 * cote, p.z + gz * 1.7 * cote, car.heading);
+      marcheur.root.visible = true;
+      aPied = true;
+      if (cameraMode === 1) car.setVueCabine(false);
+    } else {
+      if (marcheur.root.position.distanceTo(car.root.position) > 3.4) return;
+      marcheur.root.visible = false;
+      aPied = false;
+      car.setVueCabine(cameraMode === 1);
+    }
+  };
   const audio = new ArcadeAudio();
-  const traffic = new TrafficSystem(scene, map.roads, (x, z) => world.surfaceY(x, z));
+  const traffic = new TrafficSystem(ville.circulation);
   const session = new GameSession(scene, map.roads, [spawn.x, spawn.z], (x, z) => world.surfaceY(x, z));
   const minimap = new Minimap(minimapCanvas, map.roads);
   let cameraMode = 0;
@@ -625,7 +659,6 @@ async function start(): Promise<void> {
     camera.updateProjectionMatrix();
     sun.castShadow = profile.shadows;
     construirePipeline(profile, next !== 'performance');
-    traffic.setDensity(next === 'performance' ? .5 : next === 'balanced' ? .78 : 1);
     qualityEl.textContent = profile.label;
   };
   applyQuality(DEFAULT_QUALITY);
@@ -727,7 +760,12 @@ async function start(): Promise<void> {
       // entre l'œil et le pare-brise.
       car.setVueCabine(cameraMode === 1);
     }
-    if (playing && input.tapped('r')) car.reset();
+    if (playing && input.tapped('r')) {
+      car.reset();
+      marcheur.root.visible = false;
+      aPied = false;
+    }
+    if (playing && !paused && (input.tapped('f') || input.tapped('e'))) basculerAPied();
     if (playing && input.tapped('t')) lancerSession('challenge');
     if (input.tapped('l')) {
       ambianceIndex = (ambianceIndex + 1) % AMBIANCES.length;
@@ -736,7 +774,7 @@ async function start(): Promise<void> {
 
     if (nuitActive && foyersLampes.length) {
       lampesTimer += dt;
-      const px = car.root.position.x, pz = car.root.position.z;
+      const px = joueur().x, pz = joueur().z;
       if (lampesTimer > .4) {
         lampesTimer = 0;
         const proches = foyersLampes
@@ -766,12 +804,15 @@ async function start(): Promise<void> {
       // Temps du JEU : ralenti à l'arrivée. La couche arcade garde le temps
       // réel, sinon le ralenti ralentirait sa propre sortie.
       const dtJeu = dt * arcade.echelleTemps;
-      arcade.accelerateur = input.down('z', 'w', 'arrowup', 'throttle');
-      if (!arcade.fige && !gele) car.update(dtJeu, input);
-      ville.vivant?.update(dtJeu, maintenant / 1000, car.root.position.x, car.root.position.z);
-      if (!gele && traffic.update(dtJeu, car.root.position.x, car.root.position.z, maintenant / 1000, car.speed)) car.hitTraffic();
+      arcade.accelerateur = !aPied && input.down('z', 'w', 'arrowup', 'throttle');
+      if (aPied) marcheur.update(dt, input);
+      else if (!arcade.fige && !gele) car.update(dtJeu, input);
+      ville.vivant?.update(dtJeu, maintenant / 1000, joueur().x, joueur().z);
+      // À pied, la circulation n'a personne à percuter : seuls les chocs et
+      // les frôlements en voiture comptent.
+      if (!aPied && !gele && traffic.update(car.root.position.x, car.root.position.z, maintenant / 1000, car.speed)) car.hitTraffic();
       for (const f of traffic.frolements.splice(0)) arcade.frolement(f.x, f.z, car, session);
-      if (!arcade.fige && !gele) session.update(dtJeu, car.root.position.x, car.root.position.z, car.speed);
+      if (!aPied && !arcade.fige && !gele) session.update(dtJeu, car.root.position.x, car.root.position.z, car.speed);
       arcade.update(dt, car, session);
       fumee.update(dtJeu, car, world, nuitActive);
       audio.update(car.speed, car.boosting, car.drifting);
@@ -792,7 +833,14 @@ async function start(): Promise<void> {
     }
     capPrecedent = car.heading;
 
-    if (cameraMode === 0) {
+    if (aPied) {
+      // Caméra d'épaule : 4,4 m derrière le personnage, 2,2 m de haut,
+      // visée un peu au-dessus de sa tête pour garder la rue dans le cadre.
+      const p = marcheur.root.position;
+      const fx = Math.sin(marcheur.heading), fz = Math.cos(marcheur.heading);
+      desiredCamera.set(p.x - fx * 4.4, p.y + 2.2, p.z - fz * 4.4);
+      cameraTarget.set(p.x + fx * 3, p.y + 1.5, p.z + fz * 3);
+    } else if (cameraMode === 0) {
       desiredCamera.set(
         car.root.position.x - forward.x * 9.2,
         car.root.position.y + 4.25,
@@ -826,13 +874,13 @@ async function start(): Promise<void> {
     }
     // La vue conducteur ne s'interpole PAS : elle est solidaire de la caisse,
     // comme une caméra vissée au tableau de bord.
-    if (cameraMode === 1) {
+    if (cameraMode === 1 && !aPied) {
       cameraPosition.copy(desiredCamera);
     } else {
       // Pendant la plongée d'entrée (1 s), interpolation trois fois plus
       // lente : sinon la descente de 22 m se lit comme un saut de caméra.
       plongee = Math.max(0, plongee - dt);
-      const cameraLerp = 1 - Math.exp(-dt * (cameraMode === 0 ? 7.5 : 5) * (plongee > 0 ? .33 : 1));
+      const cameraLerp = 1 - Math.exp(-dt * (aPied ? 6 : cameraMode === 0 ? 7.5 : 5) * (plongee > 0 ? .33 : 1));
       cameraPosition.lerp(desiredCamera, cameraLerp);
     }
     // Champ dynamique et secousse : la couche arcade pose la caméra.
@@ -846,7 +894,7 @@ async function start(): Promise<void> {
     // Plan proche rapproché en vue conducteur : le volant se tient à 35 cm
     // de l'œil, exactement sur le plan proche des vues extérieures, qui le
     // tranchait en deux.
-    const procheVoulu = cameraMode === 1 ? .08 : .35;
+    const procheVoulu = cameraMode === 1 && !aPied ? .08 : .35;
     if (camera.near !== procheVoulu) {
       camera.near = procheVoulu;
       camera.updateProjectionMatrix();
@@ -865,7 +913,15 @@ async function start(): Promise<void> {
 
     pipeline.render();
 
-    speedEl.textContent = String(Math.round(Math.abs(car.speed) * 3.6));
+    speedEl.textContent = String(Math.round(Math.abs(aPied ? marcheur.vitesse : car.speed) * 3.6));
+    // Invite contextuelle : remonter en voiture quand on est à sa portée.
+    const invitation = !playing ? '' : aPied
+      ? (marcheur.root.position.distanceTo(car.root.position) < 3.4 ? 'F  monter en voiture' : '')
+      : (car.vitesseSol < 2.5 ? 'F  descendre de voiture' : '');
+    if (invite.textContent !== invitation) {
+      invite.textContent = invitation;
+      invite.classList.toggle('hidden', !invitation);
+    }
     boostBar.style.transform = `scaleX(${car.boost.toFixed(3)})`;
     hudTimer += dt;
     if (playing && hudTimer >= .09) {
@@ -874,13 +930,16 @@ async function start(): Promise<void> {
       missionDetail.textContent = status.detail;
       missionProgress.style.width = `${Math.round(status.progress * 100)}%`;
       scoreEl.textContent = String(status.score).padStart(6, '0');
-      const roadName = car.onRoad ? world.roadNameAt(car.root.position.x, car.root.position.z) : null;
-      surfaceStatus.textContent = car.onRoad ? (car.drifting ? 'DÉRAPAGE' : (roadName?.toUpperCase() ?? 'SUR LA ROUTE')) : 'HORS-PISTE';
-      surfaceStatus.classList.toggle('offroad', !car.onRoad);
+      const jp = joueur();
+      const surRoute = aPied ? world.isOnRoad(jp.x, jp.z) : car.onRoad;
+      const roadName = surRoute ? world.roadNameAt(jp.x, jp.z) : null;
+      surfaceStatus.textContent = aPied ? (roadName?.toUpperCase() ?? 'À PIED')
+        : car.onRoad ? (car.drifting ? 'DÉRAPAGE' : (roadName?.toUpperCase() ?? 'SUR LA ROUTE')) : 'HORS-PISTE';
+      surfaceStatus.classList.toggle('offroad', !aPied && !car.onRoad);
       // Le nom de rue ne change qu'après 0,45 s de présence confirmée : à un
       // carrefour, la voiture frôle la transversale et le libellé clignotait
       // entre les deux noms.
-      const nomVoulu = roadName ?? (car.onRoad ? 'Voie communale d’Artix' : 'Hors chaussée');
+      const nomVoulu = roadName ?? (surRoute ? 'Voie communale d’Artix' : 'Hors chaussée');
       if (nomVoulu === streetNameEl.textContent) nomCandidat = null;
       else if (nomVoulu !== nomCandidat) { nomCandidat = nomVoulu; nomDepuis = 0; }
       else if ((nomDepuis += hudTimer) >= .45) {
@@ -890,9 +949,9 @@ async function start(): Promise<void> {
         void streetNameEl.offsetWidth;
         streetNameEl.classList.add('change');
       }
-      const place = nearestArtixPlace(car.root.position.x, car.root.position.z);
+      const place = nearestArtixPlace(jp.x, jp.z);
       placeNameEl.textContent = place ? `${place.name} · ${place.detail}` : 'Commune d’Artix · 64170';
-      minimap.update(hudTimer, car.root.position.x, car.root.position.z, car.heading, session.objective);
+      minimap.update(hudTimer, jp.x, jp.z, capJoueur(), session.objective);
       hudTimer = 0;
     }
     resolutionTimer += dt;

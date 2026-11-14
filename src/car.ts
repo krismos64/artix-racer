@@ -3,6 +3,9 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { ArtixWorld } from './world';
 
+const ROTATION_ROUE = new THREE.Euler();
+const QUATERNION_ROUE = new THREE.Quaternion();
+
 export interface SpawnPoint {
   x: number;
   z: number;
@@ -53,9 +56,35 @@ export class KeyboardInput {
   }
 }
 
+// ---- Modèle de conduite ---------------------------------------------------
+// Modèle « bicyclette » à deux essieux : la voiture a une vitesse en deux
+// composantes (avant et latérale) et une vitesse de lacet. Chaque essieu
+// produit une force latérale qui dépend de son angle de DÉRIVE (l'écart
+// entre la direction où pointe le pneu et celle où il va), plafonnée par
+// l'adhérence et par la charge qu'il porte. C'est ce plafond qui fait
+// décrocher l'arrière au frein à main ou à l'accélération en virage.
+// L'ancien modèle n'avait qu'une vitesse scalaire le long du cap : la
+// voiture suivait un rail et un « dérapage » n'était qu'un drapeau.
+const MASSE = 1500;            // kg, une 458 pèse 1 485 kg
+const INERTIE_LACET = 2300;    // kg·m², résistance à la mise en rotation
+const AVANT = 1.25;            // centre de gravité → essieu avant (m)
+const ARRIERE = 1.40;          // centre de gravité → essieu arrière (m)
+const EMPATTEMENT = AVANT + ARRIERE;
+const VOIE = 1.68;             // largeur entre roues gauches et droites
+const HAUTEUR_CG = .46;        // commande le transfert de charge au freinage
+const PESANTEUR = 9.81;
+// Courbe d'adhérence latérale (forme de Pacejka réduite à deux coefficients) :
+// la force monte vite avec la dérive, plafonne vers 8°, puis retombe un peu.
+const RAIDEUR_PNEU = 9;
+const FORME_PNEU = 1.45;
+const ADHERENCE_ROUTE = 1.35;
+const ADHERENCE_TERRE = .8;
+// Pas d'intégration plafonné : le modèle devient instable au-delà de 1/100 s
+// (les forces latérales sont raides), d'où des sous-pas à 120 Hz.
+const PAS_MAX = 1 / 120;
+
 export class ArcadeCar {
   readonly root: THREE.Group;
-  speed = 0;
   steering = 0;
   heading: number;
   onRoad = true;
@@ -82,6 +111,32 @@ export class ArcadeCar {
   private lastZ: number;
   private visualRoll = 0;
   private visualPitch = 0;
+  // Vitesse dans le repère de la caisse : `vAvant` le long du cap, `vCote`
+  // vers la gauche du conducteur. `lacet` en rad/s, positif vers la gauche.
+  private vAvant = 0;
+  private vCote = 0;
+  private lacet = 0;
+  // Accélérations de la dernière image, pour l'assiette de la caisse.
+  private accelAvant = 0;
+  private accelCote = 0;
+  private tour = 0;
+  private readonly rouesAvant: THREE.Object3D[] = [];
+  private readonly reposRoues = new Map<THREE.Object3D, THREE.Quaternion>();
+
+  // Vitesse le long du cap, en m/s (négative en marche arrière). La couche
+  // arcade la lit partout, et l'écrit pour le départ parfait.
+  get speed(): number {
+    return this.vAvant;
+  }
+
+  set speed(valeur: number) {
+    this.vAvant = valeur;
+  }
+
+  // Vitesse réelle au sol, glissement latéral compris.
+  get vitesseSol(): number {
+    return Math.hypot(this.vAvant, this.vCote);
+  }
 
   constructor(
     scene: THREE.Scene,
@@ -189,7 +244,10 @@ export class ArcadeCar {
 
       // Roues : `wheel_fl`, `wheel_fr`, `wheel_rl`, `wheel_rr`.
       gltf.scene.traverse((objet) => {
-        if (/^wheel_(fl|fr|rl|rr)$/i.test(objet.name)) this.wheels.push(objet);
+        if (!/^wheel_(fl|fr|rl|rr)$/i.test(objet.name)) return;
+        this.wheels.push(objet);
+        this.reposRoues.set(objet, objet.quaternion.clone());
+        if (/^wheel_f/i.test(objet.name)) this.rouesAvant.push(objet);
       });
 
       // Pièces masquées en vue conducteur : tout ce qui compose les sièges.
@@ -305,77 +363,215 @@ export class ArcadeCar {
     const wantsBoost = input.down('shift', 'boost');
 
     this.onRoad = this.world.isOnRoad(this.root.position.x, this.root.position.z);
-    this.boosting = Boolean(wantsBoost && throttle && this.boost > .015 && this.speed > 8 && this.onRoad);
+    this.boosting = Boolean(wantsBoost && throttle && this.boost > .015 && this.vAvant > 8 && this.onRoad);
     if (this.boosting) this.boost = Math.max(0, this.boost - dt * .17);
-    else this.boost = Math.min(1, this.boost + dt * (this.speed < 4 ? .12 : .045));
-    const maxForward = this.onRoad ? (this.boosting ? 66 : 52) : 18;
-    const maxReverse = -11;
-    const acceleration = this.onRoad ? (this.boosting ? 15.2 : 10.4) : 4.2;
+    else this.boost = Math.min(1, this.boost + dt * (this.vAvant < 4 ? .12 : .045));
 
-    if (throttle) this.speed += acceleration * dt * (1 - Math.max(0, this.speed) / maxForward);
-    if (reverse) {
-      if (this.speed > 1) this.speed -= 14 * dt;
-      else this.speed -= 5.8 * dt * (1 - Math.abs(Math.min(0, this.speed)) / Math.abs(maxReverse));
+    // Braquage : 0,55 rad à l'arrêt, 0,11 rad à 200 km/h. Un volant qui garde
+    // son plein angle à haute vitesse envoie la voiture en tête-à-queue au
+    // moindre appui sur une touche (le clavier n'a pas de demi-mesure).
+    const vitesse = this.vitesseSol;
+    const braquageMax = .55 / (1 + vitesse / 14);
+    const cibleBraquage = steerInput * braquageMax;
+    this.steering += (cibleBraquage - this.steering) * Math.min(1, dt * (steerInput ? 6 : 9));
+
+    const pas = Math.max(1, Math.ceil(dt / PAS_MAX));
+    const h = dt / pas;
+    let choc = 0;
+    let deriveArriere = 0;
+    for (let i = 0; i < pas; i++) {
+      deriveArriere = this.integrer(h, throttle, reverse, brake);
+      choc = Math.max(choc, this.deplacer(h));
     }
-    this.drifting = Boolean(brake && Math.abs(this.speed) > 8 && Math.abs(steerInput) > .1);
-    if (brake) this.speed -= Math.sign(this.speed || 1) * Math.min(Math.abs(this.speed), (this.drifting ? 5.5 : 19) * dt);
-    if (!throttle && !reverse) {
-      const drag = (.65 + Math.abs(this.speed) * .018) * dt;
-      this.speed -= Math.sign(this.speed) * Math.min(Math.abs(this.speed), drag);
-    }
-    this.speed = Math.max(maxReverse, Math.min(maxForward, this.speed));
+    if (choc > 0) this.impact = Math.max(this.impact, choc);
+    this.distanceTravelled += vitesse * dt;
 
-    const speedFactor = Math.min(1, Math.abs(this.speed) / 5);
-    const steerLimit = .61 * (1 - Math.min(.56, Math.abs(this.speed) / 78));
-    const targetSteer = steerInput * steerLimit;
-    this.steering += (targetSteer - this.steering) * Math.min(1, dt * (steerInput ? 5.4 : 8.5));
-    const driftTurn = this.drifting ? 1.72 : 1;
-    this.heading += this.steering * speedFactor * dt * 1.5 * driftTurn * Math.sign(this.speed || 1);
+    // Dérapage : l'essieu arrière glisse de plus de 9° à plus de 30 km/h.
+    // C'est maintenant une mesure, plus un drapeau lié au frein à main.
+    this.drifting = Math.abs(deriveArriere) > .16 && vitesse > 8;
 
-    this.lastX = this.root.position.x;
-    this.lastZ = this.root.position.z;
-    const forwardX = Math.sin(this.heading), forwardZ = Math.cos(this.heading);
-    this.root.position.x += forwardX * this.speed * dt;
-    this.root.position.z += forwardZ * this.speed * dt;
-    this.distanceTravelled += Math.abs(this.speed * dt);
+    // Sol sous les quatre roues : hauteur de caisse, tangage et roulis du
+    // relief. Un seul point sous le centre laissait la voiture horizontale
+    // dans les pentes, le nez planté dans la côte.
+    const p = this.root.position;
+    const ax = Math.sin(this.heading), az = Math.cos(this.heading);
+    const gx = Math.cos(this.heading), gz = -Math.sin(this.heading);
+    const solAvant = this.world.surfaceY(p.x + ax * AVANT, p.z + az * AVANT);
+    const solArriere = this.world.surfaceY(p.x - ax * ARRIERE, p.z - az * ARRIERE);
+    const solGauche = this.world.surfaceY(p.x + gx * VOIE / 2, p.z + gz * VOIE / 2);
+    const solDroite = this.world.surfaceY(p.x - gx * VOIE / 2, p.z - gz * VOIE / 2);
+    const sol = (solAvant + solArriere + solGauche + solDroite) / 4;
+    p.y += (sol - p.y) * Math.min(1, dt * 14);
 
-    if (this.world.collidesBuilding(this.root.position.x, this.root.position.z, 1.05)) {
-      this.root.position.x = this.lastX;
-      this.root.position.z = this.lastZ;
-      this.impact = Math.max(this.impact, Math.abs(this.speed));
-      this.speed *= -.16;
-    }
-
-    const ground = this.world.surfaceY(this.root.position.x, this.root.position.z);
-    this.root.position.y += (ground - this.root.position.y) * Math.min(1, dt * 14);
-    const targetRoll = -this.steering * Math.min(1, Math.abs(this.speed) / 22) * (this.drifting ? .14 : .075);
-    const targetPitch = this.boosting ? -.025 : throttle ? -.012 : reverse ? .018 : 0;
-    this.visualRoll += (targetRoll - this.visualRoll) * Math.min(1, dt * 7);
-    this.visualPitch += (targetPitch - this.visualPitch) * Math.min(1, dt * 6);
+    // Assiette : la caisse plonge au freinage, se cabre à l'accélération et
+    // prend du roulis vers l'extérieur du virage, par-dessus la pente du sol.
+    // Une rotation X positive baisse le nez, une rotation Z positive lève le
+    // flanc gauche.
+    const tangageSol = -Math.atan2(solAvant - solArriere, EMPATTEMENT);
+    const roulisSol = Math.atan2(solGauche - solDroite, VOIE);
+    const tangage = tangageSol + Math.max(-.035, Math.min(.045, -this.accelAvant * .0032));
+    const roulis = roulisSol + Math.max(-.07, Math.min(.07, this.accelCote * .0075));
+    this.visualPitch += (tangage - this.visualPitch) * Math.min(1, dt * 7);
+    this.visualRoll += (roulis - this.visualRoll) * Math.min(1, dt * 7);
     this.root.rotation.set(this.visualPitch, this.heading, this.visualRoll);
 
-    const wheelDelta = this.speed * dt / .34;
-    for (const wheel of this.wheels) wheel.rotateX(wheelDelta);
+    // Roues : elles tournent à la vitesse d'avance, et les roues avant
+    // pivotent avec le volant. Frein à main : les roues arrière se bloquent.
+    this.tour += this.vAvant * dt / .34;
+    for (const roue of this.wheels) {
+      const repos = this.reposRoues.get(roue);
+      if (!repos) { roue.rotateX(this.vAvant * dt / .34); continue; }
+      const avant = this.rouesAvant.includes(roue);
+      ROTATION_ROUE.set(avant || !brake ? this.tour : 0, avant ? this.steering : 0, 0, 'YXZ');
+      roue.quaternion.copy(repos).multiply(QUATERNION_ROUE.setFromEuler(ROTATION_ROUE));
+    }
+  }
+
+  // Un pas de dynamique : forces des pneus, du moteur et de l'air, puis
+  // vitesses. Renvoie l'angle de dérive de l'essieu arrière.
+  private integrer(h: number, throttle: number, reverse: number, freinMain: number): number {
+    const adherence = this.onRoad ? ADHERENCE_ROUTE : ADHERENCE_TERRE;
+    const vMax = this.onRoad ? (this.boosting ? 66 : 52) : 22;
+
+    // Force longitudinale. Moteur : 10,4 m/s² à l'arrêt (15,2 sous nitro),
+    // qui s'éteint en approchant la vitesse de pointe. Marche arrière
+    // plafonnée à 40 km/h. La pédale de frein (S) freine tant qu'on avance.
+    let pousse = 0;
+    if (throttle) {
+      const accel = this.onRoad ? (this.boosting ? 15.2 : 10.4) : 5;
+      pousse += MASSE * accel * Math.max(0, 1 - Math.max(0, this.vAvant) / vMax);
+    }
+    let freinage = 0;
+    if (reverse) {
+      if (this.vAvant > .8) freinage = 17;
+      else pousse -= MASSE * 5.8 * Math.max(0, 1 - Math.max(0, -this.vAvant) / 11);
+    }
+    // Frein à main : roues arrière bloquées, donc peu de décélération (un
+    // pneu qui glisse freine moins qu'un pneu qui roule) mais plus aucun
+    // guidage à l'arrière.
+    if (freinMain) freinage = Math.max(freinage, 5.5);
+    // Air et roulement : faibles sur route, forts dans l'herbe.
+    const trainee = this.onRoad ? .65 + Math.abs(this.vAvant) * .018 : 2.2 + Math.abs(this.vAvant) * .16;
+    let forceAvant = pousse;
+    const resistance = MASSE * (freinage + (throttle || reverse ? trainee * .35 : trainee));
+    // Les freins s'opposent au mouvement sans jamais l'inverser.
+    const arretPossible = MASSE * Math.abs(this.vAvant) / h;
+    forceAvant -= Math.sign(this.vAvant) * Math.min(resistance, arretPossible);
+
+    // Charge par essieu : le freinage charge l'avant, l'accélération
+    // l'arrière. Un essieu délesté a moins d'adhérence.
+    const transfert = MASSE * this.accelAvant * HAUTEUR_CG / EMPATTEMENT;
+    const chargeAvant = Math.max(MASSE * PESANTEUR * .15, MASSE * PESANTEUR * ARRIERE / EMPATTEMENT - transfert);
+    const chargeArriere = Math.max(MASSE * PESANTEUR * .15, MASSE * PESANTEUR * AVANT / EMPATTEMENT + transfert);
+
+    // Angle de dérive de chaque essieu : vitesse du pneu décomposée dans son
+    // propre repère. À très basse vitesse, le dénominateur est plancher à
+    // 2 m/s, sinon l'angle saute de ±90° au moindre frémissement.
+    const d = this.steering, cd = Math.cos(d), sd = Math.sin(d);
+    const vLatAvant = this.vCote + AVANT * this.lacet;
+    const longAvant = this.vAvant * cd + vLatAvant * sd;
+    const latAvant = -this.vAvant * sd + vLatAvant * cd;
+    const deriveAvant = Math.atan2(latAvant, Math.max(2, Math.abs(longAvant)));
+    const latArriere = this.vCote - ARRIERE * this.lacet;
+    const deriveArriere = Math.atan2(latArriere, Math.max(2, Math.abs(this.vAvant)));
+
+    // L'arrière partage son adhérence entre la traction et le guidage : à
+    // pleine accélération en virage, il lui reste moins de tenue latérale.
+    // Propulsion : c'est ce qui permet de faire glisser l'arrière au gaz.
+    const part = Math.min(1, Math.abs(pousse) / (adherence * chargeArriere));
+    let adherenceArriere = adherence * Math.sqrt(1 - .3 * part * part);
+    // Frein à main : l'arrière garde 58 % de sa tenue. À 42 % (premier
+    // essai), la voiture faisait un tête-à-queue complet en une seconde.
+    if (freinMain) adherenceArriere *= .58;
+    const pneu = (derive: number, plafond: number): number =>
+      -plafond * Math.sin(FORME_PNEU * Math.atan(RAIDEUR_PNEU * derive));
+    const forceLatAvant = pneu(deriveAvant, adherence * chargeAvant);
+    const forceLatArriere = pneu(deriveArriere, adherenceArriere * chargeArriere);
+
+    const accelAvant = (forceAvant - forceLatAvant * sd) / MASSE;
+    const accelCote = (forceLatAvant * cd + forceLatArriere) / MASSE;
+    // Amortissement du lacet : il représente ce que le modèle ne calcule pas
+    // (pneus déformés, carrossage) et laisse au joueur le temps de
+    // contre-braquer au clavier.
+    const accelLacet = (AVANT * forceLatAvant * cd - ARRIERE * forceLatArriere) / INERTIE_LACET
+      - this.lacet * 1.4;
+    this.accelAvant += (accelAvant - this.accelAvant) * Math.min(1, h * 12);
+    this.accelCote += (accelCote - this.accelCote) * Math.min(1, h * 12);
+
+    // Repère tournant : la rotation de la caisse échange vitesse avant et
+    // vitesse latérale.
+    this.vAvant += (accelAvant + this.vCote * this.lacet) * h;
+    this.vCote += (accelCote - this.vAvant * this.lacet) * h;
+    this.lacet += accelLacet * h;
+    this.vAvant = Math.max(-11, Math.min(vMax + 2, this.vAvant));
+
+    // Presque à l'arrêt, les pneus ne glissent plus : la dérive latérale et
+    // le lacet résiduels s'éteignent, la voiture ne pivote pas sur place.
+    const lent = Math.max(0, 1 - Math.abs(this.vAvant) / 3);
+    if (lent > 0) {
+      this.vCote *= Math.exp(-h * 9 * lent);
+      const lacetRoulant = this.vAvant * Math.tan(d) / EMPATTEMENT;
+      this.lacet += (lacetRoulant - this.lacet) * Math.min(1, h * 10 * lent);
+    }
+    this.heading += this.lacet * h;
+    return deriveArriere;
+  }
+
+  // Avance la voiture d'un pas, en glissant le long des murs : si le
+  // déplacement complet heurte un bâtiment, on essaie chaque axe séparément.
+  // Renvoie la vitesse perdue dans le choc (0 sans contact). L'ancien
+  // comportement, un rebond en arrière, collait la voiture au mur dès qu'on
+  // le frôlait de biais.
+  private deplacer(h: number): number {
+    const p = this.root.position;
+    const ax = Math.sin(this.heading), az = Math.cos(this.heading);
+    const gx = Math.cos(this.heading), gz = -Math.sin(this.heading);
+    const vx = ax * this.vAvant + gx * this.vCote;
+    const vz = az * this.vAvant + gz * this.vCote;
+    const nx = p.x + vx * h, nz = p.z + vz * h;
+    this.lastX = p.x;
+    this.lastZ = p.z;
+    if (!this.world.collidesBuilding(nx, nz, 1.05)) {
+      p.x = nx;
+      p.z = nz;
+      return 0;
+    }
+    const libreX = !this.world.collidesBuilding(nx, p.z, 1.05);
+    const libreZ = !this.world.collidesBuilding(p.x, nz, 1.05);
+    let rx = 0, rz = 0;
+    if (libreX && (!libreZ || Math.abs(vx) >= Math.abs(vz))) { p.x = nx; rx = vx * .82; }
+    else if (libreZ) { p.z = nz; rz = vz * .82; }
+    // Vitesse restante (celle qui longe le mur, frottée), ramenée dans le
+    // repère de la caisse. La composante perdue fait la force du choc.
+    const perdue = Math.hypot(vx - rx, vz - rz);
+    this.vAvant = rx * ax + rz * az;
+    this.vCote = rx * gx + rz * gz;
+    this.lacet *= .5;
+    return perdue;
   }
 
   reset(): void {
-    this.speed = 0;
-    this.steering = 0;
+    this.arreter();
     this.heading = this.start.heading;
     this.root.position.set(this.start.x, this.world.surfaceY(this.start.x, this.start.z), this.start.z);
     this.root.rotation.set(0, this.heading, 0);
   }
 
   arreter(): void {
-    this.speed = 0;
+    this.vAvant = 0;
+    this.vCote = 0;
+    this.lacet = 0;
+    this.accelAvant = 0;
+    this.accelCote = 0;
     this.steering = 0;
     this.boosting = false;
     this.drifting = false;
   }
 
   hitTraffic(): void {
-    this.impact = Math.max(this.impact, Math.abs(this.speed));
-    this.speed *= -.22;
+    this.impact = Math.max(this.impact, this.vitesseSol);
+    this.vAvant *= -.22;
+    this.vCote *= .3;
     this.boost = Math.max(0, this.boost - .12);
   }
 

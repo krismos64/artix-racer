@@ -26,6 +26,7 @@ import { pointsAltitude, Terrain } from './three-city/terrain.js';
 import { Touffes } from './three-city/touffes.js';
 import { poserAnisotropie } from './three-city/textures.js';
 import { buildWorld, GARDE_SOL, ROAD_Y } from './three-city/world.js';
+import type { AgentCirculation } from './traffic';
 import { poserFauxInterieurs } from './vitrages';
 
 type AnyRecord = Record<string, any>;
@@ -56,6 +57,8 @@ export interface Ville {
   // Contenu animé (passants, circulation, touffes d'herbe), à appeler à
   // chaque image depuis la boucle de jeu.
   vivant: { update(dt: number, temps: number, x: number, z: number): void } | null;
+  // Agents de la circulation, lus par les collisions (src/traffic.ts).
+  circulation: AgentCirculation[];
   stats: { maillages: number; fusionnes: number };
 }
 
@@ -64,7 +67,7 @@ export interface Ville {
 const PROTEGES_FUSION = new Set([
   'vitrages', 'murs', 'murs-pierre', 'toitures', 'toitures-ardoise', 'toitures-acier',
   'cheminees', 'lucarnes', 'ventilations', 'trottoirs', 'bordures-trottoir',
-  'ombres-pied', 'portes',
+  'ombres-pied', 'portes', 'ombres-reperes',
 ]);
 // Le bâti ordinaire ne déclare pas `castShadow` (hérité de l'ancien moteur) :
 // c'est lui qui porte l'essentiel des ombres de rue.
@@ -234,6 +237,52 @@ function alignerEnroulement(geometrie: THREE.BufferGeometry): void {
   if (tableau && inverses) geometrie.setIndex(new THREE.BufferAttribute(tableau, 1));
 }
 
+// Volumes d'ombre des bâtiments modélisés à la main. Ces bâtiments sont
+// faits de centaines de petits maillages (corniches, balcons, enseignes) :
+// les inscrire un à un dans la passe d'ombre coûtait 3,3 ms par image
+// (mesuré le 14 novembre 2026 : ombres de 3,59 à 6,90 ms, 430 appels de
+// dessin en plus). On fusionne donc leurs seules positions en un maillage
+// invisible par cellule de 300 m, qui projette l'ombre à leur place.
+function volumesOmbre(racine: THREE.Object3D): THREE.Mesh[] {
+  racine.updateMatrixWorld(true);
+  const cellules = new Map<string, THREE.BufferGeometry[]>();
+  const centre = new THREE.Vector3();
+  racine.traverse((objet) => {
+    const mesh = objet as THREE.Mesh;
+    if (!mesh.isMesh || (mesh as any).isInstancedMesh || !mesh.visible) return;
+    const materiau = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+    if (materiau.transparent) return;
+    const position = mesh.geometry.getAttribute('position');
+    if (!position?.count) return;
+    // Positions seules, sans index : toutes les pièces deviennent fusionnables.
+    const source = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+    const piece = new THREE.BufferGeometry();
+    piece.setAttribute('position', source.getAttribute('position').clone());
+    piece.applyMatrix4(mesh.matrixWorld);
+    piece.computeBoundingBox();
+    piece.boundingBox!.getCenter(centre);
+    const cle = `${Math.floor(centre.x / 300)},${Math.floor(centre.z / 300)}`;
+    let liste = cellules.get(cle);
+    if (!liste) cellules.set(cle, liste = []);
+    liste.push(piece);
+    mesh.castShadow = false;
+  });
+  // Ni couleur ni profondeur : le maillage n'existe que pour la carte d'ombre.
+  const invisible = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
+  const volumes: THREE.Mesh[] = [];
+  for (const liste of cellules.values()) {
+    const fusion = mergeGeometries(liste, false);
+    for (const piece of liste) piece.dispose();
+    if (!fusion) continue;
+    const volume = new THREE.Mesh(fusion, invisible);
+    volume.name = 'ombres-reperes';
+    volume.castShadow = true;
+    volume.userData.ombreSeule = true;
+    volumes.push(volume);
+  }
+  return volumes;
+}
+
 // Ombres, UV planaires et matériaux d'un sous-arbre généré par la ville.
 function preparer(racine: THREE.Object3D, vus: Map<THREE.Material, THREE.Material>): number {
   let maillages = 0;
@@ -242,6 +291,7 @@ function preparer(racine: THREE.Object3D, vus: Map<THREE.Material, THREE.Materia
   racine.traverse((objet) => {
     const mesh = objet as THREE.Mesh;
     if (!mesh.isMesh) return;
+    if (mesh.userData.ombreSeule) return;
     maillages++;
     if (!alignees.has(mesh.geometry)) {
       alignees.add(mesh.geometry);
@@ -332,14 +382,9 @@ export async function construireVille(
     [...(parkings.places ?? []), ...(world.placesEpi ?? [])], 880, flotte,
   );
   if (data.landmarkSources?.length) {
-    // Les bâtiments modélisés à la main projettent leur ombre comme le bâti
-    // ordinaire : la mairie éclairée de face sans ombre au sol flottait.
     const reperes = buildLandmarks(data, terrain, ROAD_Y).group;
-    reperes.traverse((objet) => {
-      const mesh = objet as THREE.Mesh;
-      if (mesh.isMesh && !(mesh.material as THREE.Material).transparent) mesh.castShadow = true;
-    });
     statique.add(reperes);
+    for (const ombre of volumesOmbre(reperes)) statique.add(ombre);
   }
 
   await progress?.(58, 'Préparation du rendu de la ville…');
@@ -355,6 +400,7 @@ export async function construireVille(
 
   // ---- Contenu animé : passants, circulation, touffes d'herbe -------------
   let vivant: Ville['vivant'] = null;
+  let agentsCirculation: AgentCirculation[] = [];
   try {
     // L'herbe s'écarte de la chaussée et de ses abords : grille de segments
     // de voies au pas de 100 m.
@@ -411,7 +457,10 @@ export async function construireVille(
     anime.name = 'ville-animee';
     const touffes = new (Touffes as any)(anime, terrain, ROAD_Y, { estPlantable: herbePlantable });
     const pietons = new (Pietons as any)(data, terrain, ROAD_Y, 110);
-    const circulation = new (Circulation as any)(data, terrain, ROAD_Y, 12, flotte);
+    // Vingt-quatre véhicules : instanciés par modèle, leur nombre ne change
+    // pas celui des appels de dessin.
+    const circulation = new (Circulation as any)(data, terrain, ROAD_Y, 24, flotte);
+    if (circulation.effectif) agentsCirculation = circulation.agents;
     if (pietons.effectif) anime.add(pietons.group);
     if (circulation.effectif) anime.add(circulation.group);
     preparer(anime, vus);
@@ -432,6 +481,7 @@ export async function construireVille(
     terrain,
     spawn,
     vivant,
+    circulation: agentsCirculation,
     foyers: (world.foyers ?? []) as Array<{ x: number; y: number; z: number }>,
     lanternes: (world.lampHeads as THREE.MeshStandardMaterial | null) ?? null,
     vitrages: (maillageVitrages?.material as THREE.MeshStandardMaterial | undefined) ?? null,

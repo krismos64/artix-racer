@@ -62,21 +62,21 @@ fictifs et voitures réalistes.
    (`CSMShadowNode`), ambiances, pipeline de post-traitement, boucle de jeu,
    HUD.
 5. **`src/lieux.ts`** : table des lieux-dits affichés dans le HUD.
-6. Jeu autour du rendu : `car.ts` (Ferrari, conduite arcade sans moteur
-   physique, vue conducteur), `game.ts` (modes balade et Tour d'Artix,
-   score), `arcade.ts` (motion design, couche DOM sans appel de dessin :
-   champ de vision, secousse, arrêt sur image, combo de dérapage, compte à
-   rebours, départ parfait, frôlements, ralenti d'arrivée via
-   `echelleTemps` que main.ts applique au seul temps du JEU), `fumee.ts`
-   (fumée et poussière : 600 quads simulés à la main, un seul maillage),
-   `audio.ts` (moteur et turbo synthétisés, musique, touche M), `intro.ts`
-   (intro animée et bande-son Web Audio du lancement, jouée pendant le
-   chargement ; `?intro=0` la saute), `minimap.ts`, `profil.ts` (outils de
-   mesure en console), `config.ts` (profils graphiques).
-   ATTENTION, deux circulations coexistent : `three-city/traffic.js`
-   (véhicules rgsdev instanciés, le rendu voulu) et `src/traffic.ts`
-   (12 voitures en boîtes, qui portent les collisions et les frôlements).
-   Doublon hérité, à fusionner (voir JOURNAL.md, pistes du 4 octobre).
+6. Jeu autour du rendu : `car.ts` (Ferrari, modèle de conduite à deux
+   essieux avec dérive des pneus et transfert de charge, vue conducteur),
+   `pieton.ts` (joueur à pied, touche F : personnage articulé, marche
+   calculée), `traffic.ts` (chocs et frôlements, lus sur les véhicules de
+   `three-city/traffic.js` ; il ne dessine rien), `vitrages.ts` (faux
+   intérieurs derrière les vitres, calculés dans le matériau), `game.ts`
+   (modes balade et Tour d'Artix, score), `arcade.ts` (motion design, couche
+   DOM sans appel de dessin : champ de vision, secousse, arrêt sur image,
+   combo de dérapage, compte à rebours, départ parfait, frôlements, ralenti
+   d'arrivée via `echelleTemps` que main.ts applique au seul temps du JEU),
+   `fumee.ts` (fumée et poussière : 600 quads simulés à la main, un seul
+   maillage), `audio.ts` (moteur et turbo synthétisés, musique, touche M),
+   `intro.ts` (intro animée et bande-son Web Audio du lancement, jouée
+   pendant le chargement ; `?intro=0` la saute), `minimap.ts`, `profil.ts`
+   (outils de mesure en console), `config.ts` (profils graphiques).
 
 Historique : une version Babylon concurrente du rendu a vécu des mois dans
 `world.ts` sans jamais être exécutée (retirée le 19 septembre 2026), puis un
@@ -113,6 +113,18 @@ listés dans le premier point.
   - Tout maillage retrouvé par son nom doit être dans `PROTEGES_FUSION`
     (ville.ts), tout maillage du bâti qui porte une ombre dans
     `PORTEURS_OMBRE`.
+  - La passe d'ombre paie chaque maillage une fois par cascade. Faire
+    projeter son ombre à un objet fait de nombreuses petites pièces coûte
+    cher (bâtiments modélisés : +3,3 ms) : fusionner leurs positions en un
+    volume invisible (`volumesOmbre`, ville.ts).
+  - Chaque cascade garde une COPIE de l'ombre du soleil : un réglage
+    (`shadow.intensity`) posé après coup doit être recopié sur
+    `cascades.lights`.
+  - Conduite : toute retouche se juge sur les trois mesures du journal du
+    14 novembre (0 à 100, virage à 130 km/h, frein à main), sol plat forcé
+    en console, pas au ressenti d'un trajet.
+  - Outils console : `__camLibre(x, y, z, cx, cy, cz)`, `__ville`,
+    `?ao=voir`, `?csm=0`.
 - Le projet est un JEU LOCAL : `npm run dev` sert des fichiers statiques, rien
   de plus. Il a traîné des mois un échafaudage de déploiement issu d'un
   template (worker Cloudflare, `.openai/hosting.json`, `.wrangler/` versionné,

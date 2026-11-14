@@ -752,3 +752,21 @@ kbd {
   opacity: 0;
 }
 #intro.joue .intro-passer { animation: intro-sous-titre .4s ease .8s forwards; }
+
+/* Invite contextuelle (monter ou descendre de voiture), sous le titre de
+   mission : plus bas, elle recouvrait la voiture en caméra poursuite. */
+.invite-action {
+  position: fixed;
+  left: 50%;
+  top: 104px;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(10, 18, 26, .72);
+  color: #f4f1e8;
+  font: 600 13px/1 system-ui, sans-serif;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 6;
+}

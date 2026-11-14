@@ -1,193 +1,103 @@
-import * as THREE from 'three/webgpu';
-import type { RoadData } from './types';
+// Collisions et frôlements avec la circulation.
+//
+// Les véhicules sont ceux de `three-city/traffic.js` (flotte rgsdev
+// instanciée, qui suit le graphe des voies). Ce module ne dessine rien : il
+// lit leur position à chaque image et répond à deux questions, « le joueur
+// vient-il d'en percuter un ? » et « vient-il d'en frôler un ? ».
+//
+// Jusqu'au 14 novembre 2026, douze voitures en boîtes roulaient en double à
+// côté de la flotte : on percutait des boîtes et on traversait les vraies
+// voitures.
 
-interface TrafficCar {
-  root: THREE.Group;
-  route: RoadData;
-  segment: number;
-  direction: 1 | -1;
-  progress: number;
-  speed: number;
-  active: boolean;
-  lastCollision: number;
-  // Frôlement en cours : distance minimale et position du véhicule à ce
-  // moment, vitesse du joueur la plus haute pendant l'approche.
-  frole: { distance: number; x: number; z: number; vitesse: number } | null;
+// Agent de la circulation, tel que le tient three-city/traffic.js.
+export interface AgentCirculation {
+  _px?: number;
+  _pz?: number;
+  _ux?: number;
+  _uz?: number;
+  vitesse: number;
+  arret?: number;
 }
 
-// Frôlement : passer à moins de 5 m d'un véhicule (contact à 2,55 m), à plus
-// de 50 km/h, puis s'en éloigner à 9 m sans l'avoir touché. Validé APRÈS le
-// dépassement seulement : le récompenser à l'approche paierait aussi les
-// collisions imminentes.
+// Frôlement : passer à moins de 5 m d'un véhicule, à plus de 50 km/h, puis
+// s'en éloigner à 9 m sans l'avoir touché. Validé APRÈS le dépassement
+// seulement : le récompenser à l'approche paierait aussi les collisions
+// imminentes.
 const FROLE_ENTREE = 5;
 const FROLE_SORTIE = 9;
 const FROLE_VITESSE = 14;
+// Gabarit de contact : demi-longueur et demi-largeur d'une berline, élargies
+// du demi-gabarit du joueur. Un rectangle orienté et non un cercle : à
+// 2,55 m de rayon, on « percutait » une voiture croisée sur l'autre voie.
+const DEMI_LONGUEUR = 2.1 + 1.7;
+const DEMI_LARGEUR = .9 + .85;
 
-const COLORS = ['#dfb13a', '#4178a8', '#d85a4f', '#e5e2d8', '#3d4a51'];
-
-function roadLength(road: RoadData): number {
-  let total = 0;
-  for (let i = 0; i < road.pts.length - 1; i++) {
-    total += Math.hypot(road.pts[i + 1][0] - road.pts[i][0], road.pts[i + 1][1] - road.pts[i][1]);
-  }
-  return total;
+interface Suivi {
+  dernierChoc: number;
+  // Frôlement en cours : distance minimale et position du véhicule à ce
+  // moment.
+  frole: { distance: number; x: number; z: number } | null;
 }
 
 export class TrafficSystem {
-  private readonly cars: TrafficCar[] = [];
-  private readonly paints: THREE.Material[] = [];
-  private readonly glass: THREE.Material;
-  private readonly rubber: THREE.Material;
-  // Géométries partagées par les douze véhicules.
-  private readonly caisse = new THREE.BoxGeometry(1.72, .5, 3.85);
-  private readonly cabine = new THREE.BoxGeometry(1.42, .43, 1.85);
-  private readonly roue = new THREE.CylinderGeometry(.27, .27, .18, 10).rotateZ(Math.PI / 2);
-  private densityCount = Infinity;
-
-  constructor(
-    private readonly scene: THREE.Scene,
-    roads: RoadData[],
-    private readonly surfaceY: (x: number, z: number) => number,
-  ) {
-    this.glass = this.material('#172a34', .24);
-    this.rubber = this.material('#181b1d', .98);
-    this.paints = COLORS.map((color) => this.material(color, .38));
-
-    const candidates = roads
-      .filter((road) => road.drivable && road.pts.length > 2 && roadLength(road) > 115)
-      .filter((road) => road.pts.some(([x, z]) => Math.hypot(x, z) < 1450))
-      .sort((a, b) => roadLength(b) - roadLength(a));
-
-    const count = Math.min(12, candidates.length);
-    for (let i = 0; i < count; i++) {
-      const route = candidates[(i * 7) % candidates.length];
-      const root = new THREE.Group();
-      root.name = `traffic-${i}`;
-      this.buildCar(root, this.paints[i % this.paints.length]);
-      scene.add(root);
-      const segment = Math.min(route.pts.length - 2, Math.floor((i / Math.max(1, count)) * (route.pts.length - 1)));
-      this.cars.push({
-        root,
-        route,
-        segment,
-        direction: i % 3 === 0 ? -1 : 1,
-        progress: (i * .37) % 1,
-        speed: 7.5 + (i * 1.71) % 7.5,
-        active: true,
-        lastCollision: -10,
-        frole: null,
-      });
-    }
-  }
-
-  // Frôlements validés depuis le dernier appel (position du véhicule frôlé) :
-  // l'appelant les lit puis vide la liste.
+  // Frôlements validés depuis le dernier appel (position du véhicule
+  // frôlé) : l'appelant les lit puis vide la liste.
   readonly frolements: { x: number; z: number }[] = [];
+  private readonly suivis: Suivi[];
   private joueurAvant: [number, number] | null = null;
 
-  update(dt: number, playerX: number, playerZ: number, now: number, playerSpeed = 0): boolean {
+  constructor(private readonly agents: AgentCirculation[]) {
+    this.suivis = agents.map(() => ({ dernierChoc: -10, frole: null }));
+  }
+
+  update(playerX: number, playerZ: number, now: number, playerSpeed = 0): boolean {
     let collided = false;
-    // Téléportation du joueur (touche R, réapparition) : plus de 25 m en une
-    // image, soit 1 500 m/s. Les approches en cours sont oubliées, sinon le
-    // saut lui-même « éloigne » le véhicule et valide un frôlement fictif.
+    // Téléportation du joueur (touche R) : plus de 25 m en une image. Les
+    // approches en cours sont oubliées, sinon le saut lui-même « éloigne »
+    // le véhicule et valide un frôlement fictif.
     if (this.joueurAvant && Math.hypot(playerX - this.joueurAvant[0], playerZ - this.joueurAvant[1]) > 25) {
-      for (const car of this.cars) car.frole = null;
+      for (const suivi of this.suivis) suivi.frole = null;
       this.frolements.length = 0;
     }
     this.joueurAvant = [playerX, playerZ];
-    for (let carIndex = 0; carIndex < this.cars.length; carIndex++) {
-      const car = this.cars[carIndex];
-      if (carIndex >= this.densityCount) {
-        car.root.visible = false;
-        car.active = false;
+
+    for (let i = 0; i < this.agents.length; i++) {
+      const agent = this.agents[i], suivi = this.suivis[i];
+      if (agent._px == null || agent._pz == null) continue;
+      const dx = playerX - agent._px, dz = playerZ - agent._pz;
+      const distance = Math.hypot(dx, dz);
+      if (distance > FROLE_SORTIE + 4) {
+        if (suivi.frole) {
+          this.frolements.push({ x: suivi.frole.x, z: suivi.frole.z });
+          suivi.frole = null;
+        }
         continue;
       }
-      const pts = car.route.pts;
-      let a = pts[car.segment], b = pts[car.segment + car.direction];
-      if (!b) {
-        car.direction = car.direction === 1 ? -1 : 1;
-        b = pts[car.segment + car.direction];
-        car.progress = 0;
-      }
-      if (!a || !b) continue;
-
-      const length = Math.max(.1, Math.hypot(b[0] - a[0], b[1] - a[1]));
-      car.progress += car.speed * dt / length;
-      while (car.progress >= 1) {
-        car.progress -= 1;
-        car.segment += car.direction;
-        if (car.segment <= 0 || car.segment >= pts.length - 1) {
-          car.segment = Math.max(0, Math.min(pts.length - 1, car.segment));
-          car.direction = car.direction === 1 ? -1 : 1;
+      // Position du joueur dans le repère du véhicule : le long de sa
+      // marche, et en travers.
+      const ux = agent._ux ?? 0, uz = agent._uz ?? 1;
+      const long = dx * ux + dz * uz;
+      const travers = -dx * uz + dz * ux;
+      const contact = Math.abs(long) < DEMI_LONGUEUR && Math.abs(travers) < DEMI_LARGEUR;
+      if (contact) {
+        suivi.frole = null;
+        if (now - suivi.dernierChoc > 1.2) {
+          suivi.dernierChoc = now;
+          // Le véhicule percuté s'immobilise trois secondes.
+          agent.arret = 3;
+          collided = true;
         }
-        a = pts[car.segment];
-        b = pts[car.segment + car.direction];
-        if (!b) break;
-      }
-      if (!b) continue;
-
-      const segmentLength = Math.max(.1, Math.hypot(b[0] - a[0], b[1] - a[1]));
-      const laneOffset = car.route.width >= 6 ? Math.min(1.35, car.route.width * .18) : 0;
-      const nx = -(b[1] - a[1]) / segmentLength;
-      const nz = (b[0] - a[0]) / segmentLength;
-      const x = a[0] + (b[0] - a[0]) * car.progress + nx * laneOffset;
-      const z = a[1] + (b[1] - a[1]) * car.progress + nz * laneOffset;
-      const distance = Math.hypot(x - playerX, z - playerZ);
-      const shouldBeActive = distance < 620;
-      if (shouldBeActive !== car.active) {
-        car.active = shouldBeActive;
-        car.root.visible = shouldBeActive;
-        car.frole = null;
-      }
-      if (!shouldBeActive) continue;
-
-      car.root.position.set(x, this.surfaceY(x, z) + .05, z);
-      car.root.rotation.y = Math.atan2(b[0] - a[0], b[1] - a[1]);
-      if (distance < 2.55 && now - car.lastCollision > 1.2) {
-        car.lastCollision = now;
-        collided = true;
-      }
-      if (distance < 2.55) car.frole = null;
-      else if (distance < FROLE_ENTREE && now - car.lastCollision > 1.5) {
-        const vitesse = Math.abs(playerSpeed);
-        if (!car.frole) {
-          if (vitesse >= FROLE_VITESSE) car.frole = { distance, x, z, vitesse };
-        } else {
-          car.frole.vitesse = Math.max(car.frole.vitesse, vitesse);
-          if (distance < car.frole.distance) Object.assign(car.frole, { distance, x, z });
+      } else if (distance < FROLE_ENTREE && now - suivi.dernierChoc > 1.5) {
+        if (!suivi.frole) {
+          if (Math.abs(playerSpeed) >= FROLE_VITESSE) suivi.frole = { distance, x: agent._px, z: agent._pz };
+        } else if (distance < suivi.frole.distance) {
+          suivi.frole = { distance, x: agent._px, z: agent._pz };
         }
-      } else if (car.frole && distance > FROLE_SORTIE) {
-        this.frolements.push({ x: car.frole.x, z: car.frole.z });
-        car.frole = null;
+      } else if (suivi.frole && distance > FROLE_SORTIE) {
+        this.frolements.push({ x: suivi.frole.x, z: suivi.frole.z });
+        suivi.frole = null;
       }
     }
     return collided;
-  }
-
-  setDensity(multiplier: number): void {
-    const visible = Math.round(this.cars.length * multiplier);
-    this.densityCount = visible;
-    this.cars.forEach((car, index) => {
-      if (index >= visible) car.root.visible = false;
-      car.active = index < visible;
-    });
-  }
-
-  private buildCar(root: THREE.Group, paint: THREE.Material): void {
-    const body = new THREE.Mesh(this.caisse, paint);
-    body.position.y = .46;
-    const cabin = new THREE.Mesh(this.cabine, this.glass);
-    cabin.position.set(0, .91, -.1);
-    body.castShadow = cabin.castShadow = true;
-    root.add(body, cabin);
-    for (const [x, y, z] of [[-.84, .24, 1.15], [.84, .24, 1.15], [-.84, .24, -1.15], [.84, .24, -1.15]]) {
-      const wheel = new THREE.Mesh(this.roue, this.rubber);
-      wheel.position.set(x, y, z);
-      root.add(wheel);
-    }
-  }
-
-  private material(color: string, roughness: number): THREE.Material {
-    return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 });
   }
 }

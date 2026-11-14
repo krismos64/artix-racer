@@ -193,6 +193,13 @@ export class Circulation {
       // Freinage : joueur ou congénère devant à moins de 12 m dans le cône
       // avant. Le trafic est léger, une décélération franche suffit.
       let cible = a.vitesseMax;
+      // Véhicule percuté par le joueur : il reste à l'arrêt le temps du
+      // constat (posé par src/traffic.ts), puis repart.
+      if (a.arret > 0) {
+        a.arret -= dt;
+        cible = 0;
+        a.vitesse = 0;
+      }
       const versJoueurX = posVoiture.x - px, versJoueurZ = posVoiture.z - pz;
       const dJoueur = Math.hypot(versJoueurX, versJoueurZ);
       if (dJoueur < 12 && (versJoueurX * ux + versJoueurZ * uz) / (dJoueur || 1) > 0.5) cible = 0;
@@ -207,6 +214,8 @@ export class Circulation {
       a.vitesse += (cible - a.vitesse) * Math.min(1, dt * (cible < a.vitesse ? 5 : 1.6));
       a.avance += a.vitesse * dt;
       a._px = px; a._pz = pz;
+      // Demi-gabarit lu par les collisions (src/traffic.ts).
+      a._ux = ux; a._uz = uz;
 
       if (a.avance >= len) {
         a.avance -= len;
