@@ -192,7 +192,13 @@ function createBackdrop(scene: THREE.Scene): { materiau: THREE.MeshBasicMaterial
 
 async function start(): Promise<void> {
   await progress(4, 'Initialisation du rendu…');
-  const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+  // WebGPU quand le navigateur le propose, WebGL 2 sinon (Three bascule de
+  // lui-même). `?webgl=1` force ce repli, pour l'essayer sur une machine qui
+  // a WebGPU.
+  const renderer = new THREE.WebGPURenderer({
+    canvas, antialias: false, powerPreference: 'high-performance',
+    forceWebGL: new URLSearchParams(location.search).get('webgl') === '1',
+  });
   await renderer.init();
   renderer.setSize(innerWidth, innerHeight, false);
   // Échelle 1 = un pixel de rendu par pixel CSS, comme avant le port.

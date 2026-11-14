@@ -82,8 +82,8 @@ pour le projet.
 - **Blender** (outil hors ligne, non redistribué : modélisation des arbres,
   conversion du personnage), licence GPL, © Blender Foundation
 
-Babylon.js (licence Apache 2.0) assurait le rendu jusqu'au 14 novembre 2026
-et reste utilisé sur la branche `master`.
+Babylon.js (licence Apache 2.0) assurait le rendu jusqu'au 14 novembre 2026 ;
+cet état reste accessible par l'étiquette Git `rendu-babylon`.
 
 ## Ressources visuelles CC0 (chantier de septembre 2026)
 

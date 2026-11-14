@@ -2,6 +2,20 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 11) : fusion sur main et redéploiement du lien de test
+
+- **Repli WebGL essayé avant la mise en ligne** (`?webgl=1` force
+  `forceWebGL`) : la ville, les ombres en cascade et le post-traitement
+  tournent sur le moteur WebGL de Three, 58 images par seconde, aucune
+  erreur. Un visiteur sans WebGPU peut donc jouer.
+- **Netlify** : `dist` seul copié dans un dossier temporaire (55 Mo, 88
+  fichiers) et déployé sur `artix-essai-q7m4x2`. Vérifié en ligne : page et
+  fichiers servis (personnage, arbres, décodeur Draco), `X-Robots-Tag:
+  noindex`, jeu chargé, marche à pied et personnage animé présents.
+- **Git** : étiquette `rendu-babylon` posée sur 5a09c1e (dernier état du
+  rendu Babylon), branche `port-three-natif` poussée et fusionnée dans
+  `main`.
+
 ## 2026-11-14 (suite 10) : audit de la documentation
 
 Toute la documentation relue contre le code de la branche `port-three-natif`.

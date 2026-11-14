@@ -24,9 +24,9 @@ Pour une version optimisée :
 npm run build && npm run preview
 ```
 
-> **Branches.** Le jeu décrit ici vit sur la branche `port-three-natif`
-> (rendu Three.js natif en WebGPU, depuis le 14 novembre 2026). `master`
-> garde l'ancien rendu Babylon.js comme référence.
+> **Historique.** Le rendu est en Three.js natif (WebGPU, avec repli WebGL)
+> depuis le 14 novembre 2026. L'ancien rendu Babylon.js reste accessible par
+> l'étiquette Git `rendu-babylon`.
 
 Au lancement, une intro animée et sonorisée de 6 s joue pendant le
 chargement : toute touche ou clic l'écourte, et `?intro=0` dans l'URL la
@@ -38,9 +38,8 @@ Le jeu est déployé à la main sur Netlify (offre gratuite) pour le faire
 essayer à une personne, sans être référencé : `public/robots.txt` interdit
 l'exploration et `public/_headers` pose `X-Robots-Tag: noindex`. Aucun mot de
 passe (fonction payante) : quiconque a le lien peut jouer. Pas de
-déploiement automatique ; la procédure est décrite dans `CLAUDE.md`. Le lien
-sert encore la version du 19 octobre 2026 (rendu Babylon, sans la marche à
-pied, la police ni les livraisons) : rien n'a été redéployé depuis.
+déploiement automatique ; la procédure est décrite dans `CLAUDE.md`. Dernier
+déploiement : 14 novembre 2026 (monde ouvert, rendu Three.js natif).
 
 ## Commandes
 
@@ -753,9 +752,9 @@ maillages visibles par matériau, `__regarder(x, y, z)` oriente la caméra,
 `__camLibre(x, y, z, cx, cy, cz)` la pose n'importe où, `__car` donne le
 véhicule conduit (utile pour se téléporter), `__police.signaler(2)` lance
 une poursuite, `__audio.niveau()` mesure le niveau sonore et `__ville` expose
-la ville construite. Dans l'URL : `?intro=0` saute l'intro, `?ao=voir`
-affiche la carte d'occlusion, `?csm=0` remplace les ombres en cascade par
-une carte unique.
+la ville construite. Dans l'URL : `?intro=0` saute l'intro, `?webgl=1`
+force le repli WebGL, `?ao=voir` affiche la carte d'occlusion, `?csm=0`
+remplace les ombres en cascade par une carte unique.
 
 ## Le véhicule
 

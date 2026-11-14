@@ -6,9 +6,10 @@ conduit, on y marche, on prend des voitures, on livre, on fuit la police.
 Usage personnel : pas de tests automatisés, pas d'exigence de sécurité web.
 Objectif : le meilleur rendu visuel et le jeu le plus agréable, vite.
 
-Branches : le travail se fait sur `port-three-natif` (rendu Three.js natif,
-depuis le 14 novembre 2026). `master` garde l'ancien rendu Babylon, comme
-référence.
+Branches : `master` en local, `main` sur GitHub (`krismos64/artix-racer`,
+dépôt PUBLIC). Le rendu Three.js natif y a été fusionné le 14 novembre
+2026 ; l'ancien rendu Babylon reste accessible par l'étiquette
+`rendu-babylon`.
 
 Exception, depuis le 19 octobre 2026 : un lien de TEST PRIVÉ sur Netlify
 (projet `artix-essai-q7m4x2`, équipe gratuite krismos64), non référencé
@@ -17,8 +18,9 @@ ponctuel : `npm run build`, copier `dist` seul dans un dossier temporaire
 et le déployer depuis là (le connecteur Netlify envoie tout le dossier
 courant ; depuis le dépôt il emporterait les caches Panoramax). Aucune
 configuration Netlify dans le dépôt, aucun déploiement automatique.
-Le lien sert toujours la version du 19 octobre (rendu Babylon) : rien n'a
-été redéployé depuis le port.
+Dernier déploiement : 14 novembre 2026 (monde ouvert, rendu natif), vérifié
+en ligne. Le navigateur du visiteur peut ne pas avoir WebGPU : Three bascule
+alors sur WebGL 2, chemin essayé avec `?webgl=1` (58 images par seconde).
 
 ## Commandes
 
@@ -40,7 +42,7 @@ Le lien sert toujours la version du 19 octobre (rendu Babylon) : rien n'a
 
 ## Architecture : Three.js natif (WebGPU)
 
-Depuis le 14 novembre 2026 (branche `port-three-natif`), un seul moteur :
+Depuis le 14 novembre 2026, un seul moteur :
 Three.js 0.187, rendu par `WebGPURenderer`, post-traitement en TSL. Le pont
 Three→Babylon et Babylon lui-même sont supprimés. Cap du projet : un monde
 ouvert où l'on RECONNAÎT Artix sans exiger l'exactitude, avec personnages
@@ -163,7 +165,7 @@ code a cette forme, pas le rendu actuel.
     --background --python script.py` pour modéliser et exporter en glTF.
   - Outils console : `__police.signaler(2)` lance une poursuite,
     `__camLibre(x, y, z, cx, cy, cz)`, `__ville`,
-    `?ao=voir`, `?csm=0`.
+    `?ao=voir`, `?csm=0`, `?webgl=1` (repli WebGL forcé).
 - Le projet est un JEU LOCAL : `npm run dev` sert des fichiers statiques, rien
   de plus. Il a traîné des mois un échafaudage de déploiement issu d'un
   template (worker Cloudflare, `.openai/hosting.json`, `.wrangler/` versionné,
