@@ -671,6 +671,8 @@ async function start(): Promise<void> {
   let appuisAvant = 0;
   let klaxonDans = 0;
   let etoilesAvant = 0;
+  let secondeBip = 0;
+  const missionPanel = document.querySelector<HTMLElement>('.mission');
 
   // Véhicule à portée du marcheur : d'abord ceux qu'il a déjà conduits,
   // sinon une voiture garée dont le modèle est chargé.
@@ -1173,15 +1175,32 @@ async function start(): Promise<void> {
       missionTitle.textContent = course?.titre ?? status.title;
       missionDetail.textContent = course?.detail ?? (session.objective ? status.detail : 'G : prendre une livraison');
       missionProgress.style.width = `${Math.round((course?.progression ?? status.progress) * 100)}%`;
+      // Dix dernières secondes d'une livraison : bandeau rouge qui bat, et
+      // un bip à chaque seconde.
+      const reste = missions.tempsRestant;
+      const urgent = reste > 0 && reste <= 10;
+      missionPanel?.classList.toggle('urgent', urgent);
+      if (urgent && Math.ceil(reste) !== secondeBip) {
+        secondeBip = Math.ceil(reste);
+        audio.signal('tic');
+      }
       scoreEl.textContent = String(status.score).padStart(6, '0');
       const jp = joueur();
       const etoiles = '★'.repeat(police.niveau) + '☆'.repeat(3 - police.niveau);
       if (etoilesEl.textContent !== etoiles) {
+        // Une étoile gagnée : elles grossissent d'un coup.
+        const gagne = etoiles > (etoilesEl.textContent ?? '');
         etoilesEl.textContent = etoiles;
         etoilesEl.classList.toggle('actif', police.niveau > 0);
+        if (gagne && police.niveau > 0) {
+          etoilesEl.classList.remove('gagne');
+          void etoilesEl.offsetWidth;
+          etoilesEl.classList.add('gagne');
+        }
       }
       const etat = car.degats > .05 ? `ÉTAT ${Math.round((1 - car.degats) * 100)} %` : '';
       if (etatEl.textContent !== etat) etatEl.textContent = etat;
+      etatEl.classList.toggle('critique', car.degats > .75);
       const surRoute = aPied ? world.isOnRoad(jp.x, jp.z) : car.onRoad;
       const roadName = surRoute ? world.roadNameAt(jp.x, jp.z) : null;
       surfaceStatus.textContent = aPied ? (roadName?.toUpperCase() ?? 'À PIED')

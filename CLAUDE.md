@@ -131,6 +131,11 @@ listés dans le premier point.
   - Conduite : toute retouche se juge sur les trois mesures du journal du
     14 novembre (0 à 100, virage à 130 km/h, frein à main), sol plat forcé
     en console, pas au ressenti d'un trajet.
+  - Arbres : deux niveaux de détail triés selon la position du joueur
+    (`majArbres`, world.js). Tous au modèle complet, ils doublaient le
+    nombre de triangles de l'image (10,6 millions) pour 3 ms de plus.
+    Toute nouvelle végétation instanciée en masse doit prévoir sa version
+    lointaine dès le départ.
   - Tout ce qui se déplace interroge `world.bloque`, jamais
     `collidesBuilding` seul, et doit pouvoir SORTIR d'un obstacle où il a
     été posé (test de recouvrement avant de bloquer).
@@ -426,7 +431,7 @@ listés dans le premier point.
 | `textures/fumee.png` | bouffée de fumée, transparence tirée de la luminance | générée par Codex |
 | `audio/music1.mp3` | musique lue en boucle | fournie par l'auteur |
 | `models/flotte-rgs/*.json` | 4 véhicules rgsdev (CC0) en deux lots + palette | `scripts/preparer-flotte.mjs` (depuis le FBX) |
-| `models/arbres/*.json` | 4 essences d'arbres (écorce + feuillage, hauteur 1) | `scripts/blender/arbres.py` (Blender sans interface) |
+| `models/arbres/*.json` | 5 essences d'arbres (écorce + feuillage, hauteur 1), en version complète et lointaine | `scripts/blender/arbres.py` (Blender sans interface) |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 
 Caches locaux (gitignorés, `data/` inclus depuis le 19 septembre 2026) :

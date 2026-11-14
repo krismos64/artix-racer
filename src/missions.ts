@@ -62,6 +62,11 @@ export class Missions {
     return this.destination !== null;
   }
 
+  // Secondes restantes de la course en cours (0 sans course).
+  get tempsRestant(): number {
+    return this.destination ? Math.max(0, this.restant) : 0;
+  }
+
   // Point visé, pour la minicarte.
   get objectif(): Point2 | null {
     return this.destination ? [this.destination.x, this.destination.z] : null;

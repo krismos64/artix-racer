@@ -771,29 +771,55 @@ kbd {
   z-index: 6;
 }
 
-/* Étoiles de recherche et état du véhicule, sous le score. */
-.recherche {
-  display: block;
-  margin-top: 4px;
-  font-size: 20px;
-  letter-spacing: .12em;
-  color: rgba(244, 241, 232, .28);
-}
-.recherche.actif {
-  color: #ffd24a;
-  animation: recherche-pulse .8s ease-in-out infinite alternate;
-}
-@keyframes recherche-pulse {
-  from { opacity: 1; }
-  to { opacity: .55; }
-}
-.etat-voiture {
-  display: block;
-  margin-top: 2px;
-  font: 600 11px/1.4 system-ui, sans-serif;
+/* Étoiles de recherche et état du véhicule, sous le score. Les deux
+   annulent la pastille verte que `.score-panel span` donne au nom de rue. */
+.score-panel span.recherche {
+  margin-top: 6px;
+  padding: 0;
+  background: none;
+  font-size: 22px;
   letter-spacing: .1em;
-  color: #ff9a6b;
+  color: rgba(244, 241, 232, .22);
+  transition: color .3s ease;
 }
+/* Recherché : étoiles jaunes qui battent, avec un halo. */
+.score-panel span.recherche.actif {
+  color: #ffd24a;
+  text-shadow: 0 0 14px #ffb400aa, 0 2px 8px #000c;
+  animation: recherche-pulse .7s ease-in-out infinite alternate;
+}
+/* Une étoile de plus : les étoiles grossissent d'un coup puis reviennent. */
+.score-panel span.recherche.gagne { animation: recherche-gagne .55s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes recherche-pulse {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: .6; transform: scale(.96); }
+}
+@keyframes recherche-gagne {
+  0% { transform: scale(1.9); }
+  100% { transform: scale(1); }
+}
+.score-panel span.etat-voiture {
+  margin-top: 4px;
+  padding: 3px 7px;
+  background: #a8452bc9;
+  font-size: 9px;
+  letter-spacing: .12em;
+}
+.score-panel span.etat-voiture:empty { display: none; }
+/* Voiture presque morte : la pastille clignote. */
+.score-panel span.etat-voiture.critique { animation: recherche-pulse .4s ease-in-out infinite alternate; }
+
+/* Livraison : les dix dernières secondes, le bandeau de mission passe au
+   rouge et bat à la seconde. */
+.mission.urgent strong,
+.mission.urgent span { color: #ff8a6b; }
+.mission.urgent #mission-progress { background: #ff6a4a; box-shadow: 0 0 12px #ff6a4a; }
+.mission.urgent { animation: mission-urgence 1s ease-in-out infinite; }
+@keyframes mission-urgence {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  12% { transform: translateX(-50%) scale(1.06); }
+}
+
 /* Voile d'arrestation : il couvre l'écran le temps de ramener le joueur au
    point de départ. */
 .arrestation {
@@ -801,13 +827,24 @@ kbd {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(6, 10, 18, .92);
+  /* Gyrophares : deux lueurs bleue et rouge qui alternent derrière le mot. */
+  background:
+    radial-gradient(circle at 22% 50%, rgba(40, 110, 255, .55), transparent 55%),
+    radial-gradient(circle at 78% 50%, rgba(255, 50, 50, .5), transparent 55%),
+    rgba(6, 10, 18, .93);
   color: #f4f1e8;
   font: 800 clamp(40px, 9vw, 120px)/1 system-ui, sans-serif;
   letter-spacing: .14em;
   opacity: 0;
   pointer-events: none;
-  transition: opacity .5s ease;
+  transition: opacity .45s ease;
   z-index: 20;
 }
-.arrestation.actif { opacity: 1; }
+.arrestation.actif {
+  opacity: 1;
+  animation: arrestation-gyro .5s steps(2, jump-none) infinite;
+}
+@keyframes arrestation-gyro {
+  from { background-position: 0 0, 0 0, 0 0; filter: hue-rotate(0deg); }
+  to { filter: hue-rotate(140deg); }
+}

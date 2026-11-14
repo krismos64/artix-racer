@@ -30,7 +30,7 @@ export interface EtatSon {
   temps: number;        // horloge du jeu, en secondes
 }
 
-export type Signal = 'livre' | 'echec' | 'etoile' | 'arrete' | 'mission';
+export type Signal = 'livre' | 'echec' | 'etoile' | 'arrete' | 'mission' | 'tic';
 
 // Rapports de boîte : part de la vitesse de pointe atteinte en haut de
 // chaque rapport. Le régime retombe à chaque passage, c'est ce qui fait
@@ -262,6 +262,7 @@ export class ArcadeAudio {
       echec: [392, 330, 262],               // descente : raté
       etoile: [880, 660, 880, 660],         // alarme : on est recherché
       arrete: [330, 247, 196, 147],         // descente lente : arrêté
+      tic: [1320],                          // une seconde de moins
     };
     const ctx = this.context;
     if (!ctx) return;

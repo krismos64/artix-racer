@@ -3968,6 +3968,9 @@ export function buildWorld(scene, data) {
     foyers: lamps?.userData.foyers ?? [],
     // Pieds des arbres, pour les collisions.
     troncs: trees?.userData.troncs ?? [],
+    // Tri des arbres par niveau de détail, à appeler avec la position du
+    // joueur (absent pour les arbres procéduraux).
+    majArbres: trees?.userData.maj ?? null,
     lampHeads: lamps?.userData.lampHeads ?? null,
     // Matériau du vitrage : son émission est pilotée par le cycle jour/nuit,
     // pour que les pièces déclarées éclairées s'allument à la tombée du jour.
@@ -4538,13 +4541,25 @@ function plantTrees(data, relief = null) {
 
   // ---- Arbres modélisés dans Blender ------------------------------------
   // Quand les modèles sont chargés (data.arbres, voir arbres.js), chaque
-  // essence a ses deux maillages instanciés : écorce et feuillage. Le modèle
-  // mesure 1 de haut, l'instance lui donne la hauteur de l'arbre.
+  // essence a quatre maillages instanciés : écorce et feuillage, en version
+  // complète (500 à 750 triangles) et en version lointaine (une centaine).
+  // Le modèle mesure 1 de haut, l'instance lui donne la hauteur de l'arbre.
+  //
+  // Niveaux de détail : seuls les arbres à moins de 170 m du joueur prennent
+  // le modèle complet. Tous au modèle complet, les 3 500 arbres pesaient
+  // 2,1 millions de triangles, dessinés trois fois (image et deux cascades
+  // d'ombre), et une allée vue en enfilade tombait à 55 images par seconde.
+  // `group.userData.maj(x, z)` refait le tri quand le joueur a bougé de 15 m.
   if (data.arbres) {
-    const essenceDe = ([, , , aligne, essence]) => (aligne ? 'platane'
-      : essence === 'saule' ? 'saule' : essence === 'peuplier' ? 'peuplier' : 'feuillu');
+    const essenceDe = ([, , , aligne, essence], i) => (aligne ? 'platane'
+      : essence === 'saule' ? 'saule' : essence === 'peuplier' ? 'peuplier'
+        // Un arbre libre sur cinq est un conifère d'ornement (cèdres et
+        // sapins des jardins du bourg).
+        : hash(i * 3.7) > 0.8 ? 'conifere' : 'feuillu');
+    const n = positions.length;
+    const essences = positions.map(essenceDe);
     const effectifs = {};
-    for (const p of positions) effectifs[essenceDe(p)] = (effectifs[essenceDe(p)] ?? 0) + 1;
+    for (const nom of essences) effectifs[nom] = (effectifs[nom] ?? 0) + 1;
     // L'occlusion des modèles passe par la couleur de sommet.
     const ecorceMat = trunkMat.clone();
     ecorceMat.vertexColors = true;
@@ -4554,53 +4569,95 @@ function plantTrees(data, relief = null) {
     // Albédo relevé de moitié : l'occlusion par sommet des modèles assombrit
     // déjà le cœur du houppier, la teinte d'origine le rendait vert-noir.
     feuillageMat.color.multiplyScalar(1.55);
-    const maillages = {};
-    for (const [nom, n] of Object.entries(effectifs)) {
-      const ecorce = new THREE.InstancedMesh(data.arbres[nom].ecorce, ecorceMat, n);
-      const feuillage = new THREE.InstancedMesh(data.arbres[nom].feuilles, feuillageMat, n);
-      ecorce.name = `arbres-ecorce-${nom}`;
-      feuillage.name = `arbres-feuillage-${nom}`;
-      ecorce.castShadow = true;
-      feuillage.castShadow = true;
-      maillages[nom] = { ecorce, feuillage, rang: 0 };
-      group.add(ecorce, feuillage);
+    // De loin, pas de vent (matériau distinct, sans déplacement de sommets).
+    const feuillageLoinMat = feuillageMat.clone();
+    feuillageLoinMat.name = 'feuillage-arbres-loin';
+
+    const lots = {};
+    const instancie = (geometrie, materiau, nom, effectif) => {
+      const mesh = new THREE.InstancedMesh(geometrie, materiau, effectif);
+      mesh.name = nom;
+      mesh.castShadow = true;
+      // Les instances changent avec la position du joueur : la sphère
+      // englobante calculée au départ serait fausse.
+      mesh.frustumCulled = false;
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(effectif * 3), 3);
+      mesh.count = 0;
+      group.add(mesh);
+      return mesh;
+    };
+    for (const [nom, effectif] of Object.entries(effectifs)) {
+      const modele = data.arbres[nom];
+      lots[nom] = {
+        pres: [instancie(modele.ecorce, ecorceMat, `arbres-ecorce-${nom}`, effectif),
+          instancie(modele.feuilles, feuillageMat, `arbres-feuillage-${nom}`, effectif)],
+        loin: [instancie(modele.lointain.ecorce, ecorceMat, `arbres-ecorce-loin-${nom}`, effectif),
+          instancie(modele.lointain.feuilles, feuillageLoinMat, `arbres-feuillage-loin-${nom}`, effectif)],
+      };
     }
+
+    // Matrice et teintes de chaque arbre, calculées une fois.
+    const matrices = new Float32Array(n * 16);
+    const teintes = new Float32Array(n * 6);
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const col = new THREE.Color();
     const AXE = new THREE.Vector3(0, 1, 0);
-    positions.forEach((p, i) => {
-      const [x, z, h] = p;
-      const nom = essenceDe(p);
-      const lot = maillages[nom];
+    positions.forEach(([x, z, h], i) => {
+      const nom = essences[i];
       const sol = relief ? relief.hauteurRoute(x, z) : 0;
       // Chaque arbre a son orientation et sa corpulence : une allée de
       // modèles identiques se repère au premier coup d'œil.
       q.setFromAxisAngle(AXE, hash(i * 6.7) * Math.PI * 2);
       const carrure = h * (0.88 + hash(i * 5.1) * 0.26);
       m.compose(new THREE.Vector3(x, sol - 0.05, z), q, new THREE.Vector3(carrure, h, carrure));
-      lot.ecorce.setMatrixAt(lot.rang, m);
-      lot.feuillage.setMatrixAt(lot.rang, m);
-      // Écorce : gris clair du platane, brun des autres feuillus.
+      m.toArray(matrices, i * 16);
+      // Écorce : gris clair du platane, brun des autres.
       const e = hash(i * 8.3);
       if (nom === 'platane' || e > 0.7) col.setHSL(0.11, 0.06 + e * 0.04, 0.62 + e * 0.10);
       else col.setHSL(0.07, 0.22 + e * 0.10, 0.42 + e * 0.10);
-      lot.ecorce.setColorAt(lot.rang, col);
-      // Feuillage : mêmes teintes que les arbres procéduraux.
-      const t = hash(i * 3.7);
+      col.toArray(teintes, i * 6);
+      // Feuillage : argenté du saule, vert mat du peuplier, bleuté du
+      // conifère, deux verts de feuillus.
+      const t = hash(i * 4.3);
       if (nom === 'saule') col.setHSL(0.23, 0.14 + t * 0.08, 0.46 + t * 0.10);
       else if (nom === 'peuplier') col.setHSL(0.27, 0.30 + t * 0.10, 0.36 + t * 0.08);
+      else if (nom === 'conifere') col.setHSL(0.36, 0.20 + t * 0.10, 0.30 + t * 0.08);
       else if (t > 0.55) col.setHSL(0.24 + t * 0.03, 0.32 + t * 0.10, 0.44 + t * 0.08);
       else col.setHSL(0.26 + t * 0.04, 0.36 + t * 0.14, 0.36 + t * 0.09);
-      lot.feuillage.setColorAt(lot.rang, col);
-      lot.rang++;
+      col.toArray(teintes, i * 6 + 3);
     });
-    for (const lot of Object.values(maillages)) {
-      lot.ecorce.instanceMatrix.needsUpdate = true;
-      lot.feuillage.instanceMatrix.needsUpdate = true;
-      if (lot.ecorce.instanceColor) lot.ecorce.instanceColor.needsUpdate = true;
-      if (lot.feuillage.instanceColor) lot.feuillage.instanceColor.needsUpdate = true;
-    }
+
+    const RAYON_DETAIL = 170;
+    let dernierX = Infinity, dernierZ = Infinity;
+    group.userData.maj = (x, z) => {
+      if (Math.hypot(x - dernierX, z - dernierZ) < 15) return;
+      dernierX = x;
+      dernierZ = z;
+      const rangs = {};
+      for (const nom of Object.keys(lots)) rangs[nom] = { pres: 0, loin: 0 };
+      for (let i = 0; i < n; i++) {
+        const nom = essences[i];
+        const niveau = Math.hypot(positions[i][0] - x, positions[i][1] - z) < RAYON_DETAIL ? 'pres' : 'loin';
+        const rang = rangs[nom][niveau]++;
+        const [ecorce, feuillage] = lots[nom][niveau];
+        const source = matrices.subarray(i * 16, i * 16 + 16);
+        ecorce.instanceMatrix.array.set(source, rang * 16);
+        feuillage.instanceMatrix.array.set(source, rang * 16);
+        ecorce.instanceColor.array.set(teintes.subarray(i * 6, i * 6 + 3), rang * 3);
+        feuillage.instanceColor.array.set(teintes.subarray(i * 6 + 3, i * 6 + 6), rang * 3);
+      }
+      for (const [nom, lot] of Object.entries(lots)) {
+        for (const niveau of ['pres', 'loin']) {
+          for (const mesh of lot[niveau]) {
+            mesh.count = rangs[nom][niveau];
+            mesh.instanceMatrix.needsUpdate = true;
+            mesh.instanceColor.needsUpdate = true;
+          }
+        }
+      }
+    };
+    group.userData.maj(0, 0);
     group.userData.troncs = positions.map(([x, z, h]) => ({ x, z, h }));
     return group;
   }

@@ -508,6 +508,8 @@ export async function construireVille(
         if (pietons.effectif) pietons.update(Math.min(dt, .1), temps, { x, z, vitesse });
         if (circulation.effectif) circulation.update(Math.min(dt, .1), { x, z, aPied });
         touffes.maj(x, z, true);
+        // Niveaux de détail des arbres : modèle complet près du joueur.
+        world.majArbres?.(x, z);
         const chocs = pietons.chocs ?? 0;
         pietons.chocs = 0;
         return chocs;

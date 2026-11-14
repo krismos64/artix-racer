@@ -1,6 +1,7 @@
-// Arbres modélisés dans Blender (scripts/blender/arbres.py) : quatre
+// Arbres modélisés dans Blender (scripts/blender/arbres.py) : cinq
 // essences, chacune en deux maillages (écorce et feuillage), de hauteur 1 et
-// pied à l'origine. Le jeu les instancie à la taille de chaque arbre.
+// pied à l'origine. Le jeu les instancie à la taille de chaque arbre, en
+// deux niveaux de détail (voir plantTrees, world.js).
 //
 // Avant le 14 novembre 2026, un arbre était un cylindre, cinq cônes et trois
 // icosaèdres : des masses facettées qui se lisaient comme des blocs dès
@@ -9,7 +10,7 @@
 import * as THREE from 'three';
 
 const BASE = '/models/arbres/';
-export const ESSENCES = ['platane', 'feuillu', 'peuplier', 'saule'];
+export const ESSENCES = ['platane', 'feuillu', 'peuplier', 'conifere', 'saule'];
 
 function geometrie(lot) {
   const g = new THREE.BufferGeometry();
@@ -24,7 +25,7 @@ function geometrie(lot) {
   return g;
 }
 
-// Renvoie { platane: { ecorce, feuilles }, ... } ou null si un fichier
+// Renvoie { platane: { ecorce, feuilles, lointain }, ... } ou null si un fichier
 // manque : la ville retombe alors sur ses arbres procéduraux.
 export async function chargerArbres() {
   try {
@@ -33,7 +34,12 @@ export async function chargerArbres() {
       const reponse = await fetch(`${BASE}${nom}.json`);
       if (!reponse.ok) throw new Error(`${nom}: ${reponse.status}`);
       const source = await reponse.json();
-      arbres[nom] = { ecorce: geometrie(source.ecorce), feuilles: geometrie(source.feuilles) };
+      arbres[nom] = {
+        ecorce: geometrie(source.ecorce),
+        feuilles: geometrie(source.feuilles),
+        // Version à une centaine de triangles, pour les arbres éloignés.
+        lointain: { ecorce: geometrie(source.lointain.ecorce), feuilles: geometrie(source.lointain.feuilles) },
+      };
     }));
     return arbres;
   } catch (erreur) {

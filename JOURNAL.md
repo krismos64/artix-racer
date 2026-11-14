@@ -2,6 +2,26 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 8) : niveaux de détail des arbres, conifère, finitions d'interface
+
+- **Niveaux de détail** : le script Blender sort chaque essence en deux
+  versions, complète (528 à 748 triangles) et lointaine (82 à 122 : tronc à
+  quatre côtés, une charpentière sur deux, seize grandes cartes dans la même
+  enveloppe). Seuls les arbres à moins de 170 m du joueur prennent le modèle
+  complet ; `majArbres(x, z)` refait le tri tous les 15 m parcourus.
+  Mesuré au point de départ : **7,72 ms par image contre 10,96**, ombres
+  1,60 ms contre 3,74, 5,35 millions de triangles contre 10,6. L'allée de
+  platanes en enfilade repasse de 55 à 61 images par seconde.
+- **Conifère** : cinquième essence (flèche droite, étages de branches qui
+  raccourcissent vers la cime, teinte bleutée). Un arbre libre sur cinq.
+  La grappe de feuilles reste celle d'un feuillu : crédible de loin, pas de
+  près.
+- **Interface** : étoiles de recherche dorées avec halo, qui grossissent
+  quand on en gagne une ; état du véhicule en pastille rouge, clignotante
+  sous 25 % ; voile d'arrestation aux lueurs de gyrophare ; dix dernières
+  secondes d'une livraison en rouge, bandeau qui bat et bip à la seconde.
+  Les deux premiers vérifiés à l'écran, les deux derniers écrits seulement.
+
 ## 2026-11-14 (suite 7) : arbres modélisés dans Blender
 
 - **`scripts/blender/arbres.py`** génère quatre essences (platane taillé en

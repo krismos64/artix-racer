@@ -3,8 +3,8 @@
 #   /Applications/Blender.app/Contents/MacOS/Blender --background \
 #       --python scripts/blender/arbres.py -- [dossier des rendus de contrôle]
 #
-# Quatre essences (platane taillé en tête de chat, feuillu libre, peuplier,
-# saule), chacune en deux maillages : l'ÉCORCE (fût, charpentières, rameaux,
+# Cinq essences (platane taillé en tête de chat, feuillu libre, peuplier,
+# conifère, saule), chacune en deux maillages : l'ÉCORCE (fût, charpentières, rameaux,
 # en tubes effilés) et le FEUILLAGE (cartes portant une grappe de feuilles
 # détourée, posées au bout des rameaux). Le jeu instancie ces deux maillages
 # 3 500 fois : chaque arbre doit donc rester sous 500 triangles.
@@ -59,6 +59,11 @@ ESSENCES = {
     'peuplier': dict(fut=.14, fleche=.95, rayon=(.030, .022), branches=11, insertion=(.14, .86),
                      elevation=(62, 76), longueur=(.14, .20), courbure=.6, rameaux=1,
                      houppier=(.57, .12, .43), cartes=110, taille=.15, graine=37),
+    # Conifère d'ornement (cèdre, sapin) : flèche droite, étages de branches
+    # presque horizontales qui raccourcissent vers la cime.
+    'conifere': dict(fut=.12, fleche=.97, rayon=(.036, .026), branches=13, insertion=(.14, .9),
+                     elevation=(-8, 12), longueur=(.26, .34), courbure=-.25, rameaux=1,
+                     houppier=(.55, .30, .44), cartes=104, taille=.2, graine=53, cone=True),
     # Saule : tronc court, couronne étalée dont les extrémités retombent.
     'saule': dict(fut=.30, fleche=0, rayon=(.050, .036), branches=7, insertion=(.25, .34),
                   elevation=(28, 50), longueur=(.34, .44), courbure=-.9, rameaux=2,
@@ -132,8 +137,14 @@ def branche(alea, depart, direction, longueur, courbure, segments):
     return points
 
 
-def construire(nom, e):
+def construire(nom, e, lointain=False):
+    """`lointain` : version à une soixantaine de triangles pour les arbres
+    éloignés. Même silhouette (même enveloppe de houppier), mais un tronc à
+    quatre côtés, des charpentières sans rameaux et seize grandes cartes."""
     alea = random.Random(e['graine'])
+    cotes_tronc, cotes_branche = (4, 3) if lointain else (6, 4)
+    nb_cartes = 16 if lointain else e['cartes']
+    taille_carte = e['taille'] * (2.5 if lointain else 1)
     ecorce, feuilles = Maillage(), Maillage()
     centre = Vector((0, 0, e['houppier'][0]))
     rayon_h, demi_h = e['houppier'][1], e['houppier'][2]
@@ -157,7 +168,7 @@ def construire(nom, e):
         # Empattement : le pied s'élargit de 45 % au ras du sol.
         rayons.append(r * (1.45 if z == 0 else 1.12 if z < .05 else 1))
     # L'écorce s'assombrit sous le houppier, qui lui fait de l'ombre.
-    tube(ecorce, axe, rayons, 6, [1 - .35 * min(1, z / e['fut']) for z in niveaux])
+    tube(ecorce, axe, rayons, cotes_tronc, [1 - .35 * min(1, z / e['fut']) for z in niveaux])
 
     def sur_axe(z):
         for a, b in zip(axe, axe[1:]):
@@ -174,12 +185,17 @@ def construire(nom, e):
         depart = sur_axe(z)
         elevation = math.radians(alea.uniform(*e['elevation']))
         direction = Vector((math.cos(azimut) * math.cos(elevation), math.sin(azimut) * math.cos(elevation), math.sin(elevation)))
-        longueur = alea.uniform(*e['longueur']) * (1 - .35 * max(0, (z - e['fut']) / (sommet - e['fut'] + 1e-6)) if e['fleche'] else 1)
+        retrait = .82 if e.get('cone') else .35
+        longueur = alea.uniform(*e['longueur']) * (1 - retrait * max(0, (z - e['fut']) / (sommet - e['fut'] + 1e-6)) if e['fleche'] else 1)
         ligne = branche(alea, depart, direction, longueur, e['courbure'], 3)
         gros = e['rayon'][1] * (.62 if e['fleche'] else .7)
-        tube(ecorce, ligne, [gros, gros * .7, gros * .42, gros * .18], 4, [.72, .66, .6, .56])
+        # De loin, une charpentière sur deux suffit à la silhouette.
+        if not lointain or i % 2 == 0:
+            tube(ecorce, ligne if not lointain else [ligne[0], ligne[3]],
+                 [gros, gros * .7, gros * .42, gros * .18] if not lointain else [gros, gros * .2],
+                 cotes_branche, [.72, .66, .6, .56] if not lointain else [.72, .56])
         ancrages += [ligne[2], ligne[3]]
-        for k in range(e['rameaux']):
+        for k in range(0 if lointain else e['rameaux']):
             t = .45 + .4 * k / max(1, e['rameaux'] - 1) if e['rameaux'] > 1 else .6
             base = ligne[1].lerp(ligne[3], t)
             cote = 1 if k % 2 else -1
@@ -194,14 +210,22 @@ def construire(nom, e):
     # ---- Cartes de feuillage ----------------------------------------------
     # D'abord au bout de chaque rameau, puis des cartes de remplissage tirées
     # dans l'enveloppe du houppier pour boucher les jours.
-    positions = list(ancrages)
-    while len(positions) < e['cartes']:
+    # De loin, les cartes ne suivent plus les rameaux : seize grandes
+    # cartes réparties dans l'enveloppe.
+    positions = [] if lointain else list(ancrages)
+    while len(positions) < nb_cartes:
         u, v = alea.uniform(0, math.tau), alea.uniform(-1, 1)
         s = math.sqrt(1 - v * v)
         # Plus de cartes en périphérie qu'au cœur : c'est la silhouette qui se voit.
         r = alea.uniform(.55, 1.02)
+        if e.get('cone'):
+            # Enveloppe en cône : large en bas, pointue à la cime.
+            haut = (v + 1) / 2
+            positions.append(centre + Vector((math.cos(u) * rayon_h * r * (1 - haut) ** .8,
+                                              math.sin(u) * rayon_h * r * (1 - haut) ** .8, v * demi_h)))
+            continue
         positions.append(centre + Vector((math.cos(u) * s * rayon_h * r, math.sin(u) * s * rayon_h * r, v * demi_h * r)))
-    for p in positions[:e['cartes']]:
+    for p in positions[:nb_cartes]:
         dehors = (p - centre)
         dehors = Vector((dehors.x / rayon_h, dehors.y / rayon_h, dehors.z / demi_h))
         if dehors.length < 1e-3:
@@ -214,7 +238,10 @@ def construire(nom, e):
         haut = face.cross(droite)
         a = droite * math.cos(angle) + haut * math.sin(angle)
         b = face.cross(a)
-        taille = e['taille'] * alea.uniform(.78, 1.2) * .5
+        taille = taille_carte * alea.uniform(.78, 1.2) * .5
+        if e.get('cone'):
+            # Cartes plus petites vers la cime : la pointe reste fine.
+            taille *= 1.2 - .8 * min(1, max(0, (p.z - (centre.z - demi_h)) / (2 * demi_h)))
         # Saule : les cartes du bord s'allongent vers le bas, en rideau.
         if nom == 'saule' and dans_houppier(p) > .75:
             b = (b * .4 + Vector((0, 0, -1))).normalized()
@@ -297,7 +324,7 @@ def rendre(chemin):
     scene.render.engine = 'CYCLES'
     scene.cycles.samples = 24
     scene.cycles.device = 'CPU'
-    scene.render.resolution_x, scene.render.resolution_y = 1500, 520
+    scene.render.resolution_x, scene.render.resolution_y = 1500, 820
     scene.render.film_transparent = False
     monde = bpy.data.worlds.new('ciel')
     monde.use_nodes = True
@@ -315,9 +342,9 @@ def rendre(chemin):
     sol.data.materials.append(herbe)
     camera = bpy.data.objects.new('camera', bpy.data.cameras.new('camera'))
     camera.data.type = 'ORTHO'
-    camera.data.ortho_scale = 5
-    camera.location = (2.1, -6, 1.3)
-    camera.rotation_euler = (math.radians(82), 0, 0)
+    camera.data.ortho_scale = 6.2
+    camera.location = (2.5, -6, 2.6)
+    camera.rotation_euler = (math.radians(68), 0, 0)
     scene.collection.objects.link(camera)
     scene.camera = camera
     scene.render.filepath = chemin
@@ -330,13 +357,19 @@ def principal():
     mat_ecorce, mat_feuille = materiaux()
     for rang, (nom, e) in enumerate(ESSENCES.items()):
         ecorce, feuilles = construire(nom, e)
+        ecorce_loin, feuilles_loin = construire(nom, e, lointain=True)
         with open(os.path.join(SORTIE, f'{nom}.json'), 'w') as fichier:
-            json.dump({'ecorce': ecorce.export(), 'feuilles': feuilles.export()}, fichier, separators=(',', ':'))
-        print(f'{nom} : écorce {len(ecorce.idx) // 3} triangles, feuillage {len(feuilles.idx) // 3} triangles')
+            json.dump({'ecorce': ecorce.export(), 'feuilles': feuilles.export(),
+                       'lointain': {'ecorce': ecorce_loin.export(), 'feuilles': feuilles_loin.export()}},
+                      fichier, separators=(',', ':'))
+        print(f'{nom} : {(len(ecorce.idx) + len(feuilles.idx)) // 3} triangles, '
+              f'lointain {(len(ecorce_loin.idx) + len(feuilles_loin.idx)) // 3}')
         if RENDUS:
-            for maillage, materiau in ((ecorce, mat_ecorce), (feuilles, mat_feuille)):
-                objet = objet_blender(f'{nom}-{materiau.name}', maillage, materiau)
-                objet.location.x = rang * 1.4
+            # Rangée du devant : modèles complets ; derrière : versions lointaines.
+            for recul, lot in ((0, (ecorce, feuilles)), (2.2, (ecorce_loin, feuilles_loin))):
+                for maillage, materiau in zip(lot, (mat_ecorce, mat_feuille)):
+                    objet = objet_blender(f'{nom}-{materiau.name}-{recul}', maillage, materiau)
+                    objet.location = (rang * 1.25, recul, 0)
     if RENDUS:
         os.makedirs(RENDUS, exist_ok=True)
         rendre(os.path.join(RENDUS, 'arbres.png'))
