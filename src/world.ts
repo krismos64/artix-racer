@@ -1,8 +1,7 @@
 // Index spatial d'Artix : altitudes, collisions et noms de rue.
 //
 // Cette classe NE DESSINE RIEN. Tout le visuel de la ville vient de la couche
-// Three.js (`src/three-city/*.js`) convertie en Babylon par
-// `src/three-city-bridge.ts`. `ArtixWorld` ne conserve que ce que la logique
+// Three.js (`src/three-city/*.js`), assemblée par `src/ville.ts`. `ArtixWorld` ne conserve que ce que la logique
 // de jeu interroge image par image : la hauteur du sol sous la voiture, la
 // présence d'une chaussée, le nom de la rue et les collisions avec le bâti.
 //

@@ -1,10 +1,4 @@
-import {
-  Color3,
-  Mesh,
-  MeshBuilder,
-  Scene,
-  StandardMaterial,
-} from '@babylonjs/core';
+import * as THREE from 'three/webgpu';
 import type { Point2, RoadData } from './types';
 
 export type GameMode = 'free' | 'challenge';
@@ -100,7 +94,7 @@ export type EvenementPartie =
 export class GameSession {
   readonly evenements: EvenementPartie[] = [];
   private readonly checkpoints: Point2[];
-  private readonly ring: Mesh;
+  private readonly ring: THREE.Mesh;
   private mode: GameMode = 'free';
   private checkpointIndex = 0;
   private elapsed = 0;
@@ -112,23 +106,23 @@ export class GameSession {
   private score = 0;
 
   constructor(
-    scene: Scene,
+    scene: THREE.Scene,
     roads: RoadData[],
     spawn: Point2,
     private readonly surfaceY: (x: number, z: number) => number,
   ) {
     this.checkpoints = buildCheckpoints(roads, spawn);
-    this.ring = MeshBuilder.CreateTorus('arcade-checkpoint', { diameter: 9.5, thickness: .34, tessellation: 28 }, scene);
-    const material = new StandardMaterial('checkpoint-material', scene);
-    material.diffuseColor = Color3.FromHexString('#f1bf3f');
-    material.emissiveColor = Color3.FromHexString('#8b5d08');
-    material.specularColor = Color3.Black();
-    material.freeze();
-    this.ring.material = material;
-    this.ring.rotation.x = Math.PI / 2;
-    this.ring.billboardMode = Mesh.BILLBOARDMODE_Y;
-    this.ring.isPickable = false;
-    this.ring.setEnabled(false);
+    // Tore dressé (son axe est +Z) : `rotation.y` l'oriente vers le joueur,
+    // `rotation.z` le fait tourner sur lui-même. Ordre YXZ pour que le lacet
+    // s'applique en dernier.
+    this.ring = new THREE.Mesh(
+      new THREE.TorusGeometry(4.75, .17, 10, 28),
+      new THREE.MeshStandardMaterial({ color: 0xf1bf3f, emissive: 0x8b5d08, roughness: 1 }),
+    );
+    this.ring.name = 'arcade-checkpoint';
+    this.ring.rotation.order = 'YXZ';
+    this.ring.visible = false;
+    scene.add(this.ring);
   }
 
   start(mode: GameMode): void {
@@ -139,7 +133,7 @@ export class GameSession {
     this.finishedTimer = 0;
     this.completed = false;
     this.running = mode === 'challenge';
-    this.ring.setEnabled(this.running && this.checkpoints.length > 0);
+    this.ring.visible = this.running && this.checkpoints.length > 0;
     this.placeRing();
   }
 
@@ -156,7 +150,9 @@ export class GameSession {
     this.apparition = Math.min(1, this.apparition + dt / .45);
     const t = this.apparition - 1;
     const jaillit = 1 + 2.7 * t * t * t + 1.7 * t * t;
-    this.ring.scaling.setAll(pulse * Math.max(.01, jaillit));
+    this.ring.scale.setScalar(pulse * Math.max(.01, jaillit));
+    // Face au joueur, comme un panneau : l'anneau se lit de loin en cercle.
+    this.ring.rotation.y = Math.atan2(x - this.ring.position.x, z - this.ring.position.z);
     const target = this.checkpoints[this.checkpointIndex];
     if (!target || Math.hypot(target[0] - x, target[1] - z) > 9.5) return;
     const points = 2500 + Math.abs(speed) * 30;
@@ -165,7 +161,7 @@ export class GameSession {
     if (this.checkpointIndex >= this.checkpoints.length) {
       this.running = false;
       this.completed = true;
-      this.ring.setEnabled(false);
+      this.ring.visible = false;
       this.finishedTimer = 6;
       const previous = Number(localStorage.getItem('artix-racer-best') ?? Infinity);
       if (this.elapsed < previous) localStorage.setItem('artix-racer-best', this.elapsed.toFixed(3));

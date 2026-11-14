@@ -1,4 +1,4 @@
-# Artix Racer Hybride Babylon.js
+# Artix Racer
 
 Jeu de course 3D dans Artix (64170), reconstruite depuis les données publiques
 (OSM, BD TOPO, LiDAR HD, Panoramax, orthophotos IGN). Usage personnel :
@@ -28,29 +28,39 @@ configuration Netlify dans le dépôt, aucun déploiement automatique.
     position et rotation d'une devanture). `--ortho` ajoute la commande
     curl d'orthophoto cadrée.
 
-## Architecture : hybride en deux couches
+## Architecture : Three.js natif (WebGPU)
 
-1. **`src/three-city/*.js`** (Three.js, hérité) : génère TOUT le visuel de la
-   ville. `world.js` (bâti, routes, sols), `landmarks.js` (bâtiments
-   modélisés à la main), `signage.js` (signalisation, enseignes, poteaux),
-   `accotements.js` (bande entre chaussée et terrain), `terrain.js` (relief
-   interpolé sur les altitudes BD TOPO), `osm.js`, `bdtopo.js` et `poi.js`
-   (lecture des sources),
-   `parking.js`, `parkedcars.js` (parc garé : flotte rgsdev + scooters),
-   `flotte.js` (chargement et mise aux cotes des modèles rgsdev),
+Depuis le 14 novembre 2026 (branche `port-three-natif`), un seul moteur :
+Three.js 0.187, rendu par `WebGPURenderer`, post-traitement en TSL. Le pont
+Three→Babylon et Babylon lui-même sont supprimés. Cap du projet : un monde
+ouvert où l'on RECONNAÎT Artix sans exiger l'exactitude, avec personnages
+fictifs et voitures réalistes.
+
+1. **`src/three-city/*.js`** : génère TOUT le visuel de la ville, en
+   maillages Three qui entrent tels quels dans la scène. `world.js` (bâti,
+   routes, sols), `landmarks.js` (bâtiments modélisés à la main),
+   `signage.js` (signalisation, enseignes, poteaux), `accotements.js` (bande
+   entre chaussée et terrain), `terrain.js` (relief interpolé sur les
+   altitudes BD TOPO), `osm.js`, `bdtopo.js` et `poi.js` (lecture des
+   sources), `parking.js`, `parkedcars.js` (parc garé : flotte rgsdev +
+   scooters), `flotte.js` (chargement et mise aux cotes des modèles rgsdev),
    `traffic.js` (circulation légère), `pedestrians.js`, `touffes.js`,
    `haies.js` (haies de clôture : laurier, thuya, troène, charmille),
    `textures.js` (textures canvas procédurales).
-2. **`src/three-city-bridge.ts`** : convertit meshes/matériaux Three → Babylon
-   PBR. Contient aussi `LiveInstancedBridge` (contenu animé) et le calcul du
-   contenu vivant.
-3. **`src/world.ts`** (Babylon natif) : `ArtixWorld` est un pur INDEX SPATIAL.
-   Il ne dessine rien : il ne répond qu'aux cinq questions que la boucle de
-   jeu pose à chaque image (`surfaceY`, `isOnRoad`, `roadNameAt`,
-   `collidesBuilding`, `estMineral`), via une grille de cellules de 256 m. Ne pas y chercher
-   le visuel, et ne rien y ajouter qui dessine.
-4. **`src/main.ts`** : scène, ciel, lumières, ombres CSM, ambiances, pipeline
-   post-process, boucle de jeu, HUD.
+2. **`src/ville.ts`** : assemble la ville dans la scène. Il ne fait que ce
+   que le rendu demande en plus de la génération : ombres portées et reçues,
+   enroulement des triangles aligné sur les normales, fusion des petits
+   maillages par matériau et cellule de 300 m, et trois matériaux repris
+   (émission des vitrages par attribut, lightmap d'herbe passée en couleur,
+   marquages au sol éclairés).
+3. **`src/world.ts`** : `ArtixWorld` est un pur INDEX SPATIAL. Il ne dessine
+   rien : il ne répond qu'aux cinq questions que la boucle de jeu pose à
+   chaque image (`surfaceY`, `isOnRoad`, `roadNameAt`, `collidesBuilding`,
+   `estMineral`), via une grille de cellules de 256 m. Ne rien y ajouter qui
+   dessine.
+4. **`src/main.ts`** : rendu, ciel HDR, lumières, ombres en cascade
+   (`CSMShadowNode`), ambiances, pipeline de post-traitement, boucle de jeu,
+   HUD.
 5. **`src/lieux.ts`** : table des lieux-dits affichés dans le HUD.
 6. Jeu autour du rendu : `car.ts` (Ferrari, conduite arcade sans moteur
    physique, vue conducteur), `game.ts` (modes balade et Tour d'Artix,
@@ -58,25 +68,51 @@ configuration Netlify dans le dépôt, aucun déploiement automatique.
    champ de vision, secousse, arrêt sur image, combo de dérapage, compte à
    rebours, départ parfait, frôlements, ralenti d'arrivée via
    `echelleTemps` que main.ts applique au seul temps du JEU), `fumee.ts`
-   (fumée et poussière, un seul système de particules), `audio.ts` (moteur
-   et turbo synthétisés, musique, touche M), `intro.ts` (intro animée et
-   bande-son Web Audio du lancement, jouée pendant le chargement ;
-   `?intro=0` la saute), `minimap.ts`, `profil.ts`
-   (outils de mesure en console), `config.ts` (profils graphiques).
+   (fumée et poussière : 600 quads simulés à la main, un seul maillage),
+   `audio.ts` (moteur et turbo synthétisés, musique, touche M), `intro.ts`
+   (intro animée et bande-son Web Audio du lancement, jouée pendant le
+   chargement ; `?intro=0` la saute), `minimap.ts`, `profil.ts` (outils de
+   mesure en console), `config.ts` (profils graphiques).
    ATTENTION, deux circulations coexistent : `three-city/traffic.js`
    (véhicules rgsdev instanciés, le rendu voulu) et `src/traffic.ts`
-   (12 voitures en boîtes Babylon, 6 maillages chacune, qui portent les
-   collisions et les frôlements). Doublon hérité, à fusionner (voir
-   JOURNAL.md, pistes du 4 octobre).
+   (12 voitures en boîtes, qui portent les collisions et les frôlements).
+   Doublon hérité, à fusionner (voir JOURNAL.md, pistes du 4 octobre).
 
-Un seul moteur produit le visuel (la couche 1, convertie par la couche 2). Une
-version Babylon concurrente du rendu (chunks, bâtiments, mairie, église) a
-vécu des mois dans `world.ts` et `landmarks.ts` sans jamais être exécutée,
-`queryOnly` étant toujours vrai : 1 500 lignes qu'on débogue pour rien.
-Retirée le 19 septembre 2026.
+Historique : une version Babylon concurrente du rendu a vécu des mois dans
+`world.ts` sans jamais être exécutée (retirée le 19 septembre 2026), puis un
+pont Three→Babylon a converti la ville jusqu'au 14 novembre 2026. Plusieurs
+pièges ci-dessous parlent encore du « pont » : ceux qui ne valent plus sont
+listés dans le premier point.
 
 ## Pièges connus (coûteux à redécouvrir)
 
+- **Rendu Three natif (depuis le 14 novembre 2026)**. Ce qui a changé par
+  rapport aux pièges du pont décrits plus bas :
+  - Les matériaux gardent leur `side` d'origine et un `MeshBasicMaterial`
+    reste non éclairé. `onBeforeCompile` est toujours ignoré (rendu à
+    nœuds) : écrire `material.colorNode` ou `material.emissiveNode` en TSL,
+    même sur un `MeshStandardMaterial` ordinaire, le moteur les recopie.
+  - Une lightmap Three S'AJOUTE à la lumière : pour un multiplicateur,
+    passer par `colorNode` (voir `adapterMateriau`, ville.ts).
+  - Enroulement : un triangle enroulé à l'envers de sa normale ressort NOIR
+    sous le soleil avec un matériau à deux faces. `alignerEnroulement`
+    (ville.ts) le corrige pour tout ce qui passe par `preparer`.
+  - Lumières : intensités d'origine × π (le PBR de Babylon ne divisait pas
+    le diffus par π). Exposition × 0,6 (l'ACES de Three multiplie l'entrée
+    par 1/0,6).
+  - Ciel : colonne u du panorama sur (u - 0,5) × 2π de +X vers +Z, et
+    `backgroundRotation` tourne dans le sens INVERSE de l'angle donné.
+  - Ajouter ou montrer une lumière en cours de partie recompile tous les
+    matériaux (gel d'une à trois secondes à la première nuit). Créer les
+    lumières au démarrage et basculer `visible`.
+  - Juger des ombres en fin de journée (touche L), voiture tournée : à
+    midi, depuis le point de départ, elles tombent derrière les objets.
+  - `__comparer()` doit faire avancer le compteur d'images du moteur
+    (`_nodes.nodeFrame.update()`), sinon la scène n'est pas redessinée et
+    le chiffre est faux.
+  - Tout maillage retrouvé par son nom doit être dans `PROTEGES_FUSION`
+    (ville.ts), tout maillage du bâti qui porte une ombre dans
+    `PORTEURS_OMBRE`.
 - Le projet est un JEU LOCAL : `npm run dev` sert des fichiers statiques, rien
   de plus. Il a traîné des mois un échafaudage de déploiement issu d'un
   template (worker Cloudflare, `.openai/hosting.json`, `.wrangler/` versionné,
@@ -409,7 +445,8 @@ jeu→WGS84 : lat = 43.39743 - z/111320 ; lon = -0.57224 + x/80887.
 - Tout en français : code commenté, commits, docs. Commentaires : expliquer le
   POURQUOI, chiffres à l'appui.
 - Jamais de tiret cadratin dans la prose. Jamais de `Co-Authored-By: Claude`.
-- Perf cible : 60 fps sur MacBook Air M4 en profil Équilibré.
+- Perf cible : 60 fps sur MacBook Air M4 en profil Équilibré (mesuré le
+  14 novembre 2026 : 7,45 ms par image, 1440 × 690).
 - Vérification : `npx tsc --noEmit` (TS) et `node --check` (JS three-city).
 - Hook projet : type-check automatique après édition d'un `.ts`.
 

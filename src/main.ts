@@ -1,31 +1,11 @@
-import {
-  CascadedShadowGenerator,
-  Color3,
-  Color4,
-  DefaultRenderingPipeline,
-  DirectionalLight,
-  DynamicTexture,
-  Engine,
-  HemisphericLight,
-  ImageProcessingConfiguration,
-  Mesh,
-  MeshBuilder,
-  PBRMaterial,
-  PointLight,
-  HDRCubeTexture,
-  Matrix,
-  MotionBlurPostProcess,
-  ColorCurves,
-  Texture,
-  Scene,
-  ShadowGenerator,
-  SSAO2RenderingPipeline,
-  StandardMaterial,
-  TransformNode,
-  UniversalCamera,
-  Vector3,
-  VertexData,
-} from '@babylonjs/core';
+import * as THREE from 'three/webgpu';
+import { dot, float, mix, pass, renderOutput, screenUV, smoothstep, uniform, vec2, vec3, vec4 } from 'three/tsl';
+import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { chromaticAberration } from 'three/addons/tsl/display/ChromaticAberrationNode.js';
+import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
+import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import './style.css';
 import { MotionArcade } from './arcade';
 import { lancerIntro } from './intro';
@@ -36,9 +16,10 @@ import { DEFAULT_QUALITY, QUALITY, type QualityName } from './config';
 import { GameSession, type GameMode } from './game';
 import { nearestArtixPlace } from './lieux';
 import { Minimap } from './minimap';
-import { buildFaithfulArtix } from './three-city-bridge';
+import type { ContexteMesure } from './profil';
 import { TrafficSystem } from './traffic';
 import type { CityMapData } from './types';
+import { construireVille } from './ville';
 import { ArtixWorld } from './world';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
@@ -87,511 +68,212 @@ async function loadJson<T>(name: string, required = false): Promise<T | null> {
   }
 }
 
+// Les intensités de lumière ont été réglées sous Babylon, dont le PBR ne
+// divise pas le diffus par π. Three le fait : à réglage égal, une lumière y
+// éclaire π fois moins. Toutes les intensités d'origine passent par ce facteur.
+const PI = Math.PI;
+
 // ---- Ciel HDRI et soleil ---------------------------------------------------
 // Panoramas Poly Haven (CC0) préparés par scripts/ciel-soleil.mjs, qui
 // plafonne le disque solaire (sinon il entre dans l'éclairage d'ambiance et
 // éclaire tout sans ombre, en doublant la lumière directionnelle) et mesure
-// sa position dans l'image. Le même panorama sert de fond (skybox) et
-// d'éclairage d'ambiance précalculé (IBL) : les nuages visibles sont ceux
-// qui se reflètent sur la carrosserie, et la lumière directionnelle est
-// posée exactement sous le soleil du panorama. L'ancien ciel analytique de
-// Preetham donnait un dégradé sans nuage, gris-beige sous ACES, et la sonde
-// d'environnement rendue depuis lui des reflets sans intérêt.
+// sa position dans l'image. Le même panorama sert de fond et d'éclairage
+// d'ambiance : les nuages visibles sont ceux qui se reflètent sur la
+// carrosserie, et la lumière directionnelle est posée sous le soleil du
+// panorama.
 interface CielHdr {
   fichier: string;          // public/textures/ciel/<fichier>.hdr
-  taille: number;           // résolution du cube, par face
   azimutImageDeg: number;   // colonne du soleil dans le panorama (0 à 360)
   elevationDeg: number;     // hauteur du soleil dans le panorama
 }
 const CIELS: Record<string, CielHdr> = {
-  jour: { fichier: 'jour', taille: 1024, azimutImageDeg: 215.7, elevationDeg: 48.9 },
-  soir: { fichier: 'soir', taille: 512, azimutImageDeg: 215.9, elevationDeg: 6.2 },
-  nuit: { fichier: 'nuit', taille: 512, azimutImageDeg: 215.6, elevationDeg: 17.1 },
+  jour: { fichier: 'jour', azimutImageDeg: 215.7, elevationDeg: 48.9 },
+  soir: { fichier: 'soir', azimutImageDeg: 215.9, elevationDeg: 6.2 },
+  nuit: { fichier: 'nuit', azimutImageDeg: 215.6, elevationDeg: 17.1 },
 };
-// Sens de rotation du panorama, MESURÉ en jeu (balayage du ciel à la
-// recherche du disque solaire, matrice identité puis rotation de 1 rad) :
-// une rotation de +1 rad déplace le soleil de +57° dans le sens +X vers +Z.
-const SENS_ROTATION_CIEL = 1;
 
 // Position (unitaire) d'un astre depuis son azimut boussole (0 = nord,
 // 90 = est) et son élévation. Repère du jeu : +X est, +Z sud, Y haut.
-function positionAstre(azimutDeg: number, elevationDeg: number): Vector3 {
-  const a = azimutDeg * Math.PI / 180, e = elevationDeg * Math.PI / 180;
-  return new Vector3(Math.sin(a) * Math.cos(e), Math.sin(e), -Math.cos(a) * Math.cos(e));
+function positionAstre(azimutDeg: number, elevationDeg: number): THREE.Vector3 {
+  const a = azimutDeg * PI / 180, e = elevationDeg * PI / 180;
+  return new THREE.Vector3(Math.sin(a) * Math.cos(e), Math.sin(e), -Math.cos(a) * Math.cos(e));
 }
 
 // Rotation (autour de Y) qui amène le soleil du panorama à l'azimut voulu.
-// Babylon projette la colonne u du panorama sur l'angle (u - 0,75) × 2π
-// mesuré de +X vers +Z : MESURÉ en jeu (le soleil du ciel de jour, colonne
-// 0,599, apparaît à -54° sans rotation), et non les (u - 0,5) × 2π supposés
-// d'abord, qui décalaient le soleil de 90° par rapport aux ombres.
+// Three projette la colonne u d'un panorama équirectangulaire sur l'angle
+// (u - 0,5) × 2π mesuré de +X vers +Z, et `backgroundRotation` tourne le
+// ciel dans le sens INVERSE de l'angle donné. Mesuré en jeu le 14 novembre
+// 2026 : avec le sens +1, le soleil du soir apparaissait au nord (-90°) au
+// lieu de l'ouest-sud-ouest (165°), ses ombres partant pourtant vers l'est.
+const SENS_ROTATION_CIEL = -1;
+const DECALAGE_PANORAMA = .5;
 function rotationCiel(ciel: CielHdr, azimutDeg: number): number {
   const p = positionAstre(azimutDeg, 0);
   const cible = Math.atan2(p.z, p.x);
-  const image = (ciel.azimutImageDeg / 360 - .75) * Math.PI * 2;
+  const image = (ciel.azimutImageDeg / 360 - DECALAGE_PANORAMA) * PI * 2;
   return SENS_ROTATION_CIEL * (cible - image);
 }
 
-function chargerCiel(scene: Scene, ciel: CielHdr): Promise<HDRCubeTexture> {
-  return new Promise((resolve, reject) => {
-    const texture = new HDRCubeTexture(
-      `/textures/ciel/${ciel.fichier}.hdr`, scene, ciel.taille,
-      false, true, false, true,
-      () => resolve(texture),
-      (message) => reject(new Error(message ?? `Ciel ${ciel.fichier} illisible`)),
-    );
-  });
-}
-
-// Sphère de ciel : PBR sans éclairage, qui affiche le panorama tel quel puis
-// passe par le même tone mapping que la scène, pour rester cohérent avec
-// l'éclairage qu'il produit. Rayon 1 450 m : au-delà du fond de Pyrénées
-// (1 380 m) et en deçà du plan lointain de la caméra (1 600 m). Une SPHÈRE
-// et non une boîte : les coins d'une boîte de même taille (2 500 m) passaient
-// derrière le plan lointain et le ciel s'y découpait en un grand trapèze de
-// couleur de fond.
-function createSkybox(scene: Scene): { mesh: Mesh; material: PBRMaterial } {
-  const mesh = MeshBuilder.CreateSphere('ciel', { diameter: 2900, segments: 24 }, scene);
-  const material = new PBRMaterial('ciel-materiau', scene);
-  material.backFaceCulling = false;
-  material.disableLighting = true;
-  material.twoSidedLighting = true;
-  material.microSurface = 1;
-  mesh.material = material;
-  mesh.infiniteDistance = true;
-  mesh.isPickable = false;
-  mesh.applyFog = false;
-  return { mesh, material };
-}
-
 // ---- Chaîne des Pyrénées au sud ------------------------------------------
-// Le fond est peint, pas modelé : trois plans de crêtes emboîtés, chacun
-// avec son dégradé de brume. C'est la perspective atmosphérique, et non le
-// relief, qui donne l'échelle et la distance à une montagne lointaine.
+// Le fond est peint, pas modelé : un panorama des Pyrénées généré par Codex
+// (fond vert détouré), qui porte l'étagement des plans et la brume. C'est la
+// perspective atmosphérique, et non le relief, qui donne l'échelle à une
+// montagne lointaine.
 //
-// Le premier jet était un ruban unique en gris-vert opaque, brouillard
-// désactivé : il se lisait comme un carton découpé posé derrière la ville.
-// Pire, il portait un pic du Midi d'Ossau de 150 m de haut pour 85 m de
-// large, dessiné sur une grille de 64 points (un tous les 56 m) : la dent
-// tombait entre deux sommets et ressortait en un gigantesque triangle de
-// travers, celui qu'on voyait à l'écran.
-//
-// Cotes réelles, mesurées depuis Artix (43,39743 N ; -0,57224 E) :
-//   Ossau (Grand Pic 2 884 m) à 62,6 km, azimut 169,9°, hauteur apparente
-//   2 467 m une fois la courbure terrestre retirée (307 m), soit 2,26° de
-//   haut et 2,75° de large. Sur un fond posé à 1 380 m de la caméra, cela
-//   fait 54 m de haut et 66 m de large : le pic doit être DISCRET, presque
-//   une dent sur l'horizon. L'ancien était trois fois trop grand.
-const OSSAU = {
-  distanceCamera: 1380,     // profondeur du fond dans la scène
-  hauteur: 54,              // hauteur apparente exacte, en mètres de scène
-  demiLargeur: 33,
-  x: -246,                  // azimut 169,9° projeté sur le plan de fond
-  breche: .62,              // hauteur de la Fourche : 180 m sous le Grand Pic
-  // TRICHE ASSUMÉE sur l'échelle du seul pic. À sa taille exacte (2,26° de
-  // haut), l'Ossau se réduit à une dent de quelques pixels que la brume de
-  // 63 km d'air efface presque : fidèle, mais invisible en roulant. Le
-  // grossir de deux fois et demie le rend reconnaissable comme sur les vues
-  // du Béarn, sans écraser la ville ni toucher au reste de la chaîne, qui
-  // garde ses cotes réelles. Choix de Christophe, septembre 2026.
-  exagerationHauteur: 2.5,
-  exagerationLargeur: 1.6,
-};
-
-interface CretePyrenees {
-  profondeur: number;   // distance à la caméra
-  hauteur: number;      // altitude moyenne de la crête
-  brume: number;        // 0 = crête nette, 1 = fondue dans le ciel
-  graine: number;
-  ossau: boolean;       // cette couche porte-t-elle le pic ?
-  photo?: boolean;      // panorama peint (fichier) au lieu du dessin procédural
-}
-// Trois plans, du plus lointain au plus proche. Les crêtes de l'arrière-plan
-// sont plus hautes et plus pâles : c'est ce recouvrement, plus le contraste
-// croissant vers l'avant, qui fait lire une chaîne et non une découpe.
-// Ouverture des arcs de crête, de part et d'autre du sud : 110°. La texture
-// s'y répartit linéairement en ANGLE (u = 0,5 au sud).
-const ARC_FOND = 110 * Math.PI / 180;
-// Depuis le 3 octobre 2026, une seule couche : un panorama des Pyrénées
-// peint par Codex (fond vert détouré), qui porte en lui-même l'étagement
-// des plans et la brume. Les sinus donnaient des bosses arrondies. Le pic
-// d'Ossau dessiné à son azimut disparaît : écart de fidélité accepté par
-// Christophe au profit du rendu. Le dessin procédural reste disponible
-// (photo: false) pour qui voudrait revenir aux trois couches.
-const CRETES: CretePyrenees[] = [
-  { profondeur: 1380, hauteur: 52, brume: .42, graine: 3.1, ossau: false, photo: true },
-];
-// Répétitions du panorama sur l'arc, en miroir : 3,5 fois sur 110°, soit
-// 31° et 760 m d'arc par image. Étirée d'un seul tenant (rapport 10 pour 1
-// contre 3 pour 1 pour l'image), elle aplatissait les pics.
+// Un ARC de cylindre centré sur la caméra, et non un plan : un plan de
+// 3 600 m vu de biais avait ses côtés à plus de 2 000 m, coupés net par le
+// plan lointain. Sur un arc, chaque point de crête est à distance constante.
+const ARC_FOND = 110 * PI / 180;     // ouverture, de part et d'autre du sud
+const RAYON_FOND = 1380;
+// Répétitions du panorama sur l'arc, en miroir : 3,5 fois sur 110°, soit 31°
+// et 760 m d'arc par image. Étirée d'un seul tenant, elle aplatissait les pics.
 const REPET_PANORAMA = 3.5;
 
-// Profil d'une crête : sommes de sinus de périodes différentes, donc des
-// pics irréguliers plutôt qu'une ondulation régulière. `u` va de 0 à 1.
-function profilCrete(u: number, graine: number): number {
-  const x = u * 22 + graine;
-  return (Math.abs(Math.sin(x)) * .5
-    + Math.abs(Math.sin(x * 2.3 + 1.7)) * .3
-    + Math.abs(Math.sin(x * 5.1 + .4)) * .2);
-}
-
-// Texture d'une couche de crêtes : la silhouette est dessinée en opacité,
-// avec un dégradé vertical qui fond le pied dans le ciel (brume de vallée)
-// et garde les sommets denses. Les hauts sommets reçoivent leur neige.
-//
-// Passer par une texture plutôt que par de la géométrie permet une
-// silhouette au pixel près, un dégradé continu et un seul quad par couche :
-// impossible à obtenir avec un ruban de 64 points.
-function texturerCrete(scene: Scene, crete: CretePyrenees, largeur = 2048, hauteur = 256): DynamicTexture {
-  const texture = new DynamicTexture(`crete-${crete.graine}`, { width: largeur, height: hauteur }, scene, false);
-  const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
-  ctx.clearRect(0, 0, largeur, hauteur);
-
-  // Ligne de crête, échantillonnée au pixel : plus de pic dessiné « entre
-  // deux sommets », le défaut de l'ancien ruban.
-  // Deux passes : la chaîne d'abord, seule, pour fixer l'échelle verticale ;
-  // le pic ensuite, ajouté PAR-DESSUS cette échelle. Normaliser sur une
-  // ligne qui contient déjà l'Ossau grossi écraserait toute la chaîne autour
-  // de lui, exactement ce qu'on cherche à éviter.
-  const fond: number[] = [];
-  for (let px = 0; px < largeur; px++) fond.push(profilCrete(px / (largeur - 1), crete.graine));
-  const maxFond = Math.max(...fond);
-
-  const ligne: number[] = [];
-  for (let px = 0; px < largeur; px++) {
-    const u = px / (largeur - 1);
-    let h = fond[px] / maxFond;
-    if (crete.ossau) {
-      // Silhouette de l'Ossau : deux dents séparées par la Fourche, 180 m
-      // sous le Grand Pic. Le Petit Pic (2 812 m) est à peine plus bas et
-      // se tient à l'est. Cotes ramenées à la largeur de la texture.
-      // Position et largeur en ANGLE depuis le sud, la texture couvrant
-      // l'arc linéairement : azimut 169,9° (x = -246 m à 1 380 m).
-      const centre = .5 + Math.atan2(OSSAU.x, OSSAU.distanceCamera) / ARC_FOND;
-      const demi = OSSAU.demiLargeur * OSSAU.exagerationLargeur / OSSAU.distanceCamera / ARC_FOND;
-      const d = (u - centre) / demi;
-      // Deux gaussiennes serrées et une brèche creusée entre elles.
-      const grand = Math.exp(-((d + .45) ** 2) * 9);
-      const petit = Math.exp(-((d - .55) ** 2) * 11) * .95;
-      const fourche = Math.exp(-((d - .05) ** 2) * 46) * (1 - OSSAU.breche);
-      const massif = Math.exp(-(d ** 2) * 1.6) * .5;
-      // Hauteur du pic rapportée à celle de la chaîne : le rapport réel est
-      // 54 m de pic pour 52 m de crête moyenne, soit à peine plus haut. Avec
-      // l'exagération il monte à deux fois et demie la crête, ce qui le
-      // détache franchement de la ligne d'horizon.
-      const relief = Math.max(0, massif + Math.max(grand, petit) - fourche);
-      h += relief * (OSSAU.hauteur / 52) * OSSAU.exagerationHauteur;
+function createBackdrop(scene: THREE.Scene): { materiau: THREE.MeshBasicMaterial; noeud: THREE.Group } {
+  const texture = new THREE.TextureLoader().load('/textures/fond/pyrenees.png');
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.MirroredRepeatWrapping;
+  texture.repeat.x = REPET_PANORAMA;
+  // Le brouillard (fin à 980 m en Équilibré) noierait un fond situé à
+  // 1 380 m : la brume est peinte dans l'image. Pas d'écriture de
+  // profondeur, il se dessine derrière tout le reste.
+  const materiau = new THREE.MeshBasicMaterial({
+    map: texture, transparent: true, depthWrite: false, fog: false,
+    side: THREE.DoubleSide, vertexColors: true,
+  });
+  // Hauteur tirée du rapport de l'image (2 172 × 724) sur 760 m d'arc par
+  // répétition, pour garder des pics à leurs proportions.
+  const hauteur = (RAYON_FOND * ARC_FOND / REPET_PANORAMA) * (724 / 2172);
+  // Le pied passe SOUS la ligne d'horizon, sinon la bande transparente du bas
+  // laisse voir les crêtes flotter en l'air.
+  const yBas = -120, yHaut = hauteur - 120;
+  const SEGMENTS = 96;
+  const positions: number[] = [], uvs: number[] = [], couleurs: number[] = [], indices: number[] = [];
+  for (let i = 0; i <= SEGMENTS; i++) {
+    const u = i / SEGMENTS;
+    const phi = (u - .5) * ARC_FOND;
+    const x = RAYON_FOND * Math.sin(phi), z = RAYON_FOND * Math.cos(phi);
+    positions.push(x, yBas, z, x, yHaut, z);
+    // v = 0 au pied, 1 en haut : bas et haut de l'image.
+    uvs.push(u, 0, u, 1);
+    // Fondu des deux extrémités de l'arc par l'alpha de sommet : la
+    // répétition en miroir interdit de l'estomper dans l'image.
+    const fondu = Math.min(1, Math.min(u, 1 - u) / .1);
+    couleurs.push(1, 1, 1, fondu, 1, 1, 1, fondu);
+    if (i < SEGMENTS) {
+      const k = i * 2;
+      indices.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
     }
-    ligne.push(h);
   }
-  // Échelle : la chaîne occupe 1, le pic dépasse au-delà. On divise par le
-  // maximum atteint pour que rien ne sorte du canvas, mais le rapport entre
-  // pic et crête est désormais fixé plus haut, pas subi.
-  const maxLigne = Math.max(...ligne);
-
-  // Remplissage colonne par colonne, avec dégradé vertical.
-  //
-  // La ligne de crête occupe la bande `PART_CRETE` du HAUT du canvas : le
-  // sommet le plus élevé touche le bord supérieur, le plus bas s'arrête à
-  // `PART_CRETE`. Sous cette bande, il n'y a plus que le pied de la montagne
-  // qui se dissout dans la brume de vallée.
-  //
-  // Le calcul précédent partait du bas de la bande et REMONTAIT : une
-  // colonne de faible hauteur y démarrait donc tout en haut du canvas, et
-  // son remplissage descendait jusqu'au pied. Toutes les colonnes basses
-  // peignaient ainsi un bloc plein par-dessus les crêtes, ce grand rectangle
-  // gris à bords verticaux nets qui barrait le ciel.
-  const PART_CRETE = .55;
-  for (let px = 0; px < largeur; px++) {
-    const h = ligne[px] / maxLigne;
-    const sommet = hauteur * PART_CRETE * (1 - h);
-    const grad = ctx.createLinearGradient(0, sommet, 0, hauteur);
-    // Le sommet est le plus opaque, le pied se dissout dans la brume.
-    // Corps de la montagne en GRIS : le blanc est réservé à la neige, sinon
-    // elle ne se distingue pas du rocher (mesuré : 173 px blancs sur 256
-    // dans la colonne du pic, la neige noyait toute la silhouette).
-    grad.addColorStop(0, `rgba(150,158,170,${(1 - crete.brume * .18).toFixed(3)})`);
-    grad.addColorStop(.30, `rgba(142,152,166,${(1 - crete.brume * .55).toFixed(3)})`);
-    // Extinction rapide : au-delà du tiers inférieur de la bande, la brume
-    // de vallée a tout mangé. Un dégradé étalé jusqu'au bas du plan
-    // remplissait l'écran d'un voile laiteux au lieu d'une chaîne.
-    grad.addColorStop(.62, `rgba(134,146,160,${(1 - crete.brume).toFixed(3)})`);
-    grad.addColorStop(1, "rgba(130,142,158,0)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(px, sommet, 1, hauteur - sommet);
-  }
-
-  // Neige des hauts sommets : au-dessus d'une ligne d'enneigement, et
-  // seulement là où la pente s'adoucit (une paroi verticale ne retient pas
-  // la neige). Dessinée en blanc franc par-dessus la silhouette.
-  const enneigement = crete.ossau ? .72 : .80;
-  ctx.globalCompositeOperation = 'source-atop';
-  for (let px = 0; px < largeur; px++) {
-    const h = ligne[px] / maxLigne;
-    if (h < enneigement) continue;
-    // Épaisseur du manteau : croît avec l'altitude au-dessus de la limite.
-    const part = (h - enneigement) / (1 - enneigement);
-    const sommet = hauteur * PART_CRETE * (1 - h);
-    const bas = sommet + hauteur * PART_CRETE * (.08 + part * .12);
-    const grad = ctx.createLinearGradient(0, sommet, 0, bas);
-    grad.addColorStop(0, `rgba(255,255,255,${(.55 + part * .40).toFixed(3)})`);
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(px, sommet, 1, bas - sommet);
-  }
-  ctx.globalCompositeOperation = 'source-over';
-
-  // Extinction latérale : le plan s'arrête net à ses deux extrémités, ce qui
-  // dessinait deux arêtes verticales franches en plein ciel. On efface donc
-  // progressivement les bords, la chaîne se perdant dans la brume comme elle
-  // le fait vers l'est et l'ouest depuis la plaine.
-  ctx.globalCompositeOperation = 'destination-out';
-  const marge = largeur * .14;
-  for (const [x0, x1] of [[0, marge], [largeur, largeur - marge]] as const) {
-    const fondu = ctx.createLinearGradient(x0, 0, x1, 0);
-    fondu.addColorStop(0, 'rgba(0,0,0,1)');
-    fondu.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = fondu;
-    ctx.fillRect(Math.min(x0, x1), 0, marge, hauteur);
-  }
-  ctx.globalCompositeOperation = 'source-over';
-
-  texture.update(false);
-  texture.hasAlpha = true;
-  return texture;
+  const geometrie = new THREE.BufferGeometry();
+  geometrie.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometrie.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometrie.setAttribute('color', new THREE.Float32BufferAttribute(couleurs, 4));
+  geometrie.setIndex(indices);
+  const arc = new THREE.Mesh(geometrie, materiau);
+  arc.name = 'pyrenees';
+  // Toujours dans le champ (il suit la caméra) : inutile de le tester.
+  arc.frustumCulled = false;
+  arc.renderOrder = -10;
+  const noeud = new THREE.Group();
+  noeud.name = 'fond-pyrenees';
+  noeud.add(arc);
+  scene.add(noeud);
+  return { materiau, noeud };
 }
-
-// Plans de crêtes. Renvoie les matériaux, dont la teinte est recalée sur
-// chaque ambiance (`teinterBackdrop`) : une montagne bleutée à midi vire au
-// mauve au couchant et disparaît presque la nuit.
-function createBackdrop(scene: Scene): { materiaux: PBRMaterial[]; noeud: TransformNode } {
-  const materiaux: PBRMaterial[] = [];
-  // Les trois arcs suivent la caméra en plan (boucle de jeu), chacun à son
-  // rayon : l'étagement des couches est conservé, ce qu'`infiniteDistance`
-  // écrasait.
-  const noeud = new TransformNode('fond-pyrenees', scene);
-  for (const crete of CRETES) {
-    let texture: Texture;
-    if (crete.photo) {
-      texture = new Texture('/textures/fond/pyrenees.png', scene);
-      texture.wrapU = Texture.MIRROR_ADDRESSMODE;
-      texture.uScale = REPET_PANORAMA;
-    } else {
-      texture = texturerCrete(scene, crete);
-    }
-    const materiau = new PBRMaterial(`pyrenees-${crete.graine}`, scene);
-    materiau.albedoTexture = texture;
-    materiau.opacityTexture = texture;
-    // Le canal alpha de la texture N'EST PAS lu tant que le matériau reste en
-    // mode opaque : Babylon peignait donc le quad entier, y compris la moitié
-    // basse transparente et les bords estompés. C'est ce qui produisait le
-    // grand voile gris à arêtes verticales en travers du ciel, celui qui
-    // survivait à toutes les corrections du dessin de la texture.
-    texture.hasAlpha = true;
-    materiau.useAlphaFromAlbedoTexture = true;
-    materiau.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
-    materiau.alphaMode = Engine.ALPHA_COMBINE;
-    // Un fond lointain n'écrit pas la profondeur : il se dessine derrière
-    // tout le reste, et le ciel se voit à travers ses parties transparentes.
-    materiau.disableDepthWrite = true;
-    materiau.unlit = true;
-    materiau.backFaceCulling = false;
-    materiau.metadata = { brume: crete.brume, photo: !!crete.photo };
-    materiaux.push(materiau);
-
-    // Un ARC de cylindre par couche, et non plus un plan. Un plan de
-    // 3 600 m vu de biais avait ses parties latérales à plus de 2 000 m de
-    // la caméra : coupées net par le plan lointain (1 600 m), elles
-    // dessinaient en travers du ciel ouest un pan gris à bord vertical, et
-    // l'obliquité écrasait les crêtes en bloc. Sur un arc centré sur la
-    // caméra, chaque point de crête est à distance constante (1 330 à
-    // 1 420 m), sous le ciel (1 450 m) et sous le plan lointain, quel que
-    // soit le cap. Constaté le 3 octobre 2026 rue du Parc, cap sud-ouest.
-    // Panorama : hauteur tirée du rapport de l'image (2 172 x 724) sur 760 m
-    // d'arc par répétition, pour garder des pics à leurs proportions.
-    const hauteur = crete.photo
-      ? (crete.profondeur * ARC_FOND / REPET_PANORAMA) * (724 / 2172)
-      : crete.hauteur * (256 / 54) * 1.05;
-    // Le pied passe SOUS la ligne d'horizon, sinon la bande transparente du
-    // bas laisse voir les crêtes flotter en l'air, détachées du sol.
-    const yBas = -120, yHaut = hauteur - 120;
-    const R = crete.profondeur;
-    const SEGMENTS = 96;
-    const positions: number[] = [], uvs: number[] = [], indices: number[] = [], couleurs: number[] = [];
-    for (let i = 0; i <= SEGMENTS; i++) {
-      const u = i / SEGMENTS;
-      const phi = (u - .5) * ARC_FOND;
-      // u croît vers +X, comme sur l'ancien plan : l'Ossau garde son côté.
-      const x = R * Math.sin(phi), z = R * Math.cos(phi);
-      positions.push(x, yBas, z, x, yHaut, z);
-      // v = 1 au pied, 0 en haut : la texture (DynamicTexture, invertY)
-      // porte ses crêtes en haut du canvas. Dans l'autre sens, la brume de
-      // vallée montait au-dessus des crêtes comme un rideau de pluie.
-      // Fichier image (Texture, invertY) : haut de l'image à v = 1, d'où le
-      // sens opposé à la texture dessinée.
-      if (crete.photo) uvs.push(u, 0, u, 1);
-      else uvs.push(u, 1, u, 0);
-      // Fondu des deux extrémités de l'arc par l'alpha de sommet : la
-      // répétition en miroir interdit de l'estomper dans l'image.
-      const fondu = Math.min(1, Math.min(u, 1 - u) / .1);
-      couleurs.push(1, 1, 1, fondu, 1, 1, 1, fondu);
-      if (i < SEGMENTS) {
-        const k = i * 2;
-        indices.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
-      }
-    }
-    const arc = new Mesh(`pyrenees-plan-${crete.graine}`, scene);
-    const data = new VertexData();
-    data.positions = positions;
-    data.uvs = uvs;
-    data.indices = indices;
-    const normales: number[] = [];
-    VertexData.ComputeNormals(positions, indices, normales);
-    data.normals = normales;
-    data.colors = couleurs;
-    data.applyToMesh(arc);
-    arc.hasVertexAlpha = true;
-    arc.material = materiau;
-    arc.parent = noeud;
-    arc.isPickable = false;
-    // Le brouillard linéaire (fin à 980 m en Équilibré) noierait un fond
-    // situé au-delà de 1 300 m : la brume est peinte dans la texture.
-    arc.applyFog = false;
-    // Toujours dans le champ (il suit la caméra) : inutile de le tester.
-    arc.alwaysSelectAsActiveMesh = true;
-  }
-  return { materiaux, noeud };
-}
-
 
 async function start(): Promise<void> {
-  await progress(4, 'Initialisation de Babylon.js…');
-  const engine = new Engine(canvas, true, {
-    preserveDrawingBuffer: false,
-    stencil: false,
-    premultipliedAlpha: false,
-    powerPreference: 'high-performance',
-  }, true);
-  engine.setHardwareScalingLevel(QUALITY[DEFAULT_QUALITY].hardwareScaling);
+  await progress(4, 'Initialisation du rendu…');
+  const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+  await renderer.init();
+  renderer.setSize(innerWidth, innerHeight, false);
+  // Échelle 1 = un pixel de rendu par pixel CSS, comme avant le port.
+  renderer.setPixelRatio(1 / QUALITY[DEFAULT_QUALITY].hardwareScaling);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
-  const scene = new Scene(engine);
-  // Accès de diagnostic depuis la console du navigateur.
+  // Repère main droite, Z vers le sud : celui des données d'Artix et de
+  // Three, sans aucune conversion.
+  const scene = new THREE.Scene();
+  const brouillard = new THREE.Fog(new THREE.Color(.64, .75, .83),
+    QUALITY[DEFAULT_QUALITY].fogStart, QUALITY[DEFAULT_QUALITY].fogEnd);
+  scene.fog = brouillard;
+  scene.background = new THREE.Color(.55, .70, .84);
   (window as any).__scene = scene;
-  // Les données et les géométries sources viennent de Three.js (repère main
-  // droite). Babylon utilise le même repère pour conserver l'orientation des
-  // faces, des normales et des rotations sans conversion destructive.
-  scene.useRightHandedSystem = true;
-  scene.clearColor = new Color4(.55, .70, .84, 1);
-  scene.fogMode = Scene.FOGMODE_LINEAR;
-  scene.fogColor = new Color3(.64, .75, .83);
-  scene.fogStart = QUALITY[DEFAULT_QUALITY].fogStart;
-  scene.fogEnd = QUALITY[DEFAULT_QUALITY].fogEnd;
-  scene.skipPointerMovePicking = true;
-  scene.imageProcessingConfiguration.toneMappingEnabled = true;
-  scene.imageProcessingConfiguration.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-  scene.imageProcessingConfiguration.exposure = .94;
-  scene.imageProcessingConfiguration.contrast = 1.18;
+  (window as any).__renderer = renderer;
+  (window as any).__THREE = THREE;
 
-  const { materiaux: cretesPyrenees, noeud: fondPyrenees } = createBackdrop(scene);
-  // Teinte des crêtes, recalée à chaque ambiance. Une montagne lointaine
-  // prend la couleur de l'air qui la sépare de l'observateur : elle est donc
-  // dérivée de la couleur du brouillard, tirée vers le bleu et assombrie
-  // d'autant moins que la couche est loin (celle du fond est presque le
-  // ciel). Sans cela le fond restait gris-vert au couchant comme la nuit.
-  const teinterBackdrop = (fog: Color3, neige: number): void => {
-    for (const materiau of cretesPyrenees) {
-      if (materiau.metadata?.photo) {
-        // Panorama déjà en couleur : seulement voilé de la teinte de l'air,
-        // bleuté le jour, doré au soir, presque éteint la nuit.
-        materiau.unfreeze?.();
-        materiau.albedoColor = new Color3(
-          Math.min(1, fog.r * 1.3), Math.min(1, fog.g * 1.3), Math.min(1, fog.b * 1.3),
-        );
-        materiau.emissiveColor = Color3.Black();
-        materiau.freeze();
-        continue;
-      }
-      const brume = (materiau.metadata?.brume as number) ?? .6;
-      // Plus la couche est embrumée, plus elle se rapproche de l'air ambiant.
-      // L'étagement doit être FRANC : à teintes trop voisines (0,54 contre
-      // 0,43 mesuré à l'écran), les trois couches se confondent en une seule
-      // bande pâle et la chaîne perd sa profondeur. La couche de devant
-      // descend donc nettement plus bas que celle du fond.
-      const montagne = new Color3(
-        fog.r * (.38 + brume * .96),
-        fog.g * (.46 + brume * .92),
-        fog.b * (.68 + brume * .78),
-      );
-      materiau.unfreeze?.();
-      materiau.albedoColor = montagne;
-      // Le matériau est `unlit` : l'émissif s'AJOUTE à l'albédo et lave
-      // l'image s'il est trop fort. Il ne sert qu'à faire capter aux
-      // sommets la lumière que la plaine n'a plus, dosé très bas.
-      materiau.emissiveColor = montagne.scale(neige * .22 * (1 - brume * .6));
-      materiau.freeze();
-    }
-  };
-  const skybox = createSkybox(scene);
+  const { materiau: pyrenees, noeud: fondPyrenees } = createBackdrop(scene);
+
+  // Ambiante hémisphérique basse : c'est le panorama qui porte la lumière du
+  // ciel, avec ses couleurs. Trop forte, elle éclaire toutes les faces
+  // pareil et aplatit la ville.
+  const ambient = new THREE.HemisphereLight(0xffffff, 0xffffff, .25 * PI);
+  scene.add(ambient);
+
+  const sun = new THREE.DirectionalLight(0xffffff, 2 * PI);
+  sun.castShadow = true;
+  sun.shadow.mapSize.setScalar(QUALITY[DEFAULT_QUALITY].shadowMap);
+  sun.shadow.bias = -.0004;
+  sun.shadow.normalBias = .05;
+  // Ombres en cascade : une carte par tranche de profondeur, jusqu'à 330 m.
+  // Au-delà, le brouillard a déjà effacé le contraste d'une ombre. La
+  // lumière de chaque cascade recule de `lightMargin` derrière sa tranche :
+  // la portée de la caméra d'ombre doit couvrir ce recul plus la profondeur
+  // de la tranche, sinon les ombres lointaines sont coupées.
+  sun.shadow.camera.far = 1400;
+  const AVEC_CASCADES = new URLSearchParams(location.search).get('csm') !== '0';
+  if (AVEC_CASCADES) {
+    sun.shadow.shadowNode = new CSMShadowNode(sun, {
+      cascades: QUALITY[DEFAULT_QUALITY].cascades, maxFar: 330, mode: 'practical', lightMargin: 220,
+    });
+  } else {
+    // Repli de diagnostic (`?csm=0`) : une seule carte de 300 m de côté.
+    const c = sun.shadow.camera;
+    c.left = c.bottom = -150;
+    c.right = c.top = 150;
+    c.updateProjectionMatrix();
+  }
+  scene.add(sun, sun.target);
+
   // Textures de ciel chargées à la demande et gardées : le premier passage
-  // dans une ambiance coûte le chargement et le préfiltrage (une seconde),
-  // les suivants sont immédiats.
-  const cielsCharges = new Map<string, Promise<HDRCubeTexture>>();
-  const obtenirCiel = (nom: string): Promise<HDRCubeTexture> => {
+  // dans une ambiance coûte le chargement et le préfiltrage, les suivants
+  // sont immédiats.
+  const cielsCharges = new Map<string, Promise<THREE.DataTexture>>();
+  const obtenirCiel = (nom: string): Promise<THREE.DataTexture> => {
     let promesse = cielsCharges.get(nom);
     if (!promesse) {
-      promesse = chargerCiel(scene, CIELS[nom]);
+      promesse = new HDRLoader().loadAsync(`/textures/ciel/${CIELS[nom].fichier}.hdr`).then((texture) => {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        return texture;
+      });
       cielsCharges.set(nom, promesse);
     }
     return promesse;
   };
   let cielGeneration = 0;
 
-  // Ambiante hémisphérique très basse : c'est le panorama (IBL) qui porte la
-  // lumière du ciel, avec ses couleurs (bleu du zénith, sol en contre-jour).
-  // À 0,72 elle éclairait toutes les faces pareil et aplatissait la ville.
-  const ambient = new HemisphericLight('ambient', new Vector3(.15, 1, .1), scene);
-  ambient.diffuse = new Color3(.76, .84, .92);
-  ambient.groundColor = new Color3(.28, .31, .25);
-  ambient.intensity = .25;
-
-  const sun = new DirectionalLight('sun', positionAstre(205, 49).scale(-1), scene);
-  sun.diffuse = new Color3(1, .95, .88);
-  sun.intensity = 2.0;
-  const shadow = new CascadedShadowGenerator(QUALITY[DEFAULT_QUALITY].shadowMap, sun);
-  shadow.numCascades = QUALITY[DEFAULT_QUALITY].cascades;
-  shadow.lambda = .72;
-  shadow.shadowMaxZ = 330;
-  shadow.stabilizeCascades = true;
-  shadow.filter = ShadowGenerator.FILTER_PCF;
-  shadow.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
-  shadow.bias = .0025;
-  shadow.normalBias = .035;
-  shadow.setDarkness(.3);
-
   // ---- Ambiances d'éclairage (touche L) ----------------------------------
   // Chaque ambiance a son panorama HDR : le fond, l'éclairage d'ambiance et
-  // la lumière directionnelle en dérivent ensemble. Changer d'heure revient
-  // à charger le ciel correspondant et à re-régler ce petit jeu de
-  // paramètres. La fin de journée est l'ambiance la plus payante : le soleil
-  // rasant allonge les ombres des bâtiments dans les rues.
+  // la lumière directionnelle en dérivent ensemble. La fin de journée est la
+  // plus payante : le soleil rasant allonge les ombres dans les rues.
   interface Ambiance {
     nom: string;
     ciel: keyof typeof CIELS;
     azimut: number;        // azimut boussole du soleil (ou de la lune)
-    elevationMin: number;  // plancher pour la lumière : un soleil à 6° donne des ombres inexploitables
-    sunDiffuse: Color3;
+    elevationMin: number;  // plancher : un soleil à 6° donne des ombres inexploitables
+    sunDiffuse: [number, number, number];
     sunIntensity: number;
     envIntensity: number;  // poids de l'éclairage d'ambiance du panorama
     cielNiveau: number;    // clarté du fond de ciel affiché
     ambientIntensity: number;
-    ambientDiffuse: Color3;
-    ambientGround: Color3;
-    fog: Color3;
-    clear: Color4;
+    ambientDiffuse: [number, number, number];
+    ambientGround: [number, number, number];
+    fog: [number, number, number];
     exposure: number;
-    darkness: number;
+    darkness: number;      // part de lumière qui subsiste dans l'ombre
     fenetres: number;      // intensité d'émission des vitrages
-    neige: number;         // éclat des sommets enneigés du fond
   }
   const AMBIANCES: Ambiance[] = [
     {
@@ -600,207 +282,181 @@ async function start(): Promise<void> {
       // Début d'après-midi d'été : soleil haut au sud-sud-ouest.
       azimut: 205,
       elevationMin: 0,
-      sunDiffuse: new Color3(1, .95, .88),
+      sunDiffuse: [1, .95, .88],
       sunIntensity: 2.0,
       envIntensity: 1.5,
       cielNiveau: 1,
       ambientIntensity: .25,
-      ambientDiffuse: new Color3(.76, .84, .92),
-      ambientGround: new Color3(.28, .31, .25),
-      fog: new Color3(.70, .78, .86),
-      clear: new Color4(.55, .70, .84, 1),
+      ambientDiffuse: [.76, .84, .92],
+      ambientGround: [.28, .31, .25],
+      fog: [.70, .78, .86],
       exposure: 1,
       darkness: .3,
       fenetres: 0,
-      // Plein midi : la neige des sommets est éblouissante.
-      neige: .55,
     },
     {
       nom: 'Fin de journée',
       ciel: 'soir',
       // Soleil couchant à l'ouest-sud-ouest ; le panorama le met à 6° au-dessus
       // de l'horizon, la lumière est relevée à 9° pour garder des ombres nettes.
+      // Panorama pâle et très lumineux : dosé bas et exposé sous le jour,
+      // sinon la fin de journée ressort plus blanche que midi.
       azimut: 255,
       elevationMin: 9,
-      // Panorama pâle et très lumineux (moyenne 0,86, plus que le jour) :
-      // dosé bas et exposé sous le jour, sinon la fin de journée ressort
-      // plus blanche que midi. Le soleil porte l'orangé.
-      sunDiffuse: new Color3(1, .66, .40),
+      sunDiffuse: [1, .66, .40],
       sunIntensity: 1.7,
       envIntensity: .7,
       cielNiveau: .8,
       ambientIntensity: .15,
-      ambientDiffuse: new Color3(.72, .62, .66),
-      ambientGround: new Color3(.30, .25, .22),
-      fog: new Color3(.74, .60, .50),
-      clear: new Color4(.72, .58, .48, 1),
+      ambientDiffuse: [.72, .62, .66],
+      ambientGround: [.30, .25, .22],
+      fog: [.74, .60, .50],
       exposure: .82,
       darkness: .28,
       fenetres: .12,
-      // Le soir, les sommets gardent la lumière quand la plaine est à
-      // l'ombre : c'est l'effet alpenglow, rose sur la neige.
-      neige: .72,
     },
     {
       nom: 'Nuit',
       ciel: 'nuit',
-      // Clair de lune : lune au sud-est, lumière froide très faible.
+      // Clair de lune au sud-est, lumière froide très faible. Une ville
+      // éclairée au sodium n'est jamais noire entre deux lampadaires :
+      // l'ambiante remonte, avec un sol qui renvoie une teinte chaude.
       azimut: 150,
       elevationMin: 0,
-      sunDiffuse: new Color3(.55, .65, .9),
+      sunDiffuse: [.55, .65, .9],
       sunIntensity: .55,
       envIntensity: .40,
       cielNiveau: .55,
-      // Une ville éclairée au sodium n'est jamais noire entre deux
-      // lampadaires : la lumière rebondit sur les façades et le ciel urbain
-      // lui-même est orangé. L'ambiante remonte donc nettement, avec un sol
-      // qui renvoie une teinte chaude plutôt que du bleu de nuit.
       ambientIntensity: .22,
-      ambientDiffuse: new Color3(.42, .46, .62),
-      ambientGround: new Color3(.22, .17, .13),
-      fog: new Color3(.09, .10, .15),
-      clear: new Color4(.05, .07, .12, 1),
+      ambientDiffuse: [.42, .46, .62],
+      ambientGround: [.22, .17, .13],
+      fog: [.09, .10, .15],
       exposure: 1.05,
       darkness: .5,
       fenetres: .85,
-      // La nuit, seule la neige capte encore un peu de clair de lune.
-      neige: .18,
     },
   ];
   let ambianceIndex = 0;
-  // Renseignés après la construction de la ville et du véhicule : la touche L
-  // n'est lue qu'une fois la partie lancée, ces références existent donc au
-  // premier appel.
+  const directionSoleil = new THREE.Vector3(0, 1, 0);
+  // Renseignés après la construction de la ville et du véhicule.
   let carNuit: { setNight(active: boolean): void } | null = null;
-  let lampesMateriau: PBRMaterial | null = null;
+  let lanternes: THREE.MeshStandardMaterial | null = null;
+  let vitrages: THREE.MeshStandardMaterial | null = null;
   let foyersLampes: Array<{ x: number; y: number; z: number }> = [];
-  let lampesPool: PointLight[] = [];
-  let lampesGlow: Mesh | null = null;
+  const lampesPool: THREE.PointLight[] = [];
+  let lampesGlow: THREE.Mesh | null = null;
   let nuitActive = false;
   let lampesTimer = 9;
+  const INTENSITE_LAMPE = 260 * PI;
+  // Exposition de base. L'ACES de Three multiplie l'entrée par 1/0,6 avant
+  // sa courbe, celui de Babylon non : à exposition égale, l'image sortait
+  // 1,67 fois plus claire (planche de bord blanche en vue conducteur).
+  const EXPOSITION = .94 * .6;
+
   const applyAmbiance = (index: number): void => {
     const a = AMBIANCES[index];
     const ciel = CIELS[a.ciel];
     const astre = positionAstre(a.azimut, Math.max(ciel.elevationDeg, a.elevationMin));
-    sun.direction.copyFrom(astre.scale(-1));
-    sun.diffuse.copyFrom(a.sunDiffuse);
-    sun.intensity = a.sunIntensity;
-    ambient.intensity = a.ambientIntensity;
-    ambient.diffuse.copyFrom(a.ambientDiffuse);
-    ambient.groundColor.copyFrom(a.ambientGround);
-    scene.fogColor.copyFrom(a.fog);
-    teinterBackdrop(a.fog, a.neige);
-    scene.clearColor.copyFrom(a.clear);
-    scene.imageProcessingConfiguration.exposure = a.exposure;
+    // La direction de la lumière va de `position` vers `target`.
+    directionSoleil.copy(astre);
+    sun.position.copy(sun.target.position).addScaledVector(astre, 400);
+    sun.color.setRGB(...a.sunDiffuse);
+    sun.intensity = a.sunIntensity * PI;
+    sun.shadow.intensity = 1 - a.darkness;
+    ambient.intensity = a.ambientIntensity * PI;
+    ambient.color.setRGB(...a.ambientDiffuse);
+    ambient.groundColor.setRGB(...a.ambientGround);
+    brouillard.color.setRGB(...a.fog);
+    // Panorama des Pyrénées voilé de la teinte de l'air : bleuté le jour,
+    // doré au soir, presque éteint la nuit.
+    pyrenees.color.setRGB(Math.min(1, a.fog[0] * 1.3), Math.min(1, a.fog[1] * 1.3), Math.min(1, a.fog[2] * 1.3));
+    renderer.toneMappingExposure = a.exposure * EXPOSITION;
     scene.environmentIntensity = a.envIntensity;
-    shadow.setDarkness(a.darkness);
-    // Vitrages : leur émission raconte les pièces éclairées à la tombée du
-    // jour. Le matériau vient de la conversion Three, retrouvé par son mesh.
-    const vitrages = scene.getMeshByName('vitrages');
-    const materiauVitrage = vitrages?.material as PBRMaterial | null;
-    if (materiauVitrage) {
-      materiauVitrage.unfreeze?.();
-      materiauVitrage.emissiveColor = new Color3(1, .78, .5);
-      materiauVitrage.emissiveIntensity = a.fenetres;
+    scene.backgroundIntensity = a.cielNiveau;
+    // Vitrages : leur émission raconte les pièces éclairées à la tombée du jour.
+    if (vitrages) {
+      vitrages.emissive.setRGB(1, .78, .5);
+      vitrages.emissiveIntensity = a.fenetres;
     }
     // Éclairage nocturne : phares et feux du véhicule, lanternes émissives et
-    // pool de lampes de rue autour du joueur.
+    // pool de lampes de rue autour du joueur. Les lampes sont MASQUÉES le
+    // jour plutôt que réglées à zéro : douze lumières ponctuelles évaluées
+    // par pixel coûteraient en plein midi sans rien éclairer.
     nuitActive = a.nom === 'Nuit';
     carNuit?.setNight(nuitActive);
-    if (lampesMateriau) {
-      lampesMateriau.unfreeze?.();
-      lampesMateriau.emissiveColor = Color3.FromHexString('#ffc878');
-      lampesMateriau.emissiveIntensity = nuitActive ? 1.7 : 0;
+    if (lanternes) {
+      lanternes.emissive.set('#ffc878');
+      lanternes.emissiveIntensity = nuitActive ? 1.7 : 0;
     }
-    for (const lampe of lampesPool) lampe.setEnabled(nuitActive);
-    lampesGlow?.setEnabled(nuitActive);
+    for (const lampe of lampesPool) lampe.visible = nuitActive;
+    if (lampesGlow) lampesGlow.visible = nuitActive;
     lampesTimer = 9;
     // Panorama : tourné pour que son soleil tombe à l'azimut de la lumière,
-    // posé en éclairage d'ambiance et, en copie non préfiltrée, en fond.
+    // posé en fond et en éclairage d'ambiance.
     const rotation = rotationCiel(ciel, a.azimut);
     const generation = ++cielGeneration;
     obtenirCiel(a.ciel).then((texture) => {
       if (generation !== cielGeneration) return;
-      texture.setReflectionTextureMatrix(Matrix.RotationY(rotation));
-      scene.environmentTexture = texture;
-      const fond = texture.clone();
-      fond.coordinatesMode = Texture.SKYBOX_MODE;
-      fond.setReflectionTextureMatrix(Matrix.RotationY(rotation));
-      fond.level = a.cielNiveau;
-      const ancien = skybox.material.reflectionTexture;
-      skybox.material.reflectionTexture = fond;
-      if (ancien && ancien !== fond) ancien.dispose();
+      scene.background = texture;
+      scene.environment = texture;
+      scene.backgroundRotation.set(0, rotation, 0);
+      scene.environmentRotation.set(0, rotation, 0);
     }).catch((error) => console.warn('Ciel indisponible :', error));
     console.info(`Ambiance : ${a.nom}`);
   };
 
+  // Champ vertical de 1,03 rad, soit 59°.
+  const camera = new THREE.PerspectiveCamera(1.03 * 180 / PI, innerWidth / innerHeight, .35, 1800);
+  camera.position.set(0, 8, -12);
+  scene.add(camera);
+  (window as any).__camera = camera;
 
-  const camera = new UniversalCamera('camera', new Vector3(0, 8, -12), scene);
-  camera.fov = 1.03;
-  camera.minZ = .35;
-  camera.maxZ = 1800;
-  const pipeline = new DefaultRenderingPipeline('arcade-pipeline', true, scene, [camera]);
-  pipeline.fxaaEnabled = true;
-  pipeline.bloomEnabled = true;
-  pipeline.bloomThreshold = .86;
-  pipeline.bloomWeight = .18;
-  pipeline.bloomKernel = 32;
-  pipeline.sharpenEnabled = true;
-  pipeline.sharpen.edgeAmount = .18;
-  pipeline.sharpen.colorAmount = .92;
-  scene.imageProcessingConfiguration.vignetteEnabled = true;
-  // Vignette allégée : à 1,1 elle assombrissait tout le pourtour de l'image
-  // et se lisait comme un défaut d'optique plutôt qu'un cadrage.
-  scene.imageProcessingConfiguration.vignetteWeight = .7;
-  scene.imageProcessingConfiguration.vignetteStretch = .25;
-  scene.imageProcessingConfiguration.vignetteColor = new Color4(.025, .035, .045, 1);
-  // Grain fin animé et légère aberration chromatique en bord de champ : les
-  // deux signatures d'une prise de vue réelle, dosées pour rester sous le
-  // seuil où on les remarque en roulant.
-  pipeline.grainEnabled = true;
-  pipeline.grain.intensity = 6;
-  pipeline.grain.animated = true;
-  pipeline.chromaticAberrationEnabled = true;
-  pipeline.chromaticAberration.aberrationAmount = 6;
-  pipeline.chromaticAberration.radialIntensity = .7;
-  // Étalonnage couleur (courbes) : ombres poussées vers le bleu, hautes
-  // lumières vers le chaud, saturation globale relevée d'un cran. C'est
-  // l'équivalent d'une LUT « film » sans fichier à charger.
-  const courbes = new ColorCurves();
-  courbes.globalSaturation = 10;
-  courbes.shadowsHue = 215;
-  courbes.shadowsSaturation = 8;
-  courbes.highlightsHue = 45;
-  courbes.highlightsSaturation = 5;
-  courbes.highlightsExposure = -3;
-  scene.imageProcessingConfiguration.colorCurves = courbes;
-  scene.imageProcessingConfiguration.colorCurvesEnabled = true;
-  // Flou de mouvement caméra (lu dans la profondeur de la pré-passe déjà
-  // rendue pour le SSAO), dosé par la vitesse dans la boucle de jeu. Il est
-  // ré-attaché par applyQuality pour rester APRÈS le pipeline, que Babylon
-  // reconstruit (et rattache en fin de liste) à chaque changement d'option.
-  // La caméra est obligatoire à la construction : sans elle, le post-process
-  // n'a pas de scène et ne trouve pas la pré-passe.
-  const flou = new MotionBlurPostProcess('flou-vitesse', scene, 1, camera);
-  flou.isObjectBased = false;
-  flou.motionBlurSamples = 10;
-  flou.motionStrength = 0;
+  // ---- Post-traitement ----------------------------------------------------
+  // Chaîne : scène en HDR linéaire, occlusion ambiante (profil Qualité),
+  // bloom, tone mapping ACES, puis en espace d'affichage aberration
+  // chromatique, étalonnage, vignette et anticrénelage FXAA.
+  const pipeline = new THREE.RenderPipeline(renderer);
+  pipeline.outputColorTransform = false;
+  // Force de l'aberration chromatique, pilotée par la couche arcade en
+  // unités d'origine (6 au repos, 15 au plus fort).
+  const effets = { aberration: 6 };
+  const uAberration = uniform(.06);
+  const construirePipeline = (profil: { ssao: boolean }, avecBloom: boolean): void => {
+    const passe = pass(scene, camera);
+    const couleur = passe.getTextureNode('output');
+    let hdr: any = couleur;
+    if (profil.ssao) {
+      // Occlusion ambiante : elle assoit les bâtiments au sol et creuse les
+      // angles de rue. Normales reconstruites depuis la profondeur, donc
+      // sans seconde passe de géométrie.
+      const occlusion = ao(passe.getTextureNode('depth'), null as any, camera);
+      occlusion.radius.value = 1.9;
+      occlusion.resolutionScale = .5;
+      hdr = hdr.mul(vec4(vec3(occlusion.getTextureNode().r), 1));
+    }
+    if (avecBloom) hdr = hdr.add(bloom(couleur, .18, .5, .86));
+    let image: any = renderOutput(hdr, THREE.ACESFilmicToneMapping, THREE.SRGBColorSpace);
+    image = chromaticAberration(image, uAberration, vec2(.5, .5), float(1));
+    // Étalonnage : contraste relevé et saturation d'un cran, l'équivalent
+    // d'une LUT « film » sans fichier à charger.
+    const luminance = dot(image.rgb, vec3(.2126, .7152, .0722));
+    let rgb: any = mix(vec3(luminance), image.rgb, 1.1);
+    rgb = rgb.sub(.5).mul(1.12).add(.5);
+    // Vignette légère : trop forte, elle se lit comme un défaut d'optique.
+    const centre = screenUV.sub(.5);
+    const bord = smoothstep(float(.18), float(.62), dot(centre, centre).mul(1.6));
+    rgb = rgb.mul(mix(float(1), float(.72), bord));
+    pipeline.outputNode = fxaa(vec4(rgb, image.a));
+    pipeline.needsUpdate = true;
+  };
+
   // Diagnostic depuis la console : __regarder(x, y, z) force la caméra à
   // viser cette direction (repérage du soleil du panorama), __regarder()
   // rend la main.
-  let regardDebug: Vector3 | null = null;
+  let regardDebug: THREE.Vector3 | null = null;
   (window as any).__regarder = (x?: number, y?: number, z?: number): void => {
-    regardDebug = x == null ? null : new Vector3(x, y ?? 0, z ?? 0);
+    regardDebug = x == null ? null : new THREE.Vector3(x, y ?? 0, z ?? 0);
   };
-
-  // Occlusion ambiante en profil Qualité : c'est elle qui assoit les bâtiments
-  // au sol et creuse les angles de rue, la zone la plus « flottante » du rendu
-  // sans elle. Créée détachée, attachée par applyQuality.
-  const ssao = new SSAO2RenderingPipeline('ssao', scene, { ssaoRatio: .5, blurRatio: .5 }, []);
-  ssao.radius = 1.9;
-  ssao.totalStrength = 1.05;
-  ssao.samples = 12;
-  ssao.maxZ = 260;
 
   await progress(12, 'Chargement des données réelles d’Artix…');
   const [rawOsm, rawBati, rawPoi, rawRoofs, rawRoofsLegacy, rawFacades, rawPanoramax] = await Promise.all([
@@ -818,8 +474,8 @@ async function start(): Promise<void> {
   const rawFacadesCentre = await loadJson<any>('artix-facades-centre.json');
   if (!rawOsm || !rawBati) throw new Error('Les données essentielles d’Artix sont absentes.');
 
-  await progress(26, 'Reconstruction du modèle Three.js original…');
-  const faithful = await buildFaithfulArtix(scene, {
+  await progress(26, 'Construction de la ville…');
+  const ville = await construireVille(scene, {
     osm: rawOsm,
     buildings: rawBati,
     poi: rawPoi,
@@ -831,121 +487,46 @@ async function start(): Promise<void> {
     sols: rawSols,
     poteaux: rawPoteaux,
     facadesCentre: rawFacadesCentre,
-  }, shadow, progress);
-  const map = faithful.data as CityMapData;
-  // Vitrines en profondeur : parallax occlusion mapping sur l'atlas des
-  // portes. La carte de relief est plate (normale +Z) et porte la hauteur
-  // dans son alpha : 1 partout, 0 sur les vitres de la devanture, qui
-  // paraissent alors en retrait ; l'intérieur glisse derrière le cadre
-  // quand on passe. Portes et garages, à hauteur 1, ne bougent pas. Piste
-  // de la revue visuelle de Codex (interior mapping), ramenée à ce que
-  // Babylon fait sans shader sur mesure. Réglé côté Babylon : le pont ne
-  // transmet pas ce mode.
-  {
-    const portes = scene.getMeshByName('portes');
-    const materiau = portes?.material as PBRMaterial | null;
-    if (materiau) {
-      materiau.unfreeze?.();
-      const relief = new Texture('/textures/facades/portes-relief.png', scene);
-      materiau.bumpTexture = relief;
-      materiau.invertNormalMapY = true;
-      materiau.useParallax = true;
-      materiau.useParallaxOcclusion = true;
-      // 0,02 en UV : environ 15 cm de décalage en vue rasante sur une
-      // devanture de 7,5 m (0,05 en donnait 37, la vitre sortait du cadre).
-      materiau.parallaxScaleBias = 0.02;
-      materiau.freeze?.();
-    }
-    // Ombres au pied des murs et coulures : NON éclairées. Converties en PBR
-    // éclairé, leur noir recevait le reflet du ciel ; à 40 % d'opacité, ce
-    // gris se confondait avec l'herbe et le ruban devenait invisible
-    // (constaté le 4 octobre 2026). Le pont ne peut pas rendre tous les
-    // MeshBasicMaterial non éclairés : les marquages au sol en sont aussi,
-    // et doivent rester éclairés pour ne pas briller la nuit.
-    //
-    // Mélange MULTIPLICATIF et non transparence : la carte ombres.png est en
-    // niveaux de gris (blanc = aucun effet), le fond est multiplié par elle.
-    // La chaîne de transparence ne rendait rien de juste ici : PBR éclairé et
-    // alpha de l'albédo donnaient une bande invisible, non éclairé une bande
-    // noire opaque. Le multiplicatif n'a pas besoin d'alpha du tout.
-    const ombres = scene.getMeshByName('ombres-pied')?.material as PBRMaterial | null;
-    if (ombres) {
-      ombres.unfreeze?.();
-      ombres.unlit = true;
-      ombres.albedoColor = Color3.White();
-      ombres.useAlphaFromAlbedoTexture = false;
-      if (ombres.albedoTexture) ombres.albedoTexture.hasAlpha = false;
-      ombres.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
-      ombres.alphaMode = Engine.ALPHA_MULTIPLY;
-      ombres.needDepthPrePass = false;
-      ombres.freeze?.();
-    }
-  }
-  const terrain = faithful.terrain;
-  const spawn = faithful.spawn;
+  }, Math.min(16, renderer.getMaxAnisotropy()), progress);
+  const map = ville.data as CityMapData;
+  const spawn = ville.spawn;
 
   await progress(72, 'Indexation du sol et des collisions…');
-  // ArtixWorld ne dessine rien : le visuel vient de la couche Three.js
-  // convertie ci-dessus. Il n'indexe que les requêtes de la boucle de jeu
-  // (altitude, chaussée, nom de rue, collision).
-  const world = new ArtixWorld(terrain as any, map);
+  // ArtixWorld ne dessine rien : il n'indexe que les requêtes de la boucle
+  // de jeu (altitude, chaussée, nom de rue, collision).
+  const world = new ArtixWorld(ville.terrain as any, map);
 
   await progress(82, 'Chargement du véhicule…');
-  const car = new ArcadeCar(scene, world, spawn, shadow);
+  const car = new ArcadeCar(scene, world, spawn);
   await car.loadModel();
-  // Accès de diagnostic : permet de téléporter le véhicule depuis la console.
   (window as any).__car = car;
-  // Profilage à la demande : `__profil()` découpe le temps de frame,
-  // `__repartition()` classe les appels de dessin par matériau. Chargés
-  // paresseusement pour ne rien coûter tant qu'on ne mesure pas.
-  (window as any).__profil = async (secondes?: number) => {
-    const { profiler } = await import('./profil');
-    return profiler(engine, scene, secondes);
-  };
-  (window as any).__repartition = async (sommet?: number) => {
-    const { repartition } = await import('./profil');
-    repartition(scene, sommet);
-  };
-  // Découpage du coût réel, hors vsync : le seul chiffre décisionnel.
-  (window as any).__comparer = async (echantillons?: number) => {
-    const { comparer } = await import('./profil');
-    return comparer(engine, scene, echantillons);
-  };
 
-  // Éclairage public nocturne : un petit pool de lampes réelles suit le
-  // véhicule et se pose sur les foyers de lampadaires les plus proches. Six
-  // sources suffisent : au-delà du rayon d'une lanterne au sodium, l'œil ne
-  // distingue plus quelle lampe éclaire quoi.
+  // Éclairage public nocturne : un pool de lampes réelles suit le véhicule et
+  // se pose sur les foyers de lampadaires les plus proches ; les halos au sol
+  // assurent la continuité au loin. Portée et intensité franches : à 70 cd
+  // sur 30 m, seule une flaque au pied du mât s'allumait, alors qu'un bourg
+  // éclairé au sodium se traverse sans phares.
   carNuit = car;
-  lampesMateriau = faithful.lampMaterial;
-  foyersLampes = faithful.foyers;
-  // Les vraies lumières portent l'éclairage des façades et de la chaussée ;
-  // les halos au sol assurent la continuité au loin. Douze sources plutôt
-  // que huit, et surtout une portée et une intensité franchement relevées :
-  // à 70 cd sur 30 m, seule une flaque au pied du mât s'allumait et la rue
-  // restait noire, alors qu'un bourg éclairé au sodium se traverse sans
-  // phares. Le plafond de lumières simultanées des matériaux convertis est
-  // à 10 (three-city-bridge), au-delà les lampes surnuméraires s'éteignent
-  // en silence : les douze du pool ne sont jamais toutes proches à la fois.
+  lanternes = ville.lanternes;
+  vitrages = ville.vitrages;
+  foyersLampes = ville.foyers;
   for (let i = 0; i < 12; i++) {
-    const lampe = new PointLight(`lampe-rue-${i}`, new Vector3(0, -100, 0), scene);
-    lampe.diffuse = Color3.FromHexString('#ffcf92');
-    lampe.intensity = 260;
-    lampe.range = 62;
-    lampe.setEnabled(false);
+    const lampe = new THREE.PointLight(0xffcf92, INTENSITE_LAMPE, 62, 2);
+    lampe.name = `lampe-rue-${i}`;
+    lampe.position.set(0, -100, 0);
+    lampe.visible = false;
+    scene.add(lampe);
     lampesPool.push(lampe);
   }
+  // Phares construits dès maintenant et masqués : voir ArcadeCar.setNight.
+  car.setNight(false);
 
-  // Flaques de lumière sous TOUS les lampadaires : le pool ci-dessus ne fait
-  // vivre que l'entourage immédiat du joueur ; sans les flaques, les rues au
-  // loin restaient noires et les lampes semblaient s'allumer à son passage.
-  // Un unique maillage fusionné de disques émissifs à dégradé radial : des
-  // centaines de halos pour un seul appel de dessin, aucune vraie lumière.
-  const lampGlow = (() => {
-    if (!foyersLampes.length) return null;
-    const positions: number[] = [];
-    const uvs: number[] = [];
-    const indices: number[] = [];
+  // Flaques de lumière sous TOUS les lampadaires : sans elles, les rues au
+  // loin restaient noires et les lampes semblaient s'allumer au passage du
+  // joueur. Un seul maillage de disques à dégradé radial, en mélange
+  // additif : des centaines de halos pour un appel de dessin.
+  if (foyersLampes.length) {
+    const positions: number[] = [], uvs: number[] = [], indices: number[] = [];
     const SEGMENTS = 12, RAYON = 11.5;
     for (const f of foyersLampes) {
       const solY = f.y - 6.9 + .07;
@@ -953,22 +534,20 @@ async function start(): Promise<void> {
       positions.push(f.x, solY, f.z);
       uvs.push(.5, .5);
       for (let sg = 0; sg <= SEGMENTS; sg++) {
-        const a = (sg / SEGMENTS) * Math.PI * 2;
+        const a = (sg / SEGMENTS) * PI * 2;
         positions.push(f.x + Math.cos(a) * RAYON, solY, f.z + Math.sin(a) * RAYON);
         uvs.push(.5 + Math.cos(a) * .5, .5 + Math.sin(a) * .5);
         if (sg > 0) indices.push(base, base + sg, base + sg + 1);
       }
     }
-    const mesh = new Mesh('halos-lampadaires', scene);
-    const data = new VertexData();
-    data.positions = positions;
-    data.uvs = uvs;
-    data.indices = indices;
-    data.applyToMesh(mesh);
-    // Dégradé radial dessiné une fois : blanc sodium au centre, néant au bord.
+    const geometrie = new THREE.BufferGeometry();
+    geometrie.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometrie.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometrie.setIndex(indices);
     const taille = 128;
-    const tex = new DynamicTexture('halo-lampe', { width: taille, height: taille }, scene, false);
-    const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
+    const dessin = document.createElement('canvas');
+    dessin.width = dessin.height = taille;
+    const ctx = dessin.getContext('2d')!;
     const grad = ctx.createRadialGradient(taille / 2, taille / 2, 4, taille / 2, taille / 2, taille / 2);
     grad.addColorStop(0, 'rgba(255,214,150,0.95)');
     grad.addColorStop(.35, 'rgba(255,198,122,0.58)');
@@ -976,24 +555,18 @@ async function start(): Promise<void> {
     grad.addColorStop(1, 'rgba(255,180,100,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, taille, taille);
-    tex.update(false);
-    tex.hasAlpha = true;
-    const materiau = new StandardMaterial('halo-lampe-materiau', scene);
-    materiau.emissiveTexture = tex;
-    materiau.opacityTexture = tex;
-    materiau.disableLighting = true;
-    materiau.alphaMode = Engine.ALPHA_ADD;
-    materiau.disableDepthWrite = true;
-    mesh.material = materiau;
-    mesh.isPickable = false;
-    mesh.setEnabled(false);
-    return mesh;
-  })();
-  lampesGlow = lampGlow;
+    lampesGlow = new THREE.Mesh(geometrie, new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(dessin), transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide, opacity: .5,
+    }));
+    lampesGlow.name = 'halos-lampadaires';
+    lampesGlow.visible = false;
+    scene.add(lampesGlow);
+  }
 
   const input = new KeyboardInput();
   const audio = new ArcadeAudio();
-  const traffic = new TrafficSystem(scene, map.roads, (x, z) => world.surfaceY(x, z), shadow);
+  const traffic = new TrafficSystem(scene, map.roads, (x, z) => world.surfaceY(x, z));
   const session = new GameSession(scene, map.roads, [spawn.x, spawn.z], (x, z) => world.surfaceY(x, z));
   const minimap = new Minimap(minimapCanvas, map.roads);
   let cameraMode = 0;
@@ -1001,35 +574,28 @@ async function start(): Promise<void> {
   let playing = false;
   let paused = false;
   let desiredScaling = QUALITY[quality].hardwareScaling;
+  let echelle = desiredScaling;
   let resolutionTimer = 0;
   let fpsAccumulator = 0;
   let fpsSamples = 0;
+
+  const poserEchelle = (valeur: number): void => {
+    echelle = valeur;
+    renderer.setPixelRatio(1 / valeur);
+  };
 
   const applyQuality = (next: QualityName): void => {
     quality = next;
     const profile = QUALITY[next];
     desiredScaling = profile.hardwareScaling;
-    engine.setHardwareScalingLevel(desiredScaling);
-    scene.fogStart = profile.fogStart;
-    scene.fogEnd = profile.fogEnd;
-    // Jamais sous 1 600 m : le fond de chaîne pyrénéenne est à 1 380 m de la
-    // caméra (infiniteDistance) et le plan lointain le clippait en Équilibré
-    // et Performance : les montagnes n'étaient JAMAIS visibles.
-    camera.maxZ = Math.max(profile.fogEnd + 250, 1600);
-    sun.shadowEnabled = profile.shadows;
-    shadow.numCascades = profile.cascades;
-    shadow.filteringQuality = profile.shadowFilter === 'high' ? ShadowGenerator.QUALITY_HIGH
-      : profile.shadowFilter === 'medium' ? ShadowGenerator.QUALITY_MEDIUM : ShadowGenerator.QUALITY_LOW;
-    pipeline.bloomEnabled = next !== 'performance';
-    if (profile.ssao) {
-      scene.postProcessRenderPipelineManager.attachCamerasToRenderPipeline('ssao', camera);
-    } else {
-      scene.postProcessRenderPipelineManager.detachCamerasFromRenderPipeline('ssao', camera);
-    }
-    // Le flou de mouvement se rattache en dernier, après la reconstruction
-    // du pipeline provoquée par le changement de bloom.
-    camera.detachPostProcess(flou);
-    if (profile.motionBlur) camera.attachPostProcess(flou);
+    poserEchelle(desiredScaling);
+    brouillard.near = profile.fogStart;
+    brouillard.far = profile.fogEnd;
+    // Jamais sous 1 600 m : le fond de chaîne pyrénéenne est à 1 380 m.
+    camera.far = Math.max(profile.fogEnd + 250, 1600);
+    camera.updateProjectionMatrix();
+    sun.castShadow = profile.shadows;
+    construirePipeline(profile, next !== 'performance');
     traffic.setDensity(next === 'performance' ? .5 : next === 'balanced' ? .78 : 1);
     qualityEl.textContent = profile.label;
   };
@@ -1037,25 +603,28 @@ async function start(): Promise<void> {
   // Ambiance de départ : charge le panorama de jour et pose la lumière.
   applyAmbiance(ambianceIndex);
 
-  const arcade = new MotionArcade(camera, pipeline, telemetryEl, scoreEl);
-  const fumee = new FumeePneus(scene);
+  const arcade = new MotionArcade(camera, effets, telemetryEl, scoreEl);
+  const fumee = new FumeePneus(scene, camera);
   const lancerSession = (mode: GameMode): void => {
     // Départ arrêté en chrono : `car.update` est suspendu pendant le compte à
-    // rebours, l'état de conduite resterait figé sur sa dernière valeur (un
-    // dérapage en cours continuait d'engranger des points voiture immobile,
-    // et la voiture repartait au GO avec sa vitesse d'avant).
+    // rebours, l'état de conduite resterait figé sur sa dernière valeur.
     if (mode === 'challenge') car.arreter();
     session.start(mode);
     arcade.demarrer(mode);
   };
+
+  const cameraPosition = new THREE.Vector3(car.root.position.x, car.root.position.y + 4, car.root.position.z - 9);
+  const desiredCamera = new THREE.Vector3();
+  const cameraTarget = new THREE.Vector3();
+  const forward = new THREE.Vector3();
+  let plongee = 0;
 
   const begin = (mode: GameMode): void => {
     playing = true;
     paused = false;
     // Sortie de l'écran titre : l'illustration s'avance et s'efface (0,7 s)
     // pendant que la caméra plonge depuis 22 m de haut vers sa place de
-    // poursuite, par l'interpolation habituelle. Le premier départ seul y
-    // a droit ; la caméra conducteur, rigide, ne s'interpole pas.
+    // poursuite. La caméra conducteur, rigide, ne s'interpole pas.
     if (!startScreen.classList.contains('hidden')) {
       startScreen.classList.add('sortie');
       const finSortie = (event: AnimationEvent): void => {
@@ -1084,50 +653,36 @@ async function start(): Promise<void> {
     button.addEventListener('click', () => begin((button.dataset.mode ?? 'free') as GameMode));
   });
 
-  const cameraPosition = new Vector3(car.root.position.x, car.root.position.y + 4, car.root.position.z - 9);
-  const desiredCamera = new Vector3();
-  const cameraTarget = new Vector3();
-  const forward = new Vector3();
   // Vue conducteur : l'œil et la ligne de regard, exprimés dans le repère
-  // LOCAL du châssis (+Z avant, +X gauche du conducteur en repère main
-  // droite, Y haut). Transformés vers le monde à chaque image, ils suivent
-  // l'assiette de la caisse au lieu de flotter au-dessus.
-  // Position de l'œil : c'est le RECUL qui commande, pas la hauteur.
-  //
-  // Le volant (jante de 36 cm, centre à 0,77 m de haut et 0,33 m devant le
-  // centre du châssis) occupe une part du cadre qui dépend de sa distance à
-  // l'œil. À 12 cm de recul il n'était qu'à 49 cm et mangeait 69 % de la
-  // hauteur de l'image, ne laissant qu'une bande de route au milieu. À 55 cm
-  // de recul, la position réelle d'un conducteur adossé, il tombe à 0,91 m et
-  // n'occupe plus que 38 % : son bord haut se tient vers 57 % de l'image, et
-  // toute la moitié supérieure revient à la route.
-  //
-  // 1,02 m de hauteur laisse 19 cm sous le pavillon d'une 458 (1,21 m), assez
-  // pour que le plafonnier reste hors champ.
-  const OEIL_LOCAL = new Vector3(.36, 1.02, -.55);
-  // Ligne de regard, en DÉPLACEMENT depuis l'œil et non en position absolue :
-  // elle est ajoutée à la position de l'œil, y répéter le décalage latéral
-  // comptait celui-ci deux fois et faisait loucher la vue vers la gauche.
-  //
-  // Plongée de 0,7 m sur 20 m, soit 2° : l'angle sous lequel un conducteur
-  // regarde la chaussée trente mètres devant lui. À 0,05 m (0,14°) la visée
-  // partait à l'horizon, à 384 m, et le ciel occupait le tiers haut du cadre.
-  const REGARD_LOCAL = new Vector3(0, -.7, 20);
-  const oeilMonde = new Vector3();
-  const regardMonde = new Vector3();
+  // LOCAL du châssis (+Z avant, +X gauche du conducteur, Y haut).
+  // C'est le RECUL qui commande, pas la hauteur : le volant (jante de 36 cm)
+  // mangeait 69 % de la hauteur de l'image à 12 cm de recul, 38 % à 55 cm,
+  // la position réelle d'un conducteur adossé. 1,02 m de hauteur laisse
+  // 19 cm sous le pavillon d'une 458.
+  const OEIL_LOCAL = new THREE.Vector3(.36, 1.02, -.55);
+  // Ligne de regard, en DÉPLACEMENT depuis l'œil : plongée de 0,7 m sur
+  // 20 m, soit 2°, l'angle sous lequel un conducteur regarde la chaussée
+  // trente mètres devant lui.
+  const REGARD_LOCAL = new THREE.Vector3(0, -.7, 20);
+  const oeilMonde = new THREE.Vector3();
+  const regardMonde = new THREE.Vector3();
 
   await progress(100, 'Prêt à rouler');
   loading.classList.add('hidden');
   startScreen.classList.remove('hidden');
 
   let hudTimer = 0;
-  let plongee = 0;
   let capPrecedent = car.heading;
   let lacetLisse = 0;
   let nomCandidat: string | null = null;
   let nomDepuis = 0;
-  engine.runRenderLoop(() => {
-    const dt = Math.min(.05, engine.getDeltaTime() / 1000);
+  let instantPrecedent = performance.now();
+
+  const image = (): void => {
+    const maintenant = performance.now();
+    const ecoule = (maintenant - instantPrecedent) / 1000;
+    instantPrecedent = maintenant;
+    const dt = Math.min(.05, ecoule);
 
     if (!playing && input.tapped('enter')) begin('free');
     if (input.tapped('1')) applyQuality('performance');
@@ -1140,7 +695,7 @@ async function start(): Promise<void> {
     if (playing && input.tapped('c')) {
       cameraMode = (cameraMode + 1) % 3;
       // Les sièges disparaissent en vue conducteur : leur dossier se trouve
-      // entre l'œil et le pare-brise et bouchait tout le centre de l'image.
+      // entre l'œil et le pare-brise.
       car.setVueCabine(cameraMode === 1);
     }
     if (playing && input.tapped('r')) car.reset();
@@ -1152,9 +707,9 @@ async function start(): Promise<void> {
 
     if (nuitActive && foyersLampes.length) {
       lampesTimer += dt;
+      const px = car.root.position.x, pz = car.root.position.z;
       if (lampesTimer > .4) {
         lampesTimer = 0;
-        const px = car.root.position.x, pz = car.root.position.z;
         const proches = foyersLampes
           .map((f) => ({ f, d: (f.x - px) ** 2 + (f.z - pz) ** 2 }))
           .sort((a, b) => a.d - b.d)
@@ -1165,22 +720,17 @@ async function start(): Promise<void> {
           else lampe.position.y = -100;
         });
       }
-      // Intensité continue en fonction de la distance au joueur : pleine
-      // jusqu'à 34 m, éteinte au-delà de 70 m. La fenêtre a été élargie avec
-      // la portée des lampes, sinon une source de 62 m de rayon s'éteignait
-      // avant même que son halo ne sorte du champ. L'extinction reste
-      // progressive (courbe au carré) pour que le recyclage d'une lampe d'un
-      // foyer à l'autre ne se lise pas comme un allumage au passage.
-      const px = car.root.position.x, pz = car.root.position.z;
+      // Intensité continue selon la distance au joueur : pleine jusqu'à 34 m,
+      // éteinte au-delà de 70 m, en courbe au carré pour que le recyclage
+      // d'une lampe d'un foyer à l'autre ne se lise pas comme un allumage.
       for (const lampe of lampesPool) {
         const d = Math.hypot(lampe.position.x - px, lampe.position.z - pz);
         const t = Math.max(0, Math.min(1, (70 - d) / 36));
-        lampe.intensity = 260 * t * t;
+        lampe.intensity = INTENSITE_LAMPE * t * t;
       }
     }
 
     if (playing && !paused) {
-      // Compte à rebours du défi : la voiture et le chrono attendent le GO.
       // Arrêt sur image après un choc franc : la voiture, le chrono et la
       // circulation attendent ; caméra, secousse et passants continuent.
       const gele = arcade.gele;
@@ -1189,22 +739,21 @@ async function start(): Promise<void> {
       const dtJeu = dt * arcade.echelleTemps;
       arcade.accelerateur = input.down('z', 'w', 'arrowup', 'throttle');
       if (!arcade.fige && !gele) car.update(dtJeu, input);
-      // Passants et touffes d'herbe : logique Three animée, rendu Babylon.
-      faithful.vivant?.update(dtJeu, performance.now() / 1000, car.root.position.x, car.root.position.z);
-      if (!gele && traffic.update(dtJeu, car.root.position.x, car.root.position.z, performance.now() / 1000, car.speed)) car.hitTraffic();
+      ville.vivant?.update(dtJeu, maintenant / 1000, car.root.position.x, car.root.position.z);
+      if (!gele && traffic.update(dtJeu, car.root.position.x, car.root.position.z, maintenant / 1000, car.speed)) car.hitTraffic();
       for (const f of traffic.frolements.splice(0)) arcade.frolement(f.x, f.z, car, session);
       if (!arcade.fige && !gele) session.update(dtJeu, car.root.position.x, car.root.position.z, car.speed);
       arcade.update(dt, car, session);
-      fumee.update(car, world, nuitActive);
+      fumee.update(dtJeu, car, world, nuitActive);
       audio.update(car.speed, car.boosting, car.drifting);
     } else if (paused) audio.update(0, false, false);
     car.forward(forward);
 
     // Vitesse de lacet RÉELLE (rad/s), lissée sur un tiers de seconde. La
-    // visée de la caméra poursuite se décale vers l'intérieur du virage pour
-    // montrer la rue où l'on s'engage. Elle suit la rotation effective de la
-    // voiture, jamais la direction : sur un contre-braquage en dérapage, le
-    // volant pointe d'un côté pendant que la caisse tourne de l'autre.
+    // visée de la caméra poursuite se décale vers l'intérieur du virage. Elle
+    // suit la rotation effective de la voiture, jamais la direction : en
+    // contre-braquage, le volant pointe d'un côté pendant que la caisse
+    // tourne de l'autre.
     if (dt > 0) {
       let dCap = car.heading - capPrecedent;
       dCap = Math.atan2(Math.sin(dCap), Math.cos(dCap));
@@ -1220,14 +769,9 @@ async function start(): Promise<void> {
         car.root.position.y + 4.25,
         car.root.position.z - forward.z * 9.2,
       );
-      // Gauche du véhicule : (cos cap, -sin cap) en repère main droite, Z au
-      // sud ; un lacet positif tourne à gauche. Le lacet plafonne vers
-      // 1,6 rad/s en dérapage. Le retard de la caméra (elle s'interpole)
-      // regarde déjà vers l'EXTÉRIEUR du virage : à 2,4 m par rad/s, mesuré
-      // en jeu, le déport net ne tournait le regard que de 1°. À 4 m par
-      // rad/s, borné à 4,5 m (la caméra est à 16,7 m du point visé), le
-      // regard gagne une dizaine de degrés vers la sortie. Nul à l'arrêt,
-      // plein dès 43 km/h.
+      // Gauche du véhicule : (cos cap, -sin cap). À 4 m par rad/s de lacet,
+      // borné à 4,5 m, le regard gagne une dizaine de degrés vers la sortie
+      // du virage. Nul à l'arrêt, plein dès 43 km/h.
       const deport = Math.max(-4.5, Math.min(4.5, lacetLisse * 4)) * Math.min(1, Math.abs(car.speed) / 12);
       cameraTarget.set(
         car.root.position.x + forward.x * 7.5 + Math.cos(car.heading) * deport,
@@ -1235,42 +779,14 @@ async function start(): Promise<void> {
         car.root.position.z + forward.z * 7.5 - Math.sin(car.heading) * deport,
       );
     } else if (cameraMode === 1) {
-      // Vue conducteur, à la place du volant.
-      //
-      // La position vient du CHÂSSIS, pas d'un calcul à partir du cap : la
-      // caisse porte un tangage et un roulis visuels (`visualPitch` vaut
-      // -0,012 en accélération, -0,025 sous boost, +0,018 en marche arrière ;
-      // `visualRoll` suit la direction). Une caméra posée sur la seule
-      // position du véhicule ignorait cette assiette, et l'habitacle semblait
-      // glisser devant l'œil à chaque coup d'accélérateur.
-      //
-      // `getDirectionToRef` transforme un vecteur du repère LOCAL du châssis
-      // vers le monde en tenant compte de cette assiette : l'œil reste vissé
-      // au tableau de bord, quoi que fasse la voiture.
-      //
-      // Le volant du modèle Ferrari se trouve à (0,34 ; 0,77 ; 0,34) dans le
-      // repère du châssis : nœud `steering_wheel` à (-0,35 ; 0,80 ; -0,35),
-      // auquel s'appliquent le demi-tour du pivot puis l'échelle 0,962. Le
-      // nœud n'est PAS enfant de `main`, sa rotation ne le concerne donc pas.
-      // Le côté est certain sans supposition : `wheel_fl` est à x = -0,84 et
-      // `wheel_fr` à x = +0,83 dans le modèle, donc x négatif y est la gauche,
-      // et le demi-tour l'envoie sur le +X local du châssis. Conduite à
-      // gauche, confirmée. L'œil se tient juste au-dessus de la jante.
-      car.root.getDirectionToRef(OEIL_LOCAL, oeilMonde);
-      desiredCamera.set(
-        car.root.position.x + oeilMonde.x,
-        car.root.position.y + oeilMonde.y,
-        car.root.position.z + oeilMonde.z,
-      );
-      // Le regard part de l'œil et file droit devant DANS L'AXE DE LA CAISSE,
-      // en suivant donc le tangage lui aussi : viser un point calculé sur le
-      // seul cap redressait l'horizon et annulait l'effet de plongée.
-      car.root.getDirectionToRef(REGARD_LOCAL, regardMonde);
-      cameraTarget.set(
-        desiredCamera.x + regardMonde.x,
-        desiredCamera.y + regardMonde.y,
-        desiredCamera.z + regardMonde.z,
-      );
+      // Vue conducteur. La position vient du CHÂSSIS, tangage et roulis
+      // visuels compris : une caméra posée sur la seule position du véhicule
+      // ignorait cette assiette, et l'habitacle semblait glisser devant
+      // l'œil à chaque coup d'accélérateur.
+      car.versMonde(OEIL_LOCAL, oeilMonde);
+      desiredCamera.copy(car.root.position).add(oeilMonde);
+      car.versMonde(REGARD_LOCAL, regardMonde);
+      cameraTarget.copy(desiredCamera).add(regardMonde);
     } else {
       desiredCamera.set(
         car.root.position.x - forward.x * 14 + Math.cos(car.heading) * 8,
@@ -1280,37 +796,41 @@ async function start(): Promise<void> {
       cameraTarget.set(car.root.position.x + forward.x * 5, car.root.position.y + 1, car.root.position.z + forward.z * 5);
     }
     // La vue conducteur ne s'interpole PAS : elle est solidaire de la caisse,
-    // comme une caméra vissée au tableau de bord. Le lissage qui adoucit les
-    // caméras extérieures y produisait l'effet inverse de celui recherché,
-    // l'habitacle dérivant à chaque accélération et chaque freinage.
+    // comme une caméra vissée au tableau de bord.
     if (cameraMode === 1) {
-      cameraPosition.copyFrom(desiredCamera);
+      cameraPosition.copy(desiredCamera);
     } else {
       // Pendant la plongée d'entrée (1 s), interpolation trois fois plus
-      // lente : à 7,5 par seconde, la descente de 22 m se bouclait en 0,3 s
-      // et se lisait comme un saut de caméra.
+      // lente : sinon la descente de 22 m se lit comme un saut de caméra.
       plongee = Math.max(0, plongee - dt);
       const cameraLerp = 1 - Math.exp(-dt * (cameraMode === 0 ? 7.5 : 5) * (plongee > 0 ? .33 : 1));
-      Vector3.LerpToRef(cameraPosition, desiredCamera, cameraLerp, cameraPosition);
+      cameraPosition.lerp(desiredCamera, cameraLerp);
     }
     // Champ dynamique et secousse : la couche arcade pose la caméra.
     arcade.cadrer(dt, car, cameraPosition, cameraTarget, cameraMode);
-    // Fond de Pyrénées centré sur la caméra en plan (voir createBackdrop).
+    // 6 unités d'origine valent un décalage de 0,06 % du rayon de l'image
+    // en bord de champ : sous le seuil où l'on remarque les franges.
+    uAberration.value = effets.aberration * .01;
+    // Fond de Pyrénées centré sur la caméra en plan.
     fondPyrenees.position.x = camera.position.x;
     fondPyrenees.position.z = camera.position.z;
-    // Plan proche rapproché en vue conducteur : le volant se tient à environ
-    // 35 cm de l'œil, soit exactement sur le plan de 0,35 m des vues
-    // extérieures, qui le tranchait en deux. 0,08 m le laisse entier sans
-    // dégrader sensiblement la précision du tampon de profondeur.
-    const minZVoulu = cameraMode === 1 ? .08 : .35;
-    if (camera.minZ !== minZVoulu) camera.minZ = minZVoulu;
-    if (regardDebug) camera.setTarget(camera.position.add(regardDebug));
-    // Flou de mouvement : nul sous 12 m/s (43 km/h), plein vers 60 m/s ; la
-    // vue capot en reçoit moins, l'œil y est déjà dans le mouvement.
-    const vitesseFlou = Math.max(0, Math.min(1, (Math.abs(car.speed) - 12) / 48));
-    flou.motionStrength = QUALITY[quality].motionBlur ? vitesseFlou * (cameraMode === 1 ? .5 : .85) : 0;
+    // Plan proche rapproché en vue conducteur : le volant se tient à 35 cm
+    // de l'œil, exactement sur le plan proche des vues extérieures, qui le
+    // tranchait en deux.
+    const procheVoulu = cameraMode === 1 ? .08 : .35;
+    if (camera.near !== procheVoulu) {
+      camera.near = procheVoulu;
+      camera.updateProjectionMatrix();
+    }
+    if (regardDebug) camera.lookAt(regardDebug.clone().add(camera.position));
 
-    scene.render();
+    // Sans cascades, la carte d'ombre unique suit le véhicule.
+    if (!AVEC_CASCADES) {
+      sun.target.position.copy(car.root.position);
+      sun.position.copy(car.root.position).addScaledVector(directionSoleil, 400);
+    }
+
+    pipeline.render();
 
     speedEl.textContent = String(Math.round(Math.abs(car.speed) * 3.6));
     boostBar.style.transform = `scaleX(${car.boost.toFixed(3)})`;
@@ -1326,7 +846,7 @@ async function start(): Promise<void> {
       surfaceStatus.classList.toggle('offroad', !car.onRoad);
       // Le nom de rue ne change qu'après 0,45 s de présence confirmée : à un
       // carrefour, la voiture frôle la transversale et le libellé clignotait
-      // entre les deux noms. Le nouveau nom entre en glissant.
+      // entre les deux noms.
       const nomVoulu = roadName ?? (car.onRoad ? 'Voie communale d’Artix' : 'Hors chaussée');
       if (nomVoulu === streetNameEl.textContent) nomCandidat = null;
       else if (nomVoulu !== nomCandidat) { nomCandidat = nomVoulu; nomDepuis = 0; }
@@ -1343,33 +863,54 @@ async function start(): Promise<void> {
       hudTimer = 0;
     }
     resolutionTimer += dt;
-    const currentFps = engine.getFps();
-    if (Number.isFinite(currentFps)) {
-      fpsAccumulator += currentFps;
+    if (ecoule > 0) {
+      fpsAccumulator += 1 / ecoule;
       fpsSamples++;
     }
     if (resolutionTimer >= 2) {
+      // Résolution dynamique : sous 51 images par seconde, le rendu baisse
+      // d'un cran ; au-dessus de 59, il remonte vers l'échelle du profil.
       const averageFps = fpsSamples ? fpsAccumulator / fpsSamples : 60;
       const profile = QUALITY[quality];
       const maxScaling = profile.hardwareScaling + .52;
       if (averageFps < 51 && desiredScaling < maxScaling) desiredScaling = Math.min(maxScaling, desiredScaling + .08);
       else if (averageFps > 59 && desiredScaling > profile.hardwareScaling) desiredScaling = Math.max(profile.hardwareScaling, desiredScaling - .04);
-      if (Math.abs(engine.getHardwareScalingLevel() - desiredScaling) > .015) engine.setHardwareScalingLevel(desiredScaling);
+      if (Math.abs(echelle - desiredScaling) > .015) poserEchelle(desiredScaling);
 
-      fpsEl.textContent = `${Number.isFinite(averageFps) ? Math.round(averageFps) : 60} FPS`;
-      drawsEl.textContent = `${scene.getActiveIndices().toLocaleString('fr-FR')} indices actifs`;
-      meshesEl.textContent = `${scene.getActiveMeshes().length} maillages · ville fidèle`;
+      fpsEl.textContent = `${Math.round(averageFps)} FPS`;
+      drawsEl.textContent = `${renderer.info.render.triangles.toLocaleString('fr-FR')} triangles`;
+      meshesEl.textContent = `${renderer.info.render.drawCalls} appels de dessin`;
       const memory = (performance as MemoryPerformance).memory;
       memoryEl.textContent = memory
         ? `${Math.round(memory.usedJSHeapSize / 1048576)} Mo JS`
-        : `échelle ${engine.getHardwareScalingLevel().toFixed(2)}×`;
+        : `échelle ${echelle.toFixed(2)}×`;
       resolutionTimer = 0;
       fpsAccumulator = 0;
       fpsSamples = 0;
     }
-  });
+  };
+  renderer.setAnimationLoop(image);
 
-  addEventListener('resize', () => engine.resize());
+  // Mesures à la demande : `__comparer()` donne le coût réel hors vsync,
+  // `__profil()` les compteurs du moteur, `__repartition()` les maillages
+  // visibles par matériau. Chargées paresseusement.
+  const mesure: ContexteMesure = {
+    renderer, scene, camera, soleil: sun,
+    rendre: () => pipeline.render(),
+    suspendre: (arret) => {
+      instantPrecedent = performance.now();
+      renderer.setAnimationLoop(arret ? null : image);
+    },
+  };
+  (window as any).__profil = async () => (await import('./profil')).profiler(mesure);
+  (window as any).__repartition = async (sommet?: number) => (await import('./profil')).repartition(mesure, sommet);
+  (window as any).__comparer = async (echantillons?: number) => (await import('./profil')).comparer(mesure, echantillons);
+
+  addEventListener('resize', () => {
+    renderer.setSize(innerWidth, innerHeight, false);
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+  });
 }
 
 // L'intro joue par-dessus l'écran de chargement, pendant que la ville se

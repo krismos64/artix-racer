@@ -1,4 +1,4 @@
-import { Vector3, type DefaultRenderingPipeline, type UniversalCamera } from '@babylonjs/core';
+import { Vector3, type PerspectiveCamera } from 'three/webgpu';
 import type { ArcadeCar } from './car';
 import type { GameMode, GameSession } from './game';
 
@@ -89,8 +89,9 @@ export class MotionArcade {
   echelleTemps = 1;
 
   constructor(
-    private readonly camera: UniversalCamera,
-    private readonly pipeline: DefaultRenderingPipeline,
+    private readonly camera: PerspectiveCamera,
+    // Force de l'aberration chromatique, lue par le pipeline de rendu.
+    private readonly effets: { aberration: number },
     private readonly telemetrie: HTMLElement,
     private readonly scoreEl: HTMLElement,
   ) {
@@ -284,27 +285,30 @@ export class MotionArcade {
       + this.kickNitro * FOV_KICK_NITRO
     );
     this.fov += (fovVoulu - this.fov) * (1 - Math.exp(-dt * 4));
-    this.camera.fov = this.fov;
+    // Three exprime le champ vertical en degrés.
+    const degres = this.fov * 180 / Math.PI;
+    if (Math.abs(this.camera.fov - degres) > .01) {
+      this.camera.fov = degres;
+      this.camera.updateProjectionMatrix();
+    }
 
     this.trauma = Math.max(0, this.trauma - dt * 1.6);
     const s = this.trauma * this.trauma * dosage;
     // La secousse décale surtout la VISÉE (rotation perçue) et peu l'œil :
     // déplacer l'œil de 30 cm en vue extérieure fait traverser le capot.
     this.offset.set(bruit(this.temps, 1) * .08 * s, bruit(this.temps, 2) * .06 * s, bruit(this.temps, 3) * .08 * s);
-    this.camera.position.copyFrom(position).addInPlace(this.offset);
+    this.camera.position.copy(position).add(this.offset);
     this.cible.set(
       cible.x + bruit(this.temps, 4) * .55 * s,
       cible.y + bruit(this.temps, 5) * .4 * s,
       cible.z + bruit(this.temps, 6) * .55 * s,
     );
-    this.camera.setTarget(this.cible);
+    this.camera.lookAt(this.cible);
 
-    if (this.pipeline.chromaticAberrationEnabled) {
-      const v = Math.min(1, Math.max(0, (vitesse - 25) / 35));
-      // Plafond ≈ 15 : à 34 (premier essai), chaque arête de façade et de
-      // marquage se doublait d'un arc-en-ciel lisible à l'arrêt sur image.
-      this.pipeline.chromaticAberration.aberrationAmount = ABERRATION_BASE + v * 3 + (car.boosting ? 2 : 0) + this.kickNitro * 7 + this.trauma * 12;
-    }
+    const v = Math.min(1, Math.max(0, (vitesse - 25) / 35));
+    // Plafond ≈ 15 : à 34 (premier essai), chaque arête de façade et de
+    // marquage se doublait d'un arc-en-ciel lisible à l'arrêt sur image.
+    this.effets.aberration = ABERRATION_BASE + v * 3 + (car.boosting ? 2 : 0) + this.kickNitro * 7 + this.trauma * 12;
   }
 
   private jugerDepart(car: ArcadeCar, session: GameSession, dt: number): void {

@@ -1,22 +1,6 @@
-import {
-  AbstractMesh,
-  Axis,
-  Color3,
-  DynamicTexture,
-  Mesh,
-  MeshBuilder,
-  PBRMaterial,
-  Quaternion,
-  Scene,
-  SceneLoader,
-  ShadowGenerator,
-  Space,
-  SpotLight,
-  StandardMaterial,
-  TransformNode,
-  Vector3,
-} from '@babylonjs/core';
-import '@babylonjs/loaders/glTF';
+import * as THREE from 'three/webgpu';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { ArtixWorld } from './world';
 
 export interface SpawnPoint {
@@ -70,7 +54,7 @@ export class KeyboardInput {
 }
 
 export class ArcadeCar {
-  readonly root: TransformNode;
+  readonly root: THREE.Group;
   speed = 0;
   steering = 0;
   heading: number;
@@ -84,15 +68,15 @@ export class ArcadeCar {
   impact = 0;
 
   private readonly start: SpawnPoint;
-  private readonly wheels: TransformNode[] = [];
+  private readonly wheels: THREE.Object3D[] = [];
   // Pièces d'habitacle masquées en vue conducteur. Le siège du conducteur se
   // tient forcément entre l'œil et le pare-brise dès que la caméra recule
-  // assez pour dégager le volant : son dossier bouchait alors tout le centre
-  // de l'image. Aucun jeu de course n'affiche le dossier du joueur.
-  private readonly piecesCabine: AbstractMesh[] = [];
-  // Contrepartie des précédentes : affichées SEULEMENT en vue conducteur, ce
-  // sont les morceaux de garniture conservés quand la pièce entière s'efface.
-  private readonly piecesCabineAvant: AbstractMesh[] = [];
+  // assez pour dégager le volant : son dossier bouchait tout le centre de
+  // l'image.
+  private readonly piecesCabine: THREE.Object3D[] = [];
+  // Contrepartie : affichées SEULEMENT en vue conducteur, ce sont les
+  // morceaux de garniture conservés quand la pièce entière s'efface.
+  private readonly piecesCabineAvant: THREE.Object3D[] = [];
   private cabineMasquee = false;
   private lastX: number;
   private lastZ: number;
@@ -100,254 +84,140 @@ export class ArcadeCar {
   private visualPitch = 0;
 
   constructor(
-    private readonly scene: Scene,
+    scene: THREE.Scene,
     private readonly world: ArtixWorld,
     spawn: SpawnPoint,
-    private readonly shadow: ShadowGenerator | null,
   ) {
     this.start = { ...spawn };
     this.heading = spawn.heading;
     this.lastX = spawn.x;
     this.lastZ = spawn.z;
-    this.root = new TransformNode('player-car', scene);
+    this.root = new THREE.Group();
+    this.root.name = 'player-car';
+    // Lacet, puis tangage, puis roulis : l'ordre d'un véhicule.
+    this.root.rotation.order = 'YXZ';
     this.root.position.set(spawn.x, world.surfaceY(spawn.x, spawn.z), spawn.z);
-    this.root.rotationQuaternion = Quaternion.FromEulerAngles(0, this.heading, 0);
+    this.root.rotation.set(0, this.heading, 0);
+    scene.add(this.root);
+  }
+
+  // Vecteur du repère LOCAL du châssis (+Z avant, +X gauche du conducteur)
+  // exprimé dans le monde, tangage et roulis compris. Sans la position.
+  versMonde(local: THREE.Vector3, cible: THREE.Vector3): THREE.Vector3 {
+    return cible.copy(local).applyQuaternion(this.root.quaternion);
   }
 
   // Éclairage nocturne du véhicule : deux projecteurs de phares et quatre
   // plaques émissives (optiques blanches à l'avant, feux rouges à l'arrière).
-  // Construit paresseusement au premier passage en ambiance nuit, tout est
-  // parenté au châssis. L'avant du véhicule est +Z local : la rotation Y de
-  // `heading` envoie ce +Z sur (sin h, 0, cos h), le vecteur d'avance de la
-  // physique.
-  private nightNodes: TransformNode | null = null;
-  private headlights: SpotLight[] = [];
+  // Construit à la création et seulement masqué le jour : ajouter une
+  // lumière en cours de partie fait recompiler tous les matériaux.
+  private nightNodes: THREE.Group | null = null;
 
   setNight(active: boolean): void {
-    if (active && !this.nightNodes) {
-      const rig = new TransformNode('car-nuit', this.scene);
-      rig.parent = this.root;
-      const feuMat = new StandardMaterial('feu-arriere', this.scene);
-      feuMat.emissiveColor = Color3.FromHexString('#ff2a1e');
-      feuMat.disableLighting = true;
-      const optiqueMat = new StandardMaterial('optique-avant', this.scene);
-      optiqueMat.emissiveColor = Color3.FromHexString('#fff3d2');
-      optiqueMat.disableLighting = true;
+    if (!this.nightNodes) {
+      const rig = new THREE.Group();
+      rig.name = 'car-nuit';
+      const feuMat = new THREE.MeshBasicMaterial({ color: 0xff2a1e });
+      const optiqueMat = new THREE.MeshBasicMaterial({ color: 0xfff3d2 });
       for (const cote of [-1, 1]) {
-        // Projecteur : porté vers l'avant et rabattu vers la chaussée, portée
-        // limitée pour ne pas éclairer tout le quartier.
-        // Faisceau étroit, quasi horizontal, à forte concentration axiale :
-        // l'énergie se dépose entre quinze et trente-cinq mètres devant le
-        // véhicule. Le bord du cône, seul à frôler la chaussée proche, est
-        // éteint par l'exposant élevé : c'est lui qui écrasait le premier
-        // plan dans les réglages précédents.
-        const phare = new SpotLight(
-          `phare-${cote}`,
-          new Vector3(cote * .58, .68, 1.9),
-          new Vector3(cote * .04, -.055, 1).normalize(),
-          .58, 26, this.scene,
-        );
-        phare.innerAngle = .3;
-        phare.parent = rig;
-        phare.diffuse = Color3.FromHexString('#ffe9c0');
-        // Les matériaux de la ville suivent l'atténuation physique en 1/d² :
-        // l'intensité se lit comme des candelas. 520 donne l'équivalent du
-        // plein soleil à une vingtaine de mètres devant le véhicule.
-        phare.intensity = 480;
-        phare.range = 70;
-        this.headlights.push(phare);
+        // Faisceau étroit, quasi horizontal : l'énergie se dépose entre
+        // quinze et trente-cinq mètres devant le véhicule. Demi-angle de
+        // 0,29 rad, pénombre sur la moitié extérieure du cône : c'est le
+        // bord du cône, seul à frôler la chaussée proche, qui écrasait le
+        // premier plan dans les premiers réglages.
+        const phare = new THREE.SpotLight(0xffe9c0, 1500, 70, .29, .5, 2);
+        phare.position.set(cote * .58, .68, 1.9);
+        phare.target.position.set(cote * .58 + cote * .04 * 20, .68 - .055 * 20, 1.9 + 20);
+        rig.add(phare, phare.target);
 
-        const optique = MeshBuilder.CreatePlane(`optique-${cote}`, { width: .3, height: .11 }, this.scene);
-        optique.parent = rig;
+        const optique = new THREE.Mesh(new THREE.PlaneGeometry(.3, .11), optiqueMat);
         optique.position.set(cote * .58, .66, 2.02);
-        optique.material = optiqueMat;
-        optique.isPickable = false;
+        rig.add(optique);
 
-        const feu = MeshBuilder.CreatePlane(`feu-${cote}`, { width: .34, height: .1 }, this.scene);
-        feu.parent = rig;
+        const feu = new THREE.Mesh(new THREE.PlaneGeometry(.34, .1), feuMat);
         feu.position.set(cote * .55, .74, -2.05);
         feu.rotation.y = Math.PI;
-        feu.material = feuMat;
-        feu.isPickable = false;
+        rig.add(feu);
       }
+      this.root.add(rig);
       this.nightNodes = rig;
     }
-    this.nightNodes?.setEnabled(active);
-    for (const phare of this.headlights) phare.setEnabled(active);
+    this.nightNodes.visible = active;
   }
 
   async loadModel(): Promise<void> {
     try {
       // Ferrari 458 Italia, le modèle de l'exemple `webgl_materials_car` de
-      // three.js (auteur vicent091036). Il remplace l'Audi R8 : 1,68 Mo contre
-      // 4,4 Mo, aucune texture (tout est porté par 17 matériaux de couleur),
-      // et un intérieur complet avec volant, sièges et tableau de bord, là où
-      // le modèle précédent n'avait qu'un habitacle sommaire.
-      const result = await SceneLoader.ImportMeshAsync('', '/models/', 'ferrari.glb', this.scene);
-      const pivot = new TransformNode('ferrari-pivot', this.scene);
-      const roots = result.meshes.filter((mesh) => !mesh.parent);
-      for (const root of roots) root.parent = pivot;
+      // three.js (auteur vicent091036) : 1,68 Mo, aucune texture (17
+      // matériaux de couleur), intérieur complet. Compressé en Draco, d'où
+      // le décodeur servi depuis public/draco/.
+      const draco = new DRACOLoader().setDecoderPath('/draco/');
+      const gltf = await new GLTFLoader().setDRACOLoader(draco).loadAsync('/models/ferrari.glb');
+      draco.dispose();
+      const pivot = new THREE.Group();
+      pivot.name = 'ferrari-pivot';
+      pivot.add(gltf.scene);
 
-      const bounds = pivot.getHierarchyBoundingVectors(true);
-      const size = bounds.max.subtract(bounds.min);
-      const length = Math.max(size.x, size.z);
-      const scale = length > .01 ? 4.35 / length : 1;
-      const center = bounds.min.add(bounds.max).scale(.5);
-      pivot.scaling.setAll(scale);
-      pivot.position.set(-center.x * scale, -bounds.min.y * scale + .04, -center.z * scale);
+      const bornes = new THREE.Box3().setFromObject(pivot);
+      const taille = bornes.getSize(new THREE.Vector3());
+      const longueur = Math.max(taille.x, taille.z);
+      const echelle = longueur > .01 ? 4.35 / longueur : 1;
+      const centre = bornes.getCenter(new THREE.Vector3());
+      pivot.scale.setScalar(echelle);
       // Le modèle regarde -Z (roues avant à z = -1,16, arrière à +1,50), la
-      // scène attend l'inverse. Sans ce demi-tour, la voiture roule en marche
-      // arrière et ses phares éclairent derrière elle.
+      // scène attend l'inverse : demi-tour, et le centre change donc de signe
+      // en X et en Z.
       pivot.rotation.y = Math.PI;
-      pivot.parent = this.root;
+      pivot.position.set(centre.x * echelle, -bornes.min.y * echelle + .04, centre.z * echelle);
+      this.root.add(pivot);
 
-      for (const mesh of result.meshes) {
-        mesh.receiveShadows = true;
-        if (mesh instanceof Mesh) this.shadow?.addShadowCaster(mesh, false);
-        const material = mesh.material;
-        if (!(material instanceof PBRMaterial)) continue;
-        material.environmentIntensity = 1;
-        material.directIntensity = 1;
-
-        switch (material.name) {
-          // Carrosserie : vernis épais sur peinture. C'est la couche brillante
-          // qui reflète le ciel HDR et fait lire une carrosserie plutôt qu'un
-          // volume de plastique mat.
-          case 'Body_Color':
-            material.albedoColor = new Color3(.62, .02, .03);
-            material.metallic = .25;
-            material.roughness = .28;
-            material.clearCoat.isEnabled = true;
-            material.clearCoat.intensity = 1;
-            material.clearCoat.roughness = .05;
-            break;
-          // Vitrage teinté : le modèle le donne en gris opaque, ce qui bouche
-          // l'habitacle qu'il vient justement de modéliser.
-          case 'Glass_Gray':
-            material.alpha = .32;
-            material.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
-            material.albedoColor = new Color3(.08, .09, .11);
-            material.metallic = .1;
-            material.roughness = .06;
-            break;
-          // Jantes et chrome : métal poli, la seule surface franchement
-          // métallique de la voiture.
-          case 'metal_chrome':
-          case 'metal_gray':
-            material.metallic = 1;
-            material.roughness = .18;
-            break;
-          // Pneus : caoutchouc mat, jamais métallique. Laissés au réglage du
-          // modèle, ils accrochaient la lumière comme du vinyle.
-          case 'Tires':
-            material.metallic = 0;
-            material.roughness = .95;
-            material.albedoColor = new Color3(.045, .045, .05);
-            break;
-          default:
-            break;
+      const materiaux = new Map<THREE.Material, THREE.Material>();
+      gltf.scene.traverse((objet) => {
+        const mesh = objet as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        const source = mesh.material as THREE.MeshStandardMaterial;
+        let materiau = materiaux.get(source);
+        if (!materiau) {
+          materiau = this.reglerMateriau(source);
+          materiaux.set(source, materiau);
         }
-      }
+        mesh.material = materiau;
+      });
       this.buildContactShadow();
 
-      // Roues : le modèle three.js les nomme `wheel_fl`, `wheel_fr`,
-      // `wheel_rl`, `wheel_rr`. L'ancien motif visait le nommage de l'Audi
-      // (`wheelFrontL`) et ne trouvait plus rien, les roues restaient figées.
-      const candidates = [...result.transformNodes, ...result.meshes]
-        .filter((node) => /^wheel_(fl|fr|rl|rr)$/i.test(node.name));
-      for (const node of candidates) {
-        if (node instanceof TransformNode && !this.wheels.includes(node)) this.wheels.push(node);
-      }
-
-      // Diagnostic depuis la console : `__cabine()` liste les pièces de la
-      // voiture qui se tiennent devant l'œil en vue conducteur, classées par
-      // l'angle qu'elles occupent. `__cabine('nom')` en masque une pour voir
-      // l'effet. C'est ainsi qu'on identifie ce qui bouche, au lieu de le
-      // deviner d'après les bornes du glTF, qui sont exprimées avant les
-      // transformations de nœud et ne disent rien de la position réelle.
-      (window as unknown as Record<string, unknown>).__cabine = (nom?: string) => {
-        if (nom) {
-          const m = this.scene.getMeshByName(nom);
-          if (!m) return `aucun maillage nommé ${nom}`;
-          m.setEnabled(!m.isEnabled());
-          return `${nom} ${m.isEnabled() ? 'affiché' : 'masqué'}`;
-        }
-        const cam = this.scene.activeCamera;
-        if (!cam) return 'pas de caméra';
-        const dansVoiture = (m: AbstractMesh) => {
-          let p = m.parent;
-          while (p) { if (p === this.root) return true; p = p.parent; }
-          return false;
-        };
-        const lignes: { nom: string; distance: number; angle: number }[] = [];
-        for (const m of this.scene.meshes) {
-          if (!m.isEnabled() || !dansVoiture(m)) continue;
-          const bb = m.getBoundingInfo().boundingBox;
-          const d = Vector3.Distance(bb.centerWorld, cam.position);
-          if (d > 3) continue;
-          const vers = bb.centerWorld.subtract(cam.position).normalize();
-          if (Vector3.Dot(vers, cam.getForwardRay().direction) < .3) continue;
-          const taille = bb.maximumWorld.subtract(bb.minimumWorld).length();
-          lignes.push({ nom: m.name, distance: +d.toFixed(2), angle: +(taille / d).toFixed(2) });
-        }
-        lignes.sort((a, b) => b.angle - a.angle);
-        return lignes.slice(0, 12);
-      };
+      // Roues : `wheel_fl`, `wheel_fr`, `wheel_rl`, `wheel_rr`.
+      gltf.scene.traverse((objet) => {
+        if (/^wheel_(fl|fr|rl|rr)$/i.test(objet.name)) this.wheels.push(objet);
+      });
 
       // Pièces masquées en vue conducteur : tout ce qui compose les sièges.
-      //
-      // `leather` seul ne suffisait pas, la capture montrait encore un dossier
-      // gris clair. Sa couleur (#bababa, presque blanc) ne correspond pas au
-      // matériau `Leather` (#6e6e72, gris-mauve foncé) mais aux garnitures
-      // `Interior_light` et `Carpet`. Le siège de ce modèle est donc assemblé
-      // à partir de plusieurs meshes, coquille et garniture séparées.
-      //
-      // Les noms visés sont exacts : `steering_leather`, `steering_carbon` et
-      // les autres pièces en `steering_*` appartiennent au volant et doivent
-      // rester à l'écran.
-      // Le tri se fait sur l'ÉTENDUE des meshes, seule mesure fiable ici (le
-      // modèle est compressé en Draco, sa géométrie n'est pas lisible hors
-      // navigateur, mais les bornes des accesseurs le restent) :
-      //
+      // Le tri s'est fait sur l'ÉTENDUE des pièces :
       //   leather        z[-0,41 ; 1,08]   sièges
       //   trim           z[-0,35 ; 1,08]   surpiqûres des sièges
       //   carpet         z[-0,56 ; 1,10]   moquette
       //   interior_dark  z[-2,16 ; 2,16]   garniture de TOUTE la voiture
-      //   interior_light z[-2,16 ; 2,15]   idem
-      //
-      // Les deux derniers courent sur les 4,3 m du véhicule : ce sont les
-      // garnitures générales, planche de bord comprise. Les avoir masqués
-      // trouait le tableau de bord, la console centrale laissant voir la rue
-      // au travers et la casquette d'instruments flottant en arche isolée.
+      // `steering_*` appartient au volant et reste à l'écran.
       const PIECES_SIEGE = ['leather', 'trim', 'carpet'];
-      for (const mesh of result.meshes) {
-        if (PIECES_SIEGE.includes(mesh.name.toLowerCase())) this.piecesCabine.push(mesh);
-      }
+      gltf.scene.traverse((objet) => {
+        if (PIECES_SIEGE.includes(objet.name.toLowerCase())) this.piecesCabine.push(objet);
+      });
 
-      // `interior_dark` est le cas difficile : UNE SEULE primitive de 20 563
-      // sommets couvrant les 4,5 m du véhicule, qui porte à la fois la coque
-      // des sièges ET la planche de bord. La masquer entière ramène le
-      // dossier devant l'œil ; la garder troue le tableau de bord. Aucun tri
-      // par nom ne peut départager.
-      //
-      // On la coupe donc en deux à l'exécution : un clone dont on retire les
-      // triangles situés DEVANT le seuil (la planche) sert en vue conducteur,
-      // l'original restant pour les vues extérieures. Le seuil est posé à
-      // z = 0 dans le repère LOCAL du modèle, qui sépare l'avant (négatif, la
-      // planche) de l'arrière (positif, les sièges).
-      const garniture = result.meshes.find((m) => /^interior_dark$/i.test(m.name));
-      if (garniture instanceof Mesh) {
+      // `interior_dark` porte à la fois la coque des sièges ET la planche de
+      // bord dans une seule primitive de 20 563 sommets. La masquer entière
+      // ramène le dossier devant l'œil, la garder troue le tableau de bord.
+      // Elle est coupée en deux à l'exécution : une copie réduite aux
+      // triangles de l'AVANT (la planche) sert en vue conducteur, l'original
+      // reste pour les vues extérieures.
+      const garniture = gltf.scene.getObjectByName('interior_dark') as THREE.Mesh | undefined;
+      if (garniture?.isMesh) {
         const avant = this.decouperCabine(garniture, 0);
         if (avant) {
-          // La partie AVANT (planche de bord) reste seule visible en vue
-          // conducteur ; l'original, qui contient aussi les sièges, s'efface.
           this.piecesCabine.push(garniture);
           this.piecesCabineAvant.push(avant);
         }
       }
-
-      // Réapplique l'état courant : le modèle peut finir de charger alors que
-      // le joueur est déjà passé en vue conducteur.
       this.setVueCabine(this.cabineMasquee);
     } catch (error) {
       console.warn('Modèle Ferrari indisponible, voiture de secours utilisée.', error);
@@ -355,35 +225,65 @@ export class ArcadeCar {
     }
   }
 
-  // Copie d'un maillage ne gardant que les triangles situés en deçà de `seuil`
-  // sur l'axe Z local, c'est-à-dire vers l'AVANT du véhicule : dans le repère
-  // du modèle, l'avant est en z négatif (les roues avant sont à -1,16, les
-  // arrière à +1,49), c'est le demi-tour du pivot qui remet l'ensemble à
-  // l'endroit. Sert à séparer la planche de bord des sièges quand les deux
-  // partagent une même primitive.
-  //
-  // Le tri se fait sur le CENTRE de chaque triangle : découper au sommet près
-  // laisserait des trous sur les faces à cheval sur le seuil.
-  private decouperCabine(source: Mesh, seuil: number): Mesh | null {
-    const positions = source.getVerticesData('position');
-    const indices = source.getIndices();
-    if (!positions || !indices) return null;
-
-    const gardes: number[] = [];
-    for (let i = 0; i < indices.length; i += 3) {
-      let z = 0;
-      for (let k = 0; k < 3; k++) z += positions[indices[i + k] * 3 + 2];
-      if (z / 3 < seuil) gardes.push(indices[i], indices[i + 1], indices[i + 2]);
+  private reglerMateriau(source: THREE.MeshStandardMaterial): THREE.Material {
+    switch (source.name) {
+      // Carrosserie : vernis épais sur peinture. C'est la couche brillante
+      // qui reflète le ciel HDR et fait lire une carrosserie plutôt qu'un
+      // volume de plastique mat.
+      case 'Body_Color':
+        return new THREE.MeshPhysicalMaterial({
+          name: source.name, color: new THREE.Color(.62, .02, .03),
+          metalness: .25, roughness: .28, clearcoat: 1, clearcoatRoughness: .05,
+        });
+      // Vitrage teinté : le modèle le donne en gris opaque, ce qui bouche
+      // l'habitacle qu'il vient justement de modéliser.
+      case 'Glass_Gray':
+        return new THREE.MeshStandardMaterial({
+          name: source.name, color: new THREE.Color(.08, .09, .11),
+          metalness: .1, roughness: .06, transparent: true, opacity: .32,
+        });
+      // Jantes et chrome : la seule surface franchement métallique.
+      case 'metal_chrome':
+      case 'metal_gray':
+        source.metalness = 1;
+        source.roughness = .18;
+        return source;
+      // Pneus : caoutchouc mat. Laissés au réglage du modèle, ils
+      // accrochaient la lumière comme du vinyle.
+      case 'Tires':
+        source.metalness = 0;
+        source.roughness = .95;
+        source.color.setRGB(.045, .045, .05);
+        return source;
+      default:
+        return source;
     }
-    if (!gardes.length || gardes.length === indices.length) return null;
+  }
 
-    const copie = source.clone(`${source.name}-avant`, source.parent);
-    if (!copie) return null;
-    // `clone` partage la géométrie : il faut la rendre unique avant d'y
-    // toucher, sinon la découpe s'applique aussi à l'original.
-    copie.makeGeometryUnique();
-    copie.setIndices(gardes);
-    copie.setEnabled(false);
+  // Copie d'un maillage ne gardant que les triangles situés en deçà de
+  // `seuil` sur l'axe Z local, c'est-à-dire vers l'AVANT du véhicule (z
+  // négatif dans le repère du modèle). Le tri se fait sur le CENTRE de chaque
+  // triangle : découper au sommet près laisserait des trous.
+  private decouperCabine(source: THREE.Mesh, seuil: number): THREE.Mesh | null {
+    const position = source.geometry.getAttribute('position');
+    const index = source.geometry.index;
+    if (!position || !index) return null;
+    const gardes: number[] = [];
+    for (let i = 0; i < index.count; i += 3) {
+      const a = index.getX(i), b = index.getX(i + 1), c = index.getX(i + 2);
+      if ((position.getZ(a) + position.getZ(b) + position.getZ(c)) / 3 < seuil) gardes.push(a, b, c);
+    }
+    if (!gardes.length || gardes.length === index.count) return null;
+    const geometrie = source.geometry.clone();
+    geometrie.setIndex(gardes);
+    const copie = new THREE.Mesh(geometrie, source.material);
+    copie.name = `${source.name}-avant`;
+    copie.position.copy(source.position);
+    copie.quaternion.copy(source.quaternion);
+    copie.scale.copy(source.scale);
+    copie.castShadow = false;
+    copie.visible = false;
+    source.parent?.add(copie);
     return copie;
   }
 
@@ -391,16 +291,15 @@ export class ArcadeCar {
   // route. Appelée à chaque changement de caméra depuis la boucle de jeu.
   setVueCabine(masquee: boolean): void {
     this.cabineMasquee = masquee;
-    for (const mesh of this.piecesCabine) mesh.setEnabled(!masquee);
-    for (const mesh of this.piecesCabineAvant) mesh.setEnabled(masquee);
+    for (const piece of this.piecesCabine) piece.visible = !masquee;
+    for (const piece of this.piecesCabineAvant) piece.visible = masquee;
   }
 
   update(dt: number, input: KeyboardInput): void {
     const throttle = input.down('z', 'w', 'arrowup', 'throttle') ? 1 : 0;
     const reverse = input.down('s', 'arrowdown', 'reverse') ? 1 : 0;
     const brake = input.down(' ', 'handbrake') ? 1 : 0;
-    // La scène fidèle emploie le repère droit des données géographiques :
-    // son sens de lacet est l'inverse de l'ancien prototype Three.js.
+    // Repère main droite, Z vers le sud : un lacet positif tourne à gauche.
     const steerInput = (input.down('q', 'a', 'arrowleft', 'left') ? 1 : 0)
       + (input.down('d', 'arrowright', 'right') ? -1 : 0);
     const wantsBoost = input.down('shift', 'boost');
@@ -453,10 +352,10 @@ export class ArcadeCar {
     const targetPitch = this.boosting ? -.025 : throttle ? -.012 : reverse ? .018 : 0;
     this.visualRoll += (targetRoll - this.visualRoll) * Math.min(1, dt * 7);
     this.visualPitch += (targetPitch - this.visualPitch) * Math.min(1, dt * 6);
-    this.root.rotationQuaternion = Quaternion.FromEulerAngles(this.visualPitch, this.heading, this.visualRoll);
+    this.root.rotation.set(this.visualPitch, this.heading, this.visualRoll);
 
     const wheelDelta = this.speed * dt / .34;
-    for (const wheel of this.wheels) wheel.rotate(Axis.X, wheelDelta, Space.LOCAL);
+    for (const wheel of this.wheels) wheel.rotateX(wheelDelta);
   }
 
   reset(): void {
@@ -464,7 +363,7 @@ export class ArcadeCar {
     this.steering = 0;
     this.heading = this.start.heading;
     this.root.position.set(this.start.x, this.world.surfaceY(this.start.x, this.start.z), this.start.z);
-    this.root.rotationQuaternion = Quaternion.FromEulerAngles(0, this.heading, 0);
+    this.root.rotation.set(0, this.heading, 0);
   }
 
   arreter(): void {
@@ -480,79 +379,55 @@ export class ArcadeCar {
     this.boost = Math.max(0, this.boost - .12);
   }
 
-  forward(target = new Vector3()): Vector3 {
+  forward(target = new THREE.Vector3()): THREE.Vector3 {
     return target.set(Math.sin(this.heading), 0, Math.cos(this.heading));
   }
 
   // Ombre de contact : dégradé radial sombre couché sous le châssis. L'ombre
   // en cascade du soleil s'arrête au bas de caisse et laisse la voiture
   // flotter sur l'enrobé ; ce voile assoit les pneus au sol sous tous les
-  // éclairages, y compris la nuit où le soleil ne projette plus rien.
+  // éclairages, y compris la nuit.
   private buildContactShadow(): void {
     const taille = 128;
-    const texture = new DynamicTexture('ombre-contact', { width: taille, height: taille }, this.scene, false);
-    const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = taille;
+    const ctx = canvas.getContext('2d')!;
     const grad = ctx.createRadialGradient(taille / 2, taille / 2, 6, taille / 2, taille / 2, taille / 2);
     grad.addColorStop(0, 'rgba(0,0,0,0.62)');
     grad.addColorStop(.55, 'rgba(0,0,0,0.30)');
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, taille, taille);
-    texture.update(false);
-    texture.hasAlpha = true;
-    const materiau = new StandardMaterial('ombre-contact-materiau', this.scene);
-    materiau.diffuseColor = Color3.Black();
-    materiau.emissiveColor = Color3.Black();
-    materiau.specularColor = Color3.Black();
-    materiau.opacityTexture = texture;
-    materiau.disableLighting = true;
-    materiau.disableDepthWrite = true;
-    const voile = MeshBuilder.CreateGround('ombre-contact-plan', { width: 2.7, height: 5.1 }, this.scene);
-    voile.material = materiau;
+    const geometrie = new THREE.PlaneGeometry(2.7, 5.1);
+    geometrie.rotateX(-Math.PI / 2);
+    const voile = new THREE.Mesh(geometrie, new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(canvas), transparent: true, depthWrite: false,
+    }));
+    voile.name = 'ombre-contact';
     voile.position.y = .05;
-    voile.isPickable = false;
-    voile.receiveShadows = false;
-    voile.parent = this.root;
+    this.root.add(voile);
   }
 
   private buildFallback(): void {
-    const paint = new PBRMaterial('fallback-paint', this.scene);
-    paint.albedoColor = Color3.FromHexString('#b52c26');
-    paint.metallic = .72;
-    paint.roughness = .28;
-    const glass = new PBRMaterial('fallback-glass', this.scene);
-    glass.albedoColor = new Color3(.035, .07, .1);
-    glass.metallic = .15;
-    glass.roughness = .2;
-    const rubber = new PBRMaterial('fallback-rubber', this.scene);
-    rubber.albedoColor = new Color3(.018, .02, .022);
-    rubber.metallic = 0;
-    rubber.roughness = .95;
+    const paint = new THREE.MeshStandardMaterial({ color: 0xb52c26, metalness: .72, roughness: .28 });
+    const glass = new THREE.MeshStandardMaterial({ color: new THREE.Color(.035, .07, .1), metalness: .15, roughness: .2 });
+    const rubber = new THREE.MeshStandardMaterial({ color: new THREE.Color(.018, .02, .022), roughness: .95 });
 
-    const body = MeshBuilder.CreateBox('fallback-body', { width: 1.82, height: .48, depth: 4.2 }, this.scene);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.82, .48, 4.2), paint);
     body.position.y = .62;
-    body.material = paint;
-    body.parent = this.root;
-    const cabin = MeshBuilder.CreateBox('fallback-cabin', { width: 1.55, height: .56, depth: 2.05 }, this.scene);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.55, .56, 2.05), glass);
     cabin.position.set(0, 1.02, -.12);
-    cabin.material = glass;
-    cabin.parent = this.root;
-    this.shadow?.addShadowCaster(body);
-    this.shadow?.addShadowCaster(cabin);
+    body.castShadow = cabin.castShadow = true;
+    this.root.add(body, cabin);
 
-    const wheelPositions = [
-      [-.88, .36, 1.35], [.88, .36, 1.35], [-.88, .36, -1.35], [.88, .36, -1.35],
-    ];
-    for (const [x, y, z] of wheelPositions) {
-      const pivot = new TransformNode('fallback-wheel-pivot', this.scene);
-      pivot.position.set(x, y, z);
-      pivot.parent = this.root;
-      const wheel = MeshBuilder.CreateCylinder('fallback-wheel', { height: .26, diameter: .68, tessellation: 16 }, this.scene);
-      wheel.rotation.z = Math.PI / 2;
-      wheel.material = rubber;
-      wheel.parent = pivot;
-      this.wheels.push(pivot);
-      this.shadow?.addShadowCaster(wheel);
+    const roue = new THREE.CylinderGeometry(.34, .34, .26, 16);
+    roue.rotateZ(Math.PI / 2);
+    for (const [x, y, z] of [[-.88, .36, 1.35], [.88, .36, 1.35], [-.88, .36, -1.35], [.88, .36, -1.35]]) {
+      const wheel = new THREE.Mesh(roue, rubber);
+      wheel.position.set(x, y, z);
+      wheel.castShadow = true;
+      this.root.add(wheel);
+      this.wheels.push(wheel);
     }
   }
 }

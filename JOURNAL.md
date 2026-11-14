@@ -2,6 +2,56 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 : port du rendu en Three.js natif (WebGPU), branche `port-three-natif`
+
+Nouveau cap fixé par Christophe : un jeu en monde ouvert dans Artix, où l'on
+RECONNAÎT la ville sans exiger l'exactitude, avec personnages fictifs et
+voitures réalistes. Le pont Three→Babylon taxait chaque amélioration
+visuelle (shaders ignorés, deux faces forcées) : il est supprimé. `master`
+garde le rendu Babylon comme référence.
+
+- **Architecture** : `src/three-city/*.js` entre tel quel dans la scène.
+  `src/ville.ts` remplace `three-city-bridge.ts` (808 lignes) et ne garde
+  que les ombres, la fusion des petits maillages et trois matériaux à
+  nœuds. Three passe de 0.170 à 0.187, rendu par `WebGPURenderer`,
+  post-traitement en TSL (`RenderPipeline`). Babylon retiré de package.json.
+- **Réécrits** : `main.ts` (1 382 → 700 lignes), `car.ts`, `fumee.ts`
+  (particules simulées à la main, un maillage de 600 quads), `traffic.ts`,
+  `game.ts`, `arcade.ts`, `profil.ts`. Inchangés : `world.ts`, `audio.ts`,
+  `intro.ts`, `minimap.ts`, `lieux.ts`.
+- **Mesuré** (`__comparer()`, 1440 × 690, profil Équilibré, au point de
+  départ) : image complète 7,45 ms, dont géométrie 5,98 ms, ombres en
+  cascade 1,62 ms, remplissage 0,68 ms. Référence Babylon du 4 septembre :
+  8,81 ms. 60 images par seconde dans les trois profils, 726 Mo de tas JS
+  stable sur 20 s de conduite.
+- **Pièges rencontrés** :
+  - Chaussée et parkings NOIRS sous le soleil : leurs triangles sont
+    enroulés à l'envers de leur normale, et un matériau à deux faces
+    retourne la normale d'après l'enroulement. Le pont corrigeait cela à la
+    conversion ; `alignerEnroulement` (ville.ts) fait de même.
+  - Fausse panne d'ombres : à midi le soleil est dans le dos de la caméra de
+    départ, les ombres tombent derrière les objets et celle de la voiture
+    sous le bandeau du HUD. Une heure perdue. Pour juger des ombres, passer
+    en fin de journée (touche L) et tourner la voiture.
+  - Ciel tourné de 105° par rapport aux ombres : `backgroundRotation` tourne
+    le panorama dans le sens inverse de l'angle donné, et Three projette la
+    colonne u sur (u - 0,5) × 2π (Babylon : u - 0,75).
+  - Image 1,67 fois trop claire : l'ACES de Three multiplie l'entrée par
+    1/0,6. Lumières ponctuelles et directionnelles multipliées par π (le PBR
+    de Babylon ne divise pas le diffus par π).
+  - `__comparer()` annonçait 0,84 ms : hors boucle d'affichage, le compteur
+    d'images du moteur n'avance plus, la passe de scène n'est pas
+    redessinée. La rafale l'avance à la main.
+  - `textureFichier` ne posait pas `needsUpdate` au chargement de l'image :
+    le pont ne lisait que `image.src`.
+- **Non repris, à refaire en mieux** : flou de mouvement, parallaxe des
+  devantures (à remplacer par un vrai faux-intérieur en shader), netteté,
+  grain. Le passage en nuit recompile les matériaux (douze lampes
+  apparaissent) : un à trois secondes de gel à la première bascule.
+- **Suite** : ombres des arbres (aucun ne projette), occlusion ambiante à
+  régler (peu visible à rayon 1,9), vitrages à faux intérieurs, modèle de
+  conduite à quatre roues, fusion des deux circulations, mode à pied.
+
 ## 2026-10-19 (suite) : lien de test Netlify, audit de la documentation
 
 - **Netlify** : projet `artix-essai-q7m4x2` (équipe gratuite), déployé à la

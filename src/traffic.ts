@@ -1,16 +1,8 @@
-import {
-  Color3,
-  MeshBuilder,
-  PBRMaterial,
-  Quaternion,
-  Scene,
-  ShadowGenerator,
-  TransformNode,
-} from '@babylonjs/core';
+import * as THREE from 'three/webgpu';
 import type { RoadData } from './types';
 
 interface TrafficCar {
-  root: TransformNode;
+  root: THREE.Group;
   route: RoadData;
   segment: number;
   direction: 1 | -1;
@@ -43,20 +35,23 @@ function roadLength(road: RoadData): number {
 
 export class TrafficSystem {
   private readonly cars: TrafficCar[] = [];
-  private readonly paints: PBRMaterial[] = [];
-  private readonly glass: PBRMaterial;
-  private readonly rubber: PBRMaterial;
+  private readonly paints: THREE.Material[] = [];
+  private readonly glass: THREE.Material;
+  private readonly rubber: THREE.Material;
+  // Géométries partagées par les douze véhicules.
+  private readonly caisse = new THREE.BoxGeometry(1.72, .5, 3.85);
+  private readonly cabine = new THREE.BoxGeometry(1.42, .43, 1.85);
+  private readonly roue = new THREE.CylinderGeometry(.27, .27, .18, 10).rotateZ(Math.PI / 2);
   private densityCount = Infinity;
 
   constructor(
-    private readonly scene: Scene,
+    private readonly scene: THREE.Scene,
     roads: RoadData[],
     private readonly surfaceY: (x: number, z: number) => number,
-    shadow: ShadowGenerator | null,
   ) {
-    this.glass = this.material('traffic-glass', '#172a34', .24);
-    this.rubber = this.material('traffic-rubber', '#181b1d', .98);
-    this.paints = COLORS.map((color, index) => this.material(`traffic-paint-${index}`, color, .38));
+    this.glass = this.material('#172a34', .24);
+    this.rubber = this.material('#181b1d', .98);
+    this.paints = COLORS.map((color) => this.material(color, .38));
 
     const candidates = roads
       .filter((road) => road.drivable && road.pts.length > 2 && roadLength(road) > 115)
@@ -66,8 +61,10 @@ export class TrafficSystem {
     const count = Math.min(12, candidates.length);
     for (let i = 0; i < count; i++) {
       const route = candidates[(i * 7) % candidates.length];
-      const root = new TransformNode(`traffic-${i}`, scene);
-      this.buildCar(root, this.paints[i % this.paints.length], shadow);
+      const root = new THREE.Group();
+      root.name = `traffic-${i}`;
+      this.buildCar(root, this.paints[i % this.paints.length]);
+      scene.add(root);
       const segment = Math.min(route.pts.length - 2, Math.floor((i / Math.max(1, count)) * (route.pts.length - 1)));
       this.cars.push({
         root,
@@ -101,7 +98,7 @@ export class TrafficSystem {
     for (let carIndex = 0; carIndex < this.cars.length; carIndex++) {
       const car = this.cars[carIndex];
       if (carIndex >= this.densityCount) {
-        car.root.setEnabled(false);
+        car.root.visible = false;
         car.active = false;
         continue;
       }
@@ -139,13 +136,13 @@ export class TrafficSystem {
       const shouldBeActive = distance < 620;
       if (shouldBeActive !== car.active) {
         car.active = shouldBeActive;
-        car.root.setEnabled(shouldBeActive);
+        car.root.visible = shouldBeActive;
         car.frole = null;
       }
       if (!shouldBeActive) continue;
 
       car.root.position.set(x, this.surfaceY(x, z) + .05, z);
-      car.root.rotationQuaternion = Quaternion.FromEulerAngles(0, Math.atan2(b[0] - a[0], b[1] - a[1]), 0);
+      car.root.rotation.y = Math.atan2(b[0] - a[0], b[1] - a[1]);
       if (distance < 2.55 && now - car.lastCollision > 1.2) {
         car.lastCollision = now;
         collided = true;
@@ -171,38 +168,26 @@ export class TrafficSystem {
     const visible = Math.round(this.cars.length * multiplier);
     this.densityCount = visible;
     this.cars.forEach((car, index) => {
-      if (index >= visible) car.root.setEnabled(false);
+      if (index >= visible) car.root.visible = false;
       car.active = index < visible;
     });
   }
 
-  private buildCar(root: TransformNode, paint: PBRMaterial, shadow: ShadowGenerator | null): void {
-    const body = MeshBuilder.CreateBox(`${root.name}-body`, { width: 1.72, height: .5, depth: 3.85 }, this.scene);
+  private buildCar(root: THREE.Group, paint: THREE.Material): void {
+    const body = new THREE.Mesh(this.caisse, paint);
     body.position.y = .46;
-    body.material = paint;
-    body.parent = root;
-    const cabin = MeshBuilder.CreateBox(`${root.name}-cabin`, { width: 1.42, height: .43, depth: 1.85 }, this.scene);
+    const cabin = new THREE.Mesh(this.cabine, this.glass);
     cabin.position.set(0, .91, -.1);
-    cabin.material = this.glass;
-    cabin.parent = root;
-    shadow?.addShadowCaster(body, false);
-    shadow?.addShadowCaster(cabin, false);
-    const positions = [[-.84, .24, 1.15], [.84, .24, 1.15], [-.84, .24, -1.15], [.84, .24, -1.15]];
-    for (const [x, y, z] of positions) {
-      const wheel = MeshBuilder.CreateCylinder(`${root.name}-wheel`, { height: .18, diameter: .54, tessellation: 10 }, this.scene);
+    body.castShadow = cabin.castShadow = true;
+    root.add(body, cabin);
+    for (const [x, y, z] of [[-.84, .24, 1.15], [.84, .24, 1.15], [-.84, .24, -1.15], [.84, .24, -1.15]]) {
+      const wheel = new THREE.Mesh(this.roue, this.rubber);
       wheel.position.set(x, y, z);
-      wheel.rotation.z = Math.PI / 2;
-      wheel.material = this.rubber;
-      wheel.parent = root;
+      root.add(wheel);
     }
   }
 
-  private material(name: string, color: string, roughness: number): PBRMaterial {
-    const material = new PBRMaterial(name, this.scene);
-    material.albedoColor = Color3.FromHexString(color);
-    material.metallic = 0;
-    material.roughness = roughness;
-    material.freeze();
-    return material;
+  private material(color: string, roughness: number): THREE.Material {
+    return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 });
   }
 }

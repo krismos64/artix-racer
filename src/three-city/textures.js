@@ -604,8 +604,11 @@ export function relief(tex) {
 // et laisse Babylon charger le fichier lui-même.
 export function textureFichier(url, { repeat = 1, couleur = true, flipY = true } = {}) {
   const img = new Image();
-  img.src = url;
   const t = new THREE.Texture(img);
+  // Rendu Three natif : la texture n'est envoyée au GPU qu'une fois l'image
+  // décodée. Le pont Babylon ne lisait que `image.src` et s'en passait.
+  img.onload = () => { t.needsUpdate = true; };
+  img.src = url;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   if (Array.isArray(repeat)) t.repeat.set(repeat[0], repeat[1]);
   else t.repeat.set(repeat, repeat);

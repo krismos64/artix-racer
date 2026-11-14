@@ -1,27 +1,30 @@
-import { Color4, ParticleSystem, Scene, Texture, Vector3 } from '@babylonjs/core';
+import * as THREE from 'three/webgpu';
 import type { ArcadeCar } from './car';
 import type { ArtixWorld } from './world';
 
-// Fumée de pneus en dérapage et poussière hors-piste. Un seul système de
-// particules pour les deux roues arrière et les deux matières, soit UN appel
-// de dessin quand il émet, aucun sinon : le coût du jeu est le nombre
-// d'appels (84 % de l'image). L'émetteur alterne d'une roue à l'autre à
-// chaque image, ce qui trace les deux traînées.
+// Fumée de pneus en dérapage et poussière hors-piste. Un seul maillage de
+// quads pour les deux roues arrière et les deux matières, soit UN appel de
+// dessin quand il émet, aucun sinon : le coût du jeu est le nombre d'appels.
+// L'émetteur alterne d'une roue à l'autre à chaque image, ce qui trace les
+// deux traînées.
 //
-// Changer de matière en cours de route ne recolore pas les bouffées déjà
-// émises : Babylon fige à la NAISSANCE de chaque particule sa couleur, son
-// pas vers `colorDead` (thinParticleSystem.function.js), sa taille, sa durée
-// de vie et sa direction. Seule la gravité est commune, d'où une poussière
-// plus lourde obtenue par une poussée verticale plus faible.
+// Three n'a pas de système de particules : les 600 bouffées sont simulées
+// ici et leurs quads orientés face caméra sur le processeur (2 400 sommets,
+// négligeable). Chaque particule fige à sa NAISSANCE sa couleur, sa taille,
+// sa durée de vie et sa direction : changer de matière en cours de route ne
+// recolore pas les bouffées déjà émises.
 //
 // Sprite : bouffée générée par Codex sur fond noir, transparence tirée de la
-// luminance (ImageMagick, niveaux 4 % à 80 %), 256 px. Couleur unie #eeeeee :
-// la matière vient du canal alpha, la teinte des couleurs du système.
+// luminance, 256 px. La matière vient du canal alpha, la teinte des couleurs
+// de sommet.
 
 // Roues arrière de la 458 dans le repère LOCAL du châssis (+Z avant) : voie
-// de ±0,84 m (`wheel_rl`/`wheel_rr` du modèle), essieu à 1,3 m derrière le
-// centre. La hauteur d'émission dépend de la matière (REGLAGES.hauteur).
-const ROUES = [new Vector3(.84, 0, -1.3), new Vector3(-.84, 0, -1.3)];
+// de ±0,84 m, essieu à 1,3 m derrière le centre.
+const ROUES = [new THREE.Vector3(.84, 0, -1.3), new THREE.Vector3(-.84, 0, -1.3)];
+const CAPACITE = 600;
+// La bouffée gonfle en se dissipant : 1 → 3,5 fois sa taille de départ.
+const GONFLEMENT = 2.5;
+const POUSSEE_VERTICALE = .35;
 
 type Matiere = 'fumee' | 'poussiere';
 
@@ -33,9 +36,8 @@ interface Reglage {
   taille: [number, number];
   monteeMin: number;
   monteeMax: number;
-  // Centre de la bouffée au-dessus du sol. Émise au ras du sol, sa moitié
-  // basse passait sous la chaussée et ressortait en demi-dôme plat : il faut
-  // au moins la moitié de la taille moyenne de départ.
+  // Centre de la bouffée au-dessus du sol : au moins la moitié de la taille
+  // de départ, sinon sa moitié basse passe sous la chaussée.
   hauteur: number;
 }
 
@@ -50,12 +52,10 @@ const REGLAGES: Record<Matiere, Reglage> = {
     monteeMax: 1.1,
     hauteur: .45,
   },
-  // Terre sèche du Béarn, brun ocre. Hors chaussée, Artix est surtout herbe
-  // et jardins : une poussière plus sombre se perdrait sur le vert. Bouffées
-  // plus larges, plus longues et plus basses que la fumée, qui monte.
+  // Terre sèche du Béarn, brun ocre. Bouffées plus larges, plus longues et
+  // plus basses que la fumée, et plus opaques : à 0,3 sur l'herbe sombre, la
+  // traînée se réduisait à des volutes à peine lisibles.
   poussiere: {
-    // Opacité plus haute que la fumée (0,45 contre 0,26) : à 0,3, sur
-    // l'herbe sombre, la traînée se réduisait à des volutes à peine lisibles.
     couleur1: [.72, .6, .44, .45],
     couleur2: [.6, .5, .36, .34],
     morte: [.66, .58, .46],
@@ -67,86 +67,157 @@ const REGLAGES: Record<Matiere, Reglage> = {
   },
 };
 
-export class FumeePneus {
-  private readonly systeme: ParticleSystem;
-  private readonly emetteur = new Vector3();
-  private readonly local = new Vector3();
-  private roue = 0;
-  private nuit = false;
-  private matiere: Matiere = 'fumee';
+const hasard = (min: number, max: number): number => min + Math.random() * (max - min);
 
-  constructor(scene: Scene) {
-    // 600 places : la fumée à 180 km/h émet 250 particules/s qui vivent
-    // jusqu'à 2,2 s, soit 550 en vol. À 400, la traînée se trouait.
-    const s = new ParticleSystem('fumee-pneus', 600, scene);
-    s.particleTexture = new Texture('/textures/fumee.png', scene);
-    s.emitter = this.emetteur;
-    s.minEmitBox = new Vector3(-.25, 0, -.25);
-    s.maxEmitBox = new Vector3(.25, .1, .25);
-    s.blendMode = ParticleSystem.BLENDMODE_STANDARD;
-    // La bouffée gonfle en se dissipant : 1 → 3,5 fois sa taille de départ.
-    s.addSizeGradient(0, 1);
-    s.addSizeGradient(1, 3.5);
-    s.minInitialRotation = 0;
-    s.maxInitialRotation = Math.PI * 2;
-    s.minAngularSpeed = -.8;
-    s.maxAngularSpeed = .8;
-    // Dispersion latérale ; la montée dépend de la matière (voir REGLAGES).
-    s.direction1 = new Vector3(-.6, .4, -.6);
-    s.direction2 = new Vector3(.6, 1.1, .6);
-    s.minEmitPower = .4;
-    s.maxEmitPower = 1.2;
-    s.gravity = new Vector3(0, .35, 0);
-    s.emitRate = 0;
-    this.systeme = s;
-    this.regler();
-    s.start();
+export class FumeePneus {
+  private readonly mesh: THREE.Mesh;
+  private readonly positions: Float32Array;
+  private readonly couleurs: Float32Array;
+  // Par particule : x, y, z, vx, vy, vz, âge, vie, taille, angle, rotation.
+  private readonly etat = new Float32Array(CAPACITE * 11);
+  // Par particule : couleur de naissance (rgba) puis couleur morte (rgb).
+  private readonly teintes = new Float32Array(CAPACITE * 7);
+  private vivantes = 0;
+  private reste = 0;
+  private roue = 0;
+  private readonly emetteur = new THREE.Vector3();
+  private readonly droite = new THREE.Vector3();
+  private readonly haut = new THREE.Vector3();
+
+  constructor(scene: THREE.Scene, private readonly camera: THREE.Camera) {
+    this.positions = new Float32Array(CAPACITE * 12);
+    this.couleurs = new Float32Array(CAPACITE * 16);
+    const uv = new Float32Array(CAPACITE * 8);
+    const indices = new Uint16Array(CAPACITE * 6);
+    for (let i = 0; i < CAPACITE; i++) {
+      uv.set([0, 0, 1, 0, 1, 1, 0, 1], i * 8);
+      const k = i * 4;
+      indices.set([k, k + 1, k + 2, k, k + 2, k + 3], i * 6);
+    }
+    const geometrie = new THREE.BufferGeometry();
+    geometrie.setAttribute('position', new THREE.BufferAttribute(this.positions, 3).setUsage(THREE.DynamicDrawUsage));
+    geometrie.setAttribute('color', new THREE.BufferAttribute(this.couleurs, 4).setUsage(THREE.DynamicDrawUsage));
+    geometrie.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geometrie.setIndex(new THREE.BufferAttribute(indices, 1));
+    geometrie.setDrawRange(0, 0);
+    const materiau = new THREE.MeshBasicMaterial({
+      map: new THREE.TextureLoader().load('/textures/fumee.png'),
+      transparent: true, depthWrite: false, vertexColors: true,
+    });
+    this.mesh = new THREE.Mesh(geometrie, materiau);
+    this.mesh.name = 'fumee-pneus';
+    // Les bouffées suivent la voiture : la sphère englobante serait fausse.
+    this.mesh.frustumCulled = false;
+    this.mesh.visible = false;
+    scene.add(this.mesh);
   }
 
-  update(car: ArcadeCar, world: ArtixWorld, nuit: boolean): void {
+  update(dt: number, car: ArcadeCar, world: ArtixWorld, nuit: boolean): void {
     const vitesse = Math.abs(car.speed);
-    // Poussière dès 18 km/h sur la terre, dérapage ou pas : la vitesse
-    // plafonne à 65 km/h hors-piste (18 m/s), le seuil de la fumée (29 km/h)
-    // n'aurait laissé qu'une fenêtre étroite. Sur un sol minéral hors
-    // chaussée (place pavée, parking), pas de terre à soulever : il se
-    // comporte comme la route, fumée en dérapage seulement.
+    // Poussière dès 18 km/h sur la terre, dérapage ou pas. Sur un sol minéral
+    // hors chaussée (place pavée, parking), pas de terre à soulever : fumée
+    // en dérapage seulement, comme sur la route.
     const terre = !car.onRoad && !world.estMineral(car.root.position.x, car.root.position.z);
     const matiere: Matiere | null = terre ? (vitesse > 5 ? 'poussiere' : null)
       : car.drifting && vitesse > 8 ? 'fumee' : null;
-    if (!matiere) {
-      this.systeme.emitRate = 0;
+
+    if (matiere) {
+      // Débit proportionnel à la vitesse. Fumée : 90 particules/s à 29 km/h,
+      // 250 à 180 km/h (à 60 par seconde la traînée se lisait comme une file
+      // de boules). Poussière : 50 à 18 km/h, 110 à 65 km/h.
+      const debit = matiere === 'fumee' ? 60 + vitesse * 3.8 : 30 + vitesse * 4.5;
+      this.roue = 1 - this.roue;
+      car.versMonde(ROUES[this.roue], this.emetteur).add(car.root.position);
+      this.emetteur.y += REGLAGES[matiere].hauteur;
+      this.reste += debit * dt;
+      while (this.reste >= 1) {
+        this.reste -= 1;
+        this.emettre(REGLAGES[matiere], nuit);
+      }
+    } else this.reste = 0;
+
+    if (!this.vivantes) {
+      this.mesh.visible = false;
       return;
     }
-    if (matiere !== this.matiere || nuit !== this.nuit) {
-      this.matiere = matiere;
-      this.nuit = nuit;
-      this.regler();
-    }
-    // Débit proportionnel à la vitesse. Fumée : 90 particules/s à 29 km/h,
-    // 250 à 180 km/h ; à 60 par seconde, la voiture avançait de 35 cm entre
-    // deux bouffées d'une même roue et la traînée se lisait comme une file de
-    // boules. Poussière : 50 à 18 km/h, 110 à 65 km/h, ses bouffées plus
-    // larges se recouvrent avec moins de particules.
-    this.systeme.emitRate = matiere === 'fumee' ? 60 + vitesse * 3.8 : 30 + vitesse * 4.5;
-    this.roue = 1 - this.roue;
-    car.root.getDirectionToRef(ROUES[this.roue], this.local);
-    this.emetteur.copyFrom(car.root.position).addInPlace(this.local);
-    this.emetteur.y += REGLAGES[matiere].hauteur;
+    this.simuler(dt);
   }
 
-  // Les particules ne sont pas éclairées par la scène : une fumée blanche
-  // pleine luminance brillerait comme un néon la nuit. Teinte divisée par
-  // 3,3 sous la lune.
-  private regler(): void {
-    const r = REGLAGES[this.matiere];
-    const k = this.nuit ? .3 : 1;
-    const s = this.systeme;
-    s.color1 = new Color4(r.couleur1[0] * k, r.couleur1[1] * k, r.couleur1[2] * k, r.couleur1[3]);
-    s.color2 = new Color4(r.couleur2[0] * k, r.couleur2[1] * k, r.couleur2[2] * k, r.couleur2[3]);
-    s.colorDead = new Color4(r.morte[0] * k, r.morte[1] * k, r.morte[2] * k, 0);
-    [s.minLifeTime, s.maxLifeTime] = r.vie;
-    [s.minSize, s.maxSize] = r.taille;
-    s.direction1.y = r.monteeMin;
-    s.direction2.y = r.monteeMax;
+  private emettre(r: Reglage, nuit: boolean): void {
+    if (this.vivantes >= CAPACITE) return;
+    const i = this.vivantes++;
+    const e = i * 11, t = i * 7;
+    this.etat[e] = this.emetteur.x + hasard(-.25, .25);
+    this.etat[e + 1] = this.emetteur.y + hasard(0, .1);
+    this.etat[e + 2] = this.emetteur.z + hasard(-.25, .25);
+    // Dispersion latérale ; la montée dépend de la matière.
+    const elan = hasard(.4, 1.2);
+    this.etat[e + 3] = hasard(-.6, .6) * elan;
+    this.etat[e + 4] = hasard(r.monteeMin, r.monteeMax) * elan;
+    this.etat[e + 5] = hasard(-.6, .6) * elan;
+    this.etat[e + 6] = 0;
+    this.etat[e + 7] = hasard(r.vie[0], r.vie[1]);
+    this.etat[e + 8] = hasard(r.taille[0], r.taille[1]);
+    this.etat[e + 9] = hasard(0, Math.PI * 2);
+    this.etat[e + 10] = hasard(-.8, .8);
+    // Les particules ne sont pas éclairées : une fumée blanche pleine
+    // luminance brillerait comme un néon la nuit. Teinte divisée par 3,3.
+    const k = nuit ? .3 : 1, m = Math.random();
+    for (let c = 0; c < 3; c++) {
+      this.teintes[t + c] = (r.couleur1[c] + (r.couleur2[c] - r.couleur1[c]) * m) * k;
+      this.teintes[t + 4 + c] = r.morte[c] * k;
+    }
+    this.teintes[t + 3] = r.couleur1[3] + (r.couleur2[3] - r.couleur1[3]) * m;
+  }
+
+  private simuler(dt: number): void {
+    this.droite.setFromMatrixColumn(this.camera.matrixWorld, 0);
+    this.haut.setFromMatrixColumn(this.camera.matrixWorld, 1);
+    const { etat, teintes, positions, couleurs, droite: d, haut: h } = this;
+    for (let i = 0; i < this.vivantes; i++) {
+      const e = i * 11;
+      etat[e + 6] += dt;
+      if (etat[e + 6] >= etat[e + 7]) {
+        // Particule morte : la dernière vivante prend sa place.
+        const dernier = --this.vivantes;
+        etat.copyWithin(e, dernier * 11, dernier * 11 + 11);
+        teintes.copyWithin(i * 7, dernier * 7, dernier * 7 + 7);
+        i--;
+        continue;
+      }
+      etat[e + 4] += POUSSEE_VERTICALE * dt;
+      etat[e] += etat[e + 3] * dt;
+      etat[e + 1] += etat[e + 4] * dt;
+      etat[e + 2] += etat[e + 5] * dt;
+      etat[e + 9] += etat[e + 10] * dt;
+
+      const age = etat[e + 6] / etat[e + 7];
+      const demi = etat[e + 8] * (1 + GONFLEMENT * age) * .5;
+      const cos = Math.cos(etat[e + 9]) * demi, sin = Math.sin(etat[e + 9]) * demi;
+      // Axes du quad : repère caméra tourné de l'angle de la particule.
+      const ax = d.x * cos + h.x * sin, ay = d.y * cos + h.y * sin, az = d.z * cos + h.z * sin;
+      const bx = h.x * cos - d.x * sin, by = h.y * cos - d.y * sin, bz = h.z * cos - d.z * sin;
+      const x = etat[e], y = etat[e + 1], z = etat[e + 2];
+      const p = i * 12;
+      positions[p] = x - ax - bx; positions[p + 1] = y - ay - by; positions[p + 2] = z - az - bz;
+      positions[p + 3] = x + ax - bx; positions[p + 4] = y + ay - by; positions[p + 5] = z + az - bz;
+      positions[p + 6] = x + ax + bx; positions[p + 7] = y + ay + by; positions[p + 8] = z + az + bz;
+      positions[p + 9] = x - ax + bx; positions[p + 10] = y - ay + by; positions[p + 11] = z - az + bz;
+
+      const t = i * 7;
+      const r = teintes[t] + (teintes[t + 4] - teintes[t]) * age;
+      const g = teintes[t + 1] + (teintes[t + 5] - teintes[t + 1]) * age;
+      const b = teintes[t + 2] + (teintes[t + 6] - teintes[t + 2]) * age;
+      const a = teintes[t + 3] * (1 - age);
+      for (let s = 0; s < 4; s++) {
+        const c = i * 16 + s * 4;
+        couleurs[c] = r; couleurs[c + 1] = g; couleurs[c + 2] = b; couleurs[c + 3] = a;
+      }
+    }
+    const geometrie = this.mesh.geometry;
+    geometrie.setDrawRange(0, this.vivantes * 6);
+    geometrie.attributes.position.needsUpdate = true;
+    geometrie.attributes.color.needsUpdate = true;
+    this.mesh.visible = this.vivantes > 0;
   }
 }
