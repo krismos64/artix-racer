@@ -68,6 +68,10 @@ export interface Ville {
   trafic: AnyRecord | null;
   flotte: AnyRecord | null;
   troncs: Array<{ x: number; z: number; h: number }>;
+  // Pieds des poteaux électriques et téléphoniques.
+  poteaux: Array<{ x: number; z: number }>;
+  // Passants (pour faire surgir le conducteur d'une voiture prise).
+  passants: AnyRecord | null;
   stats: { maillages: number; fusionnes: number };
 }
 
@@ -368,7 +372,12 @@ export async function construireVille(
   statique.name = 'ville';
   const world = buildWorld(statique as any, data) as AnyRecord;
 
-  if (data.poi) statique.add(buildSignage(data, terrain, ROAD_Y).group);
+  let poteaux: Array<{ x: number; z: number }> = [];
+  if (data.poi) {
+    const signalisation = buildSignage(data, terrain, ROAD_Y).group;
+    poteaux = (signalisation.userData.poteaux ?? []) as Array<{ x: number; z: number }>;
+    statique.add(signalisation);
+  }
   const shoulders = new Accotements(data, terrain, ROAD_Y);
   if (shoulders.effectif) statique.add(shoulders.group);
 
@@ -411,6 +420,7 @@ export async function construireVille(
   let vivant: Ville['vivant'] = null;
   let agentsCirculation: AgentCirculation[] = [];
   let trafic: AnyRecord | null = null;
+  let passants: AnyRecord | null = null;
   try {
     // L'herbe s'écarte de la chaussée et de ses abords : grille de segments
     // de voies au pas de 100 m.
@@ -471,7 +481,7 @@ export async function construireVille(
     // pas celui des appels de dessin.
     const circulation = new (Circulation as any)(data, terrain, ROAD_Y, 24, flotte);
     if (circulation.effectif) { agentsCirculation = circulation.agents; trafic = circulation; }
-    if (pietons.effectif) anime.add(pietons.group);
+    if (pietons.effectif) { anime.add(pietons.group); passants = pietons; }
     if (circulation.effectif) anime.add(circulation.group);
     preparer(anime, vus);
     scene.add(anime);
@@ -497,6 +507,8 @@ export async function construireVille(
     circulation: agentsCirculation,
     parc,
     trafic,
+    poteaux,
+    passants,
     flotte,
     troncs: (world.troncs ?? []) as Array<{ x: number; z: number; h: number }>,
     foyers: (world.foyers ?? []) as Array<{ x: number; y: number; z: number }>,

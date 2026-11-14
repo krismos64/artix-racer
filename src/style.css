@@ -770,3 +770,44 @@ kbd {
   pointer-events: none;
   z-index: 6;
 }
+
+/* Étoiles de recherche et état du véhicule, sous le score. */
+.recherche {
+  display: block;
+  margin-top: 4px;
+  font-size: 20px;
+  letter-spacing: .12em;
+  color: rgba(244, 241, 232, .28);
+}
+.recherche.actif {
+  color: #ffd24a;
+  animation: recherche-pulse .8s ease-in-out infinite alternate;
+}
+@keyframes recherche-pulse {
+  from { opacity: 1; }
+  to { opacity: .55; }
+}
+.etat-voiture {
+  display: block;
+  margin-top: 2px;
+  font: 600 11px/1.4 system-ui, sans-serif;
+  letter-spacing: .1em;
+  color: #ff9a6b;
+}
+/* Voile d'arrestation : il couvre l'écran le temps de ramener le joueur au
+   point de départ. */
+.arrestation {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 10, 18, .92);
+  color: #f4f1e8;
+  font: 800 clamp(40px, 9vw, 120px)/1 system-ui, sans-serif;
+  letter-spacing: .14em;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .5s ease;
+  z-index: 20;
+}
+.arrestation.actif { opacity: 1; }

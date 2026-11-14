@@ -26,7 +26,7 @@ const CAPACITE = 600;
 const GONFLEMENT = 2.5;
 const POUSSEE_VERTICALE = .35;
 
-type Matiere = 'fumee' | 'poussiere';
+type Matiere = 'fumee' | 'poussiere' | 'moteur';
 
 interface Reglage {
   couleur1: [number, number, number, number];
@@ -55,6 +55,17 @@ const REGLAGES: Record<Matiere, Reglage> = {
   // Terre sèche du Béarn, brun ocre. Bouffées plus larges, plus longues et
   // plus basses que la fumée, et plus opaques : à 0,3 sur l'herbe sombre, la
   // traînée se réduisait à des volutes à peine lisibles.
+  // Moteur abîmé : fumée sombre qui monte droit du capot.
+  moteur: {
+    couleur1: [.2, .2, .21, .4],
+    couleur2: [.34, .33, .33, .28],
+    morte: [.42, .42, .44],
+    vie: [1.4, 2.6],
+    taille: [.5, .9],
+    monteeMin: 1.2,
+    monteeMax: 2.2,
+    hauteur: 0,
+  },
   poussiere: {
     couleur1: [.72, .6, .44, .45],
     couleur2: [.6, .5, .36, .34],
@@ -66,6 +77,9 @@ const REGLAGES: Record<Matiere, Reglage> = {
     hauteur: .75,
   },
 };
+
+// Capot du véhicule dans le repère du châssis (+Z avant).
+const CAPOT = new THREE.Vector3(0, .95, 1.3);
 
 const hasard = (min: number, max: number): number => min + Math.random() * (max - min);
 
@@ -79,6 +93,7 @@ export class FumeePneus {
   private readonly teintes = new Float32Array(CAPACITE * 7);
   private vivantes = 0;
   private reste = 0;
+  private resteMoteur = 0;
   private roue = 0;
   private readonly emetteur = new THREE.Vector3();
   private readonly droite = new THREE.Vector3();
@@ -135,6 +150,16 @@ export class FumeePneus {
         this.emettre(REGLAGES[matiere], nuit);
       }
     } else this.reste = 0;
+
+    // Fumée de capot au-delà de 40 % de dégâts, de plus en plus dense.
+    if (car.degats > .4) {
+      this.resteMoteur += (10 + (car.degats - .4) * 70) * dt;
+      car.versMonde(CAPOT, this.emetteur).add(car.root.position);
+      while (this.resteMoteur >= 1) {
+        this.resteMoteur -= 1;
+        this.emettre(REGLAGES.moteur, nuit);
+      }
+    }
 
     if (!this.vivantes) {
       this.mesh.visible = false;

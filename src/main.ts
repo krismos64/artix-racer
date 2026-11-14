@@ -21,6 +21,7 @@ import { Obstacles, type Mobile, type PlaceGaree } from './obstacles';
 // @ts-ignore : module JS hérité.
 import { geometrieRoue } from './three-city/parkedcars.js';
 import { Marcheur } from './pieton';
+import { Police } from './police';
 import type { ContexteMesure } from './profil';
 import { TrafficSystem, type AgentCirculation } from './traffic';
 import type { CityMapData } from './types';
@@ -637,7 +638,7 @@ async function start(): Promise<void> {
   // Obstacles solides : voitures garées, arbres, mâts de lampadaires, et
   // les véhicules que le joueur a laissés derrière lui.
   const places = (ville.parc?.places ?? []) as PlaceGaree[];
-  const obstacles = new Obstacles(places, ville.troncs, ville.foyers, (x, z) => world.isOnRoad(x, z));
+  const obstacles = new Obstacles(places, ville.troncs, [...ville.foyers, ...ville.poteaux], (x, z) => world.isOnRoad(x, z));
   world.obstacles = obstacles;
   let mobiles: Mobile[] = [];
   obstacles.mobiles = () => mobiles;
@@ -648,6 +649,21 @@ async function start(): Promise<void> {
   };
   const roueFlotte = ville.flotte ? (geometrieRoue() as THREE.BufferGeometry) : null;
   const sol = new THREE.Vector3();
+
+  // Police : étoiles de recherche, patrouilles, arrestation.
+  const police = new Police(scene, world, ville.trafic?.noeuds ?? [],
+    ville.flotte?.berline ?? null, ville.flotte?.palette ?? null, roueFlotte);
+  (window as any).__police = police;
+  const etoilesEl = document.createElement('span');
+  etoilesEl.className = 'recherche';
+  const etatEl = document.createElement('span');
+  etatEl.className = 'etat-voiture';
+  scoreEl.parentElement?.append(etoilesEl, etatEl);
+  const voileArret = document.createElement('div');
+  voileArret.className = 'arrestation';
+  voileArret.textContent = 'ARRÊTÉ';
+  document.body.appendChild(voileArret);
+  let arretEnCours = 0;
 
   // Véhicule à portée du marcheur : d'abord ceux qu'il a déjà conduits,
   // sinon une voiture garée dont le modèle est chargé.
@@ -700,6 +716,8 @@ async function start(): Promise<void> {
         place.echelle ?? 1, roueFlotte, place.type);
       ville.parc!.retirer(place);
       voitures.push(suivante);
+      // Voiture garée : un vol discret, une demi-étoile.
+      police.signaler(.5);
     } else if (cible.agent && roueFlotte && ville.trafic) {
       // Véhicule de la circulation : il quitte le trafic, un véhicule
       // conduit le remplace au même endroit, même cap, même teinte.
@@ -710,6 +728,10 @@ async function start(): Promise<void> {
       suivante = new ArcadeCar(scene, world, { x, z, heading: cap });
       suivante.habillerFlotte(ville.flotte![agent.type!], ville.flotte!.palette, couleur, 1, roueFlotte, agent.type);
       voitures.push(suivante);
+      // Le conducteur, éjecté par la portière gauche, s'enfuit en courant.
+      ville.passants?.apparaitre(x + Math.cos(cap) * 1.8, z - Math.sin(cap) * 1.8);
+      // Prendre une voiture à son conducteur : une étoile.
+      police.signaler(1);
     }
     if (!suivante) return;
     // L'ancienne voiture éteint ses phares : chaque projecteur allumé compte
@@ -860,6 +882,7 @@ async function start(): Promise<void> {
       marcheur.root.visible = false;
       aPied = false;
       majMobiles();
+      police.lever();
     }
     if (playing && !paused && (input.tapped('f') || input.tapped('e'))) basculerAPied();
     if (playing && input.tapped('t')) lancerSession('challenge');
@@ -911,12 +934,45 @@ async function start(): Promise<void> {
         car.impact = Math.max(car.impact, 9);
         car.speed *= .8;
         session.ajouterPoints(-500 * renverses);
+        police.signaler(renverses);
       }
       // À pied, la circulation n'a personne à percuter : seuls les chocs et
       // les frôlements en voiture comptent.
-      if (!aPied && !gele && traffic.update(car.root.position.x, car.root.position.z, maintenant / 1000, car.speed)) car.hitTraffic();
+      if (!aPied && !gele && traffic.update(car.root.position.x, car.root.position.z, maintenant / 1000, car.speed)) {
+        car.hitTraffic();
+        // Trois accrochages valent une étoile.
+        police.signaler(.34);
+      }
       for (const f of traffic.frolements.splice(0)) arcade.frolement(f.x, f.z, car, session);
       if (!aPied && !arcade.fige && !gele) session.update(dtJeu, car.root.position.x, car.root.position.z, car.speed);
+      // Poursuite : les patrouilles visent le joueur, en voiture ou à pied.
+      if (arretEnCours <= 0) {
+        const evenement = police.update(dt, joueur().x, joueur().z, aPied ? Math.abs(marcheur.vitesse) : car.vitesseSol);
+        if (evenement === 'choc' && !aPied) car.hitTraffic();
+        if (evenement === 'arrete') {
+          arretEnCours = 2.6;
+          voileArret.classList.add('actif');
+          session.ajouterPoints(-2000);
+        }
+      } else {
+        // Arrestation : l'écran se voile, puis le joueur repart du point de
+        // départ au volant de la Ferrari, recherche levée.
+        arretEnCours -= dt;
+        car.arreter();
+        if (arretEnCours <= 0) {
+          police.lever();
+          if (car !== voitures[0]) car.setNight(false);
+          car = voitures[0];
+          (window as any).__car = car;
+          car.reset();
+          accrocherPhares();
+          car.setNight(nuitActive);
+          marcheur.root.visible = false;
+          aPied = false;
+          majMobiles();
+          voileArret.classList.remove('actif');
+        }
+      }
       arcade.update(dt, car, session);
       fumee.update(dtJeu, car, world, nuitActive);
       audio.update(car.speed, car.boosting, car.drifting);
@@ -1046,6 +1102,13 @@ async function start(): Promise<void> {
       missionProgress.style.width = `${Math.round(status.progress * 100)}%`;
       scoreEl.textContent = String(status.score).padStart(6, '0');
       const jp = joueur();
+      const etoiles = '★'.repeat(police.niveau) + '☆'.repeat(3 - police.niveau);
+      if (etoilesEl.textContent !== etoiles) {
+        etoilesEl.textContent = etoiles;
+        etoilesEl.classList.toggle('actif', police.niveau > 0);
+      }
+      const etat = car.degats > .05 ? `ÉTAT ${Math.round((1 - car.degats) * 100)} %` : '';
+      if (etatEl.textContent !== etat) etatEl.textContent = etat;
       const surRoute = aPied ? world.isOnRoad(jp.x, jp.z) : car.onRoad;
       const roadName = surRoute ? world.roadNameAt(jp.x, jp.z) : null;
       surfaceStatus.textContent = aPied ? (roadName?.toUpperCase() ?? 'À PIED')

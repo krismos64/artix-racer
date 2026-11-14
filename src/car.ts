@@ -164,6 +164,8 @@ export class ArcadeCar {
   readonly oeil = new THREE.Vector3(.36, 1.02, -.55);
   // Vrai pour la Ferrari : elle seule a un intérieur à découper.
   aCabine = true;
+  // État de la voiture, de 0 (neuve) à 1 (moteur mort).
+  degats = 0;
 
   // Vitesse le long du cap, en m/s (négative en marche arrière). La couche
   // arcade la lit partout, et l'écrit pour le départ parfait.
@@ -457,7 +459,10 @@ export class ArcadeCar {
       deriveArriere = this.integrer(h, throttle, reverse, brake);
       choc = Math.max(choc, this.deplacer(h));
     }
-    if (choc > 0) this.impact = Math.max(this.impact, choc);
+    if (choc > 0) {
+      this.impact = Math.max(this.impact, choc);
+      this.encaisser(choc);
+    }
     this.distanceTravelled += vitesse * dt;
 
     // Dérapage : l'essieu arrière glisse de plus de 9° à plus de 30 km/h.
@@ -512,7 +517,9 @@ export class ArcadeCar {
     // plafonnée à 40 km/h. La pédale de frein (S) freine tant qu'on avance.
     let pousse = 0;
     if (throttle) {
-      const accel = this.onRoad ? this.profil.accel * (this.boosting ? 1.46 : 1) : 5;
+      // Moteur abîmé : jusqu'à 55 % de puissance en moins, calé à 1.
+      const sante = this.degats >= 1 ? 0 : 1 - this.degats * .55;
+      const accel = (this.onRoad ? this.profil.accel * (this.boosting ? 1.46 : 1) : Math.min(5, this.profil.accel)) * sante;
       pousse += this.profil.masse * accel * Math.max(0, 1 - Math.max(0, this.vAvant) / vMax);
     }
     let freinage = 0;
@@ -628,6 +635,8 @@ export class ArcadeCar {
 
   reset(): void {
     this.arreter();
+    // Retour au départ : voiture remise à neuf.
+    this.degats = 0;
     this.heading = this.start.heading;
     this.root.position.set(this.start.x, this.world.surfaceY(this.start.x, this.start.z), this.start.z);
     this.root.rotation.set(0, this.heading, 0);
@@ -644,7 +653,16 @@ export class ArcadeCar {
     this.drifting = false;
   }
 
+  // Dégâts : chaque choc au-dessus de 15 km/h en ajoute, à proportion de la
+  // vitesse perdue. Un mur à 100 km/h coûte un quart de la voiture. Le
+  // moteur perd de la puissance, puis fume (fumee.ts) ; à 1, il cale.
+  private encaisser(vitessePerdue: number): void {
+    if (vitessePerdue < 4) return;
+    this.degats = Math.min(1, this.degats + (vitessePerdue - 4) / 95);
+  }
+
   hitTraffic(): void {
+    this.encaisser(this.vitesseSol);
     this.impact = Math.max(this.impact, this.vitesseSol);
     this.vAvant *= -.22;
     this.vCote *= .3;

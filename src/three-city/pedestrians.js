@@ -804,6 +804,46 @@ export class Pietons {
     }
   }
 
+  // Fait surgir un passant près de (x, z) et le fait fuir : le conducteur
+  // d'une voiture que le joueur vient de prendre. On déplace le passant le
+  // plus éloigné, que personne ne regarde, sur le nœud piéton le plus proche.
+  apparaitre(x, z) {
+    if (!this.agents.length) return false;
+    let noeud = -1, dNoeud = Infinity;
+    for (let i = 0; i < this.noeuds.length; i++) {
+      const n = this.noeuds[i];
+      if (!n.voisins?.length) continue;
+      const d = (n.x - x) ** 2 + (n.z - z) ** 2;
+      if (d < dNoeud) { dNoeud = d; noeud = i; }
+    }
+    // Trop loin de tout trottoir : il traverserait la moitié du quartier.
+    if (noeud < 0 || dNoeud > 30 * 30) return false;
+    let agent = null, dAgent = -1;
+    for (let i = 0; i < (this.visibles ?? this.agents.length); i++) {
+      const a = this.agents[i];
+      const p = this.position(a);
+      const d = (p.x - x) ** 2 + (p.z - z) ** 2;
+      if (d > dAgent && !(a.chute > 0)) { dAgent = d; agent = a; }
+    }
+    if (!agent) return false;
+    if (agent.etat === 'discute') {
+      const autre = this.agents[agent.interlocuteur];
+      if (autre) { autre.etat = 'marche'; autre.interlocuteur = -1; }
+    }
+    agent.etat = 'marche';
+    agent.interlocuteur = -1;
+    agent.noeud = noeud;
+    agent.cible = this.choisirVoisin(noeud, -1);
+    agent.avance = 0;
+    agent.ecart = 0;
+    // Il part de la portière et rejoint le trottoir en courant.
+    agent.projX = x - this.noeuds[noeud].x;
+    agent.projZ = z - this.noeuds[noeud].z;
+    agent.fuite = 7;
+    agent.minuteur = 20;
+    return true;
+  }
+
   position(a) {
     const nA = this.noeuds[a.noeud], nB = this.noeuds[a.cible];
     if (!nA) return { x: 0, z: 0 };

@@ -1042,6 +1042,8 @@ export function buildSignage(data, relief, roadY) {
     }
 
     // ---- Rendu des supports ----------------------------------------------
+    // Pieds des poteaux, pour les collisions (src/obstacles.ts).
+    group.userData.poteaux = positionsPoteaux.map(([px, pz]) => ({ x: px, z: pz }));
     const tetes = positionsPoteaux.map(([px, pz]) => solEn(relief, px, pz, roadY) + 7.05);
     if (positionsPoteaux.length) {
       const poteauGeo = new THREE.CylinderGeometry(0.07, 0.1, 7.4, 6);

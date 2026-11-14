@@ -68,7 +68,8 @@ fictifs et voitures réalistes.
    `pieton.ts` (joueur à pied, touche F : personnage articulé, marche
    calculée), `obstacles.ts` (voitures garées, arbres et mâts solides ;
    `world.bloque` les combine au bâti ; c'est aussi par lui qu'on prend une
-   voiture garée), `traffic.ts` (chocs et frôlements, lus sur les véhicules de
+   voiture garée), `police.ts` (étoiles de recherche, patrouilles qui
+   suivent les voies par A*, arrestation, sirène synthétisée), `traffic.ts` (chocs et frôlements, lus sur les véhicules de
    `three-city/traffic.js` ; il ne dessine rien), `vitrages.ts` (faux
    intérieurs derrière les vitres, calculés dans le matériau), `game.ts`
    (modes balade et Tour d'Artix, score), `arcade.ts` (motion design, couche
@@ -130,7 +131,11 @@ listés dans le premier point.
   - Tout ce qui se déplace interroge `world.bloque`, jamais
     `collidesBuilding` seul, et doit pouvoir SORTIR d'un obstacle où il a
     été posé (test de recouvrement avant de bloquer).
-  - Outils console : `__camLibre(x, y, z, cx, cy, cz)`, `__ville`,
+  - Un véhicule piloté par programme (patrouille) qui doit s'arrêter
+    devant une cible règle sa vitesse sur la distance de freinage
+    (v² = 2·a·d), sinon il finit dedans.
+  - Outils console : `__police.signaler(2)` lance une poursuite,
+    `__camLibre(x, y, z, cx, cy, cz)`, `__ville`,
     `?ao=voir`, `?csm=0`.
 - Le projet est un JEU LOCAL : `npm run dev` sert des fichiers statiques, rien
   de plus. Il a traîné des mois un échafaudage de déploiement issu d'un

@@ -2,6 +2,36 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 4) : police, dégâts, poteaux solides, conducteur qui s'enfuit
+
+- **Police** (`src/police.ts`) : les infractions font monter un niveau de
+  recherche de 0 à 3 étoiles (passant renversé : 1 ; véhicule pris à son
+  conducteur : 1 ; voiture garée prise : 0,5 ; accrochage : 0,34). Une
+  patrouille par étoile, qui suit les voies par A* (graphe de la
+  circulation rendu non orienté) puis vise le joueur dans les 22 derniers
+  mètres. Semée (plus de 90 m pendant 12 s), le niveau perd une étoile ;
+  rattrapé à l'arrêt 1,6 s, le joueur est arrêté : voile, 2 000 points en
+  moins, retour au départ en Ferrari. Sirène deux-tons synthétisée.
+  Mesuré : patrouille partie de 116 m, sur le joueur en 6 s ; niveau
+  retombé en 11,8 s une fois semée ; arrestation en 8,5 à 12,3 s.
+- **Piège** : la vitesse d'approche doit venir de la distance de freinage
+  (v² = 2·a·d). Décroissante en ligne droite, la patrouille arrivait à
+  26 m/s à 15 m et s'arrêtait DANS la voiture du joueur. Deux patrouilles
+  apparaissaient aussi sur le même nœud : 40 m d'écart imposés au départ.
+- **Dégâts** : chaque choc au-dessus de 15 km/h abîme la voiture (un mur à
+  100 km/h en coûte un quart). Jusqu'à 55 % de puissance en moins, fumée
+  sombre au capot au-delà de 40 %, moteur calé à 100 %. État affiché sous
+  le score ; la touche R remet à neuf. Non testé en jeu au-delà du
+  type-check : aucune déformation visible de la carrosserie.
+- **Poteaux solides** : les 431 poteaux électriques rejoignent les
+  obstacles (signage.js les exporte dans `group.userData.poteaux`).
+- **Conducteur qui s'enfuit** : prendre un véhicule de la circulation fait
+  surgir un passant à la portière, qui rejoint le trottoir en courant
+  (`Pietons.apparaitre` recycle le passant le plus éloigné). Écrit, non
+  vérifié à l'écran.
+- **Non fait** : missions, patrouilles à pied, barrages, dégâts visibles,
+  panneaux de signalisation solides.
+
 ## 2026-11-14 (suite 3) : conduite par modèle, passants percutés, circulation à prendre
 
 - **Profils de conduite** (`PROFILS`, car.ts) : masse, inertie, empattement,
