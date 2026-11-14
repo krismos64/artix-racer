@@ -4529,7 +4529,7 @@ function plantTrees(data, relief = null) {
       cypres.setMatrixAt(i, m);
     });
     cypres.instanceMatrix.needsUpdate = true;
-    cypres.castShadow = false;
+    cypres.castShadow = true;
     cypres.receiveShadow = true;
     group.add(cypres);
   }
@@ -4541,9 +4541,11 @@ function plantTrees(data, relief = null) {
   // tronc leur est recopiée : une charpente d'une autre teinte que son fût se
   // repère immédiatement.
   branches.castShadow = false;
-  // Pas d'ombre portée sur les feuillages : quelques milliers d'instances dans
-  // la passe d'ombre coûtent bien plus qu'elles n'apportent visuellement.
-  leaves.castShadow = false;
+  // Fûts et feuillages projettent leur ombre : sans elle, une rue plantée de
+  // platanes restait éclairée à plat. Un appel de dessin par cascade et par
+  // maillage instancié ; coût mesuré dans JOURNAL.md (14 novembre 2026).
+  trunks.castShadow = true;
+  leaves.castShadow = true;
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const col = new THREE.Color();

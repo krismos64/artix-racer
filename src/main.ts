@@ -5,6 +5,7 @@ import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { chromaticAberration } from 'three/addons/tsl/display/ChromaticAberrationNode.js';
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
+import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import './style.css';
 import { MotionArcade } from './arcade';
@@ -224,10 +225,12 @@ async function start(): Promise<void> {
   // de la tranche, sinon les ombres lointaines sont coupées.
   sun.shadow.camera.far = 1400;
   const AVEC_CASCADES = new URLSearchParams(location.search).get('csm') !== '0';
+  let cascades: CSMShadowNode | null = null;
   if (AVEC_CASCADES) {
-    sun.shadow.shadowNode = new CSMShadowNode(sun, {
+    cascades = new CSMShadowNode(sun, {
       cascades: QUALITY[DEFAULT_QUALITY].cascades, maxFar: 330, mode: 'practical', lightMargin: 220,
     });
+    sun.shadow.shadowNode = cascades;
   } else {
     // Repli de diagnostic (`?csm=0`) : une seule carte de 300 m de côté.
     const c = sun.shadow.camera;
@@ -283,15 +286,18 @@ async function start(): Promise<void> {
       azimut: 205,
       elevationMin: 0,
       sunDiffuse: [1, .95, .88],
-      sunIntensity: 2.0,
-      envIntensity: 1.5,
+      // Soleil fort, ambiance basse : c'est l'écart entre les deux qui fait
+      // lire les ombres. À 2,0 contre 1,5 d'ambiance (réglage d'avant le
+      // port), l'ombre d'un platane se devinait à peine sur la chaussée.
+      sunIntensity: 2.9,
+      envIntensity: .9,
       cielNiveau: 1,
-      ambientIntensity: .25,
+      ambientIntensity: .1,
       ambientDiffuse: [.76, .84, .92],
       ambientGround: [.28, .31, .25],
       fog: [.70, .78, .86],
       exposure: 1,
-      darkness: .3,
+      darkness: 0,
       fenetres: 0,
     },
     {
@@ -304,15 +310,15 @@ async function start(): Promise<void> {
       azimut: 255,
       elevationMin: 9,
       sunDiffuse: [1, .66, .40],
-      sunIntensity: 1.7,
-      envIntensity: .7,
+      sunIntensity: 2.4,
+      envIntensity: .5,
       cielNiveau: .8,
-      ambientIntensity: .15,
+      ambientIntensity: .08,
       ambientDiffuse: [.72, .62, .66],
       ambientGround: [.30, .25, .22],
       fog: [.74, .60, .50],
       exposure: .82,
-      darkness: .28,
+      darkness: 0,
       fenetres: .12,
     },
     {
@@ -363,6 +369,11 @@ async function start(): Promise<void> {
     sun.color.setRGB(...a.sunDiffuse);
     sun.intensity = a.sunIntensity * PI;
     sun.shadow.intensity = 1 - a.darkness;
+    // Chaque cascade tient une COPIE de l'ombre du soleil, prise à sa
+    // création : le réglage doit lui être recopié.
+    for (const lumiere of cascades?.lights ?? []) {
+      if (lumiere.shadow) lumiere.shadow.intensity = 1 - a.darkness;
+    }
     ambient.intensity = a.ambientIntensity * PI;
     ambient.color.setRGB(...a.ambientDiffuse);
     ambient.groundColor.setRGB(...a.ambientGround);
@@ -430,9 +441,19 @@ async function start(): Promise<void> {
       // angles de rue. Normales reconstruites depuis la profondeur, donc
       // sans seconde passe de géométrie.
       const occlusion = ao(passe.getTextureNode('depth'), null as any, camera);
-      occlusion.radius.value = 1.9;
+      occlusion.radius.value = 2.5;
+      occlusion.scale.value = 1.6;
       occlusion.resolutionScale = .5;
-      hdr = hdr.mul(vec4(vec3(occlusion.getTextureNode().r), 1));
+      // La carte brute est tramée (16 échantillons par pixel) : un flou
+      // gaussien la lisse avant de l'appliquer.
+      const lisse: any = gaussianBlur(occlusion.getTextureNode(), null as any, 3);
+      // `?ao=voir` affiche la seule carte d'occlusion, pour la régler.
+      if (new URLSearchParams(location.search).get('ao') === 'voir') {
+        pipeline.outputNode = vec4(vec3(lisse.r), 1);
+        pipeline.needsUpdate = true;
+        return;
+      }
+      hdr = hdr.mul(vec4(vec3(lisse.r), 1));
     }
     if (avecBloom) hdr = hdr.add(bloom(couleur, .18, .5, .86));
     let image: any = renderOutput(hdr, THREE.ACESFilmicToneMapping, THREE.SRGBColorSpace);
@@ -456,6 +477,14 @@ async function start(): Promise<void> {
   let regardDebug: THREE.Vector3 | null = null;
   (window as any).__regarder = (x?: number, y?: number, z?: number): void => {
     regardDebug = x == null ? null : new THREE.Vector3(x, y ?? 0, z ?? 0);
+  };
+
+  // __camLibre(x, y, z, cx, cy, cz) pose la caméra en (x, y, z) visant
+  // (cx, cy, cz), pour inspecter un point de la ville ; __camLibre() rend
+  // la main.
+  let camLibre: { oeil: THREE.Vector3; cible: THREE.Vector3 } | null = null;
+  (window as any).__camLibre = (x?: number, y = 0, z = 0, cx = 0, cy = 0, cz = 0): void => {
+    camLibre = x == null ? null : { oeil: new THREE.Vector3(x, y, z), cible: new THREE.Vector3(cx, cy, cz) };
   };
 
   await progress(12, 'Chargement des données réelles d’Artix…');
@@ -823,6 +852,10 @@ async function start(): Promise<void> {
       camera.updateProjectionMatrix();
     }
     if (regardDebug) camera.lookAt(regardDebug.clone().add(camera.position));
+    if (camLibre) {
+      camera.position.copy(camLibre.oeil);
+      camera.lookAt(camLibre.cible);
+    }
 
     // Sans cascades, la carte d'ombre unique suit le véhicule.
     if (!AVEC_CASCADES) {

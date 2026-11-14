@@ -7,7 +7,7 @@
 // Il ne reste ici que ce que le rendu demande en plus de la génération :
 // ombres, fusion des petits maillages, et trois matériaux à nœuds.
 import * as THREE from 'three/webgpu';
-import { attribute, materialColor, materialEmissive, texture } from 'three/tsl';
+import { materialColor, texture } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Accotements } from './three-city/accotements.js';
 import { parseBDTopo } from './three-city/bdtopo.js';
@@ -26,6 +26,7 @@ import { pointsAltitude, Terrain } from './three-city/terrain.js';
 import { Touffes } from './three-city/touffes.js';
 import { poserAnisotropie } from './three-city/textures.js';
 import { buildWorld, GARDE_SOL, ROAD_Y } from './three-city/world.js';
+import { poserFauxInterieurs } from './vitrages';
 
 type AnyRecord = Record<string, any>;
 
@@ -128,11 +129,10 @@ function adapterMateriau(source: THREE.Material, nomMaillage: string, vus: Map<T
     standard.lightMap = null;
   }
   if (nomMaillage === 'vitrages') {
-    // Émission baie par baie : l'attribut `emiCouleur` vaut noir sur une baie
-    // éteinte. Remplace le `onBeforeCompile` d'origine, que ni le pont ni le
-    // rendu à nœuds ne lisent.
+    // Émission baie par baie et faux intérieurs : remplace le
+    // `onBeforeCompile` d'origine, que le rendu à nœuds ne lit pas.
     standard.onBeforeCompile = () => {};
-    standard.emissiveNode = materialEmissive.mul(attribute('emiCouleur', 'vec3'));
+    poserFauxInterieurs(standard);
   }
   vus.set(source, materiau);
   return materiau;
@@ -331,7 +331,16 @@ export async function construireVille(
     statique, data, terrain, ROAD_Y, data.poi?.passages ?? [], spawn,
     [...(parkings.places ?? []), ...(world.placesEpi ?? [])], 880, flotte,
   );
-  if (data.landmarkSources?.length) statique.add(buildLandmarks(data, terrain, ROAD_Y).group);
+  if (data.landmarkSources?.length) {
+    // Les bâtiments modélisés à la main projettent leur ombre comme le bâti
+    // ordinaire : la mairie éclairée de face sans ombre au sol flottait.
+    const reperes = buildLandmarks(data, terrain, ROAD_Y).group;
+    reperes.traverse((objet) => {
+      const mesh = objet as THREE.Mesh;
+      if (mesh.isMesh && !(mesh.material as THREE.Material).transparent) mesh.castShadow = true;
+    });
+    statique.add(reperes);
+  }
 
   await progress?.(58, 'Préparation du rendu de la ville…');
   const vus = new Map<THREE.Material, THREE.Material>();
