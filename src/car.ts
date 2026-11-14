@@ -166,6 +166,9 @@ export class ArcadeCar {
   aCabine = true;
   // État de la voiture, de 0 (neuve) à 1 (moteur mort).
   degats = 0;
+  // Pour le son : pédale enfoncée, et dérapage des pneus arrière de 0 à 1.
+  gaz = false;
+  glisse = 0;
 
   // Vitesse le long du cap, en m/s (négative en marche arrière). La couche
   // arcade la lit partout, et l'écrit pour le départ parfait.
@@ -468,6 +471,9 @@ export class ArcadeCar {
     // Dérapage : l'essieu arrière glisse de plus de 9° à plus de 30 km/h.
     // C'est maintenant une mesure, plus un drapeau lié au frein à main.
     this.drifting = Math.abs(deriveArriere) > .16 && vitesse > 8;
+    // Les pneus commencent à chanter vers 5° de dérive, à plein vers 23°.
+    this.glisse = Math.min(1, Math.max(0, (Math.abs(deriveArriere) - .09) / .31));
+    this.gaz = throttle > 0;
 
     // Sol sous les quatre roues : hauteur de caisse, tangage et roulis du
     // relief. Un seul point sous le centre laissait la voiture horizontale
@@ -648,6 +654,8 @@ export class ArcadeCar {
     this.lacet = 0;
     this.accelAvant = 0;
     this.accelCote = 0;
+    this.glisse = 0;
+    this.gaz = false;
     this.steering = 0;
     this.boosting = false;
     this.drifting = false;

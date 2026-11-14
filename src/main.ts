@@ -668,6 +668,9 @@ async function start(): Promise<void> {
   voileArret.textContent = 'ARRÊTÉ';
   document.body.appendChild(voileArret);
   let arretEnCours = 0;
+  let appuisAvant = 0;
+  let klaxonDans = 0;
+  let etoilesAvant = 0;
 
   // Véhicule à portée du marcheur : d'abord ceux qu'il a déjà conduits,
   // sinon une voiture garée dont le modèle est chargé.
@@ -706,6 +709,7 @@ async function start(): Promise<void> {
       aPied = true;
       if (cameraMode === 1) car.setVueCabine(false);
       majMobiles();
+      audio.portiere();
       return;
     }
     const cible = vehiculeAPortee();
@@ -749,8 +753,10 @@ async function start(): Promise<void> {
     aPied = false;
     car.setVueCabine(cameraMode === 1);
     majMobiles();
+    audio.portiere();
   };
   const audio = new ArcadeAudio();
+  (window as any).__audio = audio;
   const traffic = new TrafficSystem(ville.circulation);
   const session = new GameSession(scene, map.roads, [spawn.x, spawn.z], (x, z) => world.surfaceY(x, z));
   const minimap = new Minimap(minimapCanvas, map.roads);
@@ -897,6 +903,7 @@ async function start(): Promise<void> {
     if (playing && !paused && input.tapped('g') && !session.objective) {
       const lancee = missions.basculer(joueur().x, joueur().z);
       arcade.annoncer(lancee ? 'LIVRAISON' : 'COURSE ABANDONNÉE', lancee ? 'checkpoint' : 'compte');
+      audio.signal(lancee ? 'mission' : 'echec');
     }
     if (playing && input.tapped('t')) lancerSession('challenge');
     if (input.tapped('l')) {
@@ -941,10 +948,13 @@ async function start(): Promise<void> {
       else if (!arcade.fige && !gele) car.update(dtJeu, input);
       // Passants percutés : secousse de caméra et points retirés. Un choc
       // contre un passant ne fait pas rebondir la voiture, il la freine.
+      let sourd = false;
       const renverses = ville.vivant?.update(dtJeu, maintenant / 1000, joueur().x, joueur().z,
         aPied ? 0 : car.vitesseSol, aPied) ?? 0;
       if (renverses > 0) {
         car.impact = Math.max(car.impact, 9);
+        // Un corps, pas de la tôle : choc mat.
+        sourd = true;
         car.speed *= .8;
         session.ajouterPoints(-500 * renverses);
         police.signaler(renverses);
@@ -955,6 +965,7 @@ async function start(): Promise<void> {
         car.hitTraffic();
         // Trois accrochages valent une étoile.
         police.signaler(.34);
+        audio.klaxon(0, 1);
       }
       for (const f of traffic.frolements.splice(0)) arcade.frolement(f.x, f.z, car, session);
       if (!aPied && !arcade.fige && !gele) session.update(dtJeu, car.root.position.x, car.root.position.z, car.speed);
@@ -963,13 +974,21 @@ async function start(): Promise<void> {
       if (mission?.type === 'livre') {
         session.ajouterPoints(mission.gain);
         arcade.annoncer('LIVRÉ', 'go', `+${mission.gain.toLocaleString('fr-FR')}`);
-      } else if (mission?.type === 'echec') arcade.annoncer('TROP TARD', 'compte');
+        audio.signal('livre');
+      } else if (mission?.type === 'echec') {
+        arcade.annoncer('TROP TARD', 'compte');
+        audio.signal('echec');
+      }
       // Poursuite : les patrouilles visent le joueur, en voiture ou à pied.
       if (arretEnCours <= 0) {
         const evenement = police.update(dt, joueur().x, joueur().z, aPied ? Math.abs(marcheur.vitesse) : car.vitesseSol);
         if (evenement === 'choc' && !aPied) car.hitTraffic();
+        // Une étoile de plus : alarme.
+        if (police.niveau > etoilesAvant) audio.signal('etoile');
+        etoilesAvant = police.niveau;
         if (evenement === 'arrete') {
           arretEnCours = 2.6;
+          audio.signal('arrete');
           voileArret.classList.add('actif');
           session.ajouterPoints(-2000);
           missions.arreter();
@@ -993,10 +1012,43 @@ async function start(): Promise<void> {
           voileArret.classList.remove('actif');
         }
       }
+      // Bruit du choc : lu AVANT la couche arcade, qui remet `impact` à zéro.
+      if (car.impact > 0) audio.choc(car.impact / 28, sourd);
       arcade.update(dt, car, session);
       fumee.update(dtJeu, car, world, nuitActive);
-      audio.update(car.speed, car.boosting, car.drifting);
-    } else if (paused) audio.update(0, false, false);
+      // ---- Son ------------------------------------------------------------
+      // Position d'une source par rapport au joueur : -1 à gauche, 1 à
+      // droite. La gauche du cap est (cos cap, -sin cap).
+      const panVers = (x: number, z: number): number => {
+        const dx = x - joueur().x, dz = z - joueur().z;
+        const d = Math.hypot(dx, dz) || 1;
+        return -(dx * Math.cos(capJoueur()) - dz * Math.sin(capJoueur())) / d;
+      };
+      // Chocs : la couche arcade remet `car.impact` à zéro, il est donc lu
+      // avant elle, plus haut. Ici, les pas du marcheur.
+      if (aPied && marcheur.appuis !== appuisAvant) {
+        appuisAvant = marcheur.appuis;
+        if (Math.abs(marcheur.vitesse) > .4) {
+          audio.pas(Math.abs(marcheur.vitesse) > 3, !world.isOnRoad(joueur().x, joueur().z) && !world.estMineral(joueur().x, joueur().z));
+        }
+      }
+      // Klaxons : un conducteur bloqué par le joueur à pied s'impatiente.
+      klaxonDans -= dt;
+      if (aPied && klaxonDans <= 0) {
+        const bloque = ville.circulation.find((agent) => !agent.retire && agent._px != null
+          && agent.vitesse < .5 && Math.hypot(agent._px - joueur().x, agent._pz! - joueur().z) < 9);
+        if (bloque) {
+          audio.klaxon(panVers(bloque._px!, bloque._pz!), .8);
+          klaxonDans = 2.2 + Math.random() * 2.5;
+        }
+      }
+      audio.update({
+        vitesse: car.speed, pointe: car.profil.pointe, gaz: car.gaz, nitro: car.boosting,
+        glisse: car.glisse, surRoute: car.onRoad, sport: car.aCabine, lourd: car.profil.masse > 1550,
+        aPied, nuit: nuitActive, sirene: police.sirene, sirenePan: panVers(police.sireneX, police.sireneZ),
+        temps: maintenant / 1000,
+      });
+    } else if (paused) audio.update(null);
     car.forward(forward);
 
     // Vitesse de lacet RÉELLE (rad/s), lissée sur un tiers de seconde. La

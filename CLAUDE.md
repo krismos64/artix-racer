@@ -78,7 +78,8 @@ fictifs et voitures réalistes.
    combo de dérapage, compte à rebours, départ parfait, frôlements, ralenti
    d'arrivée via `echelleTemps` que main.ts applique au seul temps du JEU),
    `fumee.ts` (fumée et poussière : 600 quads simulés à la main, un seul
-   maillage), `audio.ts` (moteur et turbo synthétisés, musique, touche M),
+   maillage), `audio.ts` (bande-son synthétisée : moteur à rapports, pneus,
+   chocs, klaxons, pas, sirène, ambiance ; musique, touche M),
    `intro.ts` (intro animée et bande-son Web Audio du lancement, jouée
    pendant le chargement ; `?intro=0` la saute), `minimap.ts`, `profil.ts`
    (outils de mesure en console), `config.ts` (profils graphiques).
@@ -135,6 +136,11 @@ listés dans le premier point.
   - Un véhicule piloté par programme (patrouille) qui doit s'arrêter
     devant une cible règle sa vitesse sur la distance de freinage
     (v² = 2·a·d), sinon il finit dedans.
+  - Son : tout est synthétisé dans audio.ts. `__audio.niveau()` donne le
+    niveau de sortie (efficace, crête) pour vérifier qu'un son sort sans
+    saturer ; le timbre, lui, ne se juge qu'à l'oreille.
+  - Blender 5.3 est installé : `/Applications/Blender.app/Contents/MacOS/Blender
+    --background --python script.py` pour modéliser et exporter en glTF.
   - Outils console : `__police.signaler(2)` lance une poursuite,
     `__camLibre(x, y, z, cx, cy, cz)`, `__ville`,
     `?ao=voir`, `?csm=0`.

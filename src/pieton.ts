@@ -39,6 +39,12 @@ export class Marcheur {
   private readonly coudes: THREE.Group[] = [];
   private readonly buste = new THREE.Group();
   private phase = 0;
+
+  // Nombre d'appuis au sol depuis le début : il augmente d'un à chaque pas,
+  // le jeu s'en sert pour faire entendre la marche.
+  get appuis(): number {
+    return Math.floor(Math.abs(this.phase) / Math.PI);
+  }
   private allure = 0;
 
   constructor(scene: THREE.Scene, private readonly world: ArtixWorld) {

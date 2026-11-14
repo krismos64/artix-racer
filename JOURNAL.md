@@ -2,6 +2,33 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 6) : bande-son synthétisée, Blender installé
+
+- **`audio.ts` réécrit** (101 → 400 lignes), tout en synthèse Web Audio,
+  aucun fichier d'effet :
+  - moteur à trois oscillateurs, régime tiré de la vitesse et d'une boîte à
+    six rapports (le régime retombe à chaque passage), timbre selon le
+    véhicule (sportive, courante, utilitaire) et la charge ;
+  - crissement de pneus proportionné à la dérive réelle de l'essieu arrière
+    (`car.glisse`), plus grave et sans résonance dans l'herbe ; roulement
+    et vent selon la vitesse ;
+  - chocs (tôle ou choc mat contre un passant) dosés sur la vitesse perdue,
+    klaxons placés à gauche ou à droite, pas du marcheur (enrobé ou herbe),
+    portière, signaux de mission, d'étoile et d'arrestation ;
+  - sirène de police reprise ici (la police ne crée plus son propre
+    contexte audio), placée selon la patrouille la plus proche ;
+  - oiseaux le jour, grillons la nuit, à faible allure seulement ;
+  - compresseur en sortie.
+- **Mesuré** (`__audio.niveau()`, musique coupée) : ralenti 0,017 efficace,
+  plein gaz 0,055, dérapage 0,053, choc 0,33 de crête, klaxon 0,027, signal
+  0,022. Aucune saturation. Les pas sortaient à 0,01 de crête : remontés.
+- **Non vérifiable par moi** : le rendu à l'oreille. Les niveaux et
+  l'absence d'erreur sont mesurés, pas le timbre ni l'agrément.
+- **Piège** : `car.impact` est remis à zéro par la couche arcade, le son du
+  choc doit être joué AVANT `arcade.update`.
+- **Blender 5.3.0** installé par Homebrew (`/Applications/Blender.app`),
+  pilotable sans interface : `Blender --background --python script.py`.
+
 ## 2026-11-14 (suite 5) : missions de livraison, vérifications en retard
 
 - **Missions** (`src/missions.ts`, touche G en balade libre) : une course

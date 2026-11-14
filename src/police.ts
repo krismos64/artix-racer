@@ -51,7 +51,11 @@ export class Police {
   private temps = 0;
   private readonly noeuds: Noeud[];
   private readonly patrouilles: Patrouille[] = [];
-  private sirene: { contexte: AudioContext; gain: GainNode; oscillateur: OscillatorNode } | null = null;
+  // Sirène, jouée par audio.ts : volume de 0 à 1 et position de la
+  // patrouille la plus proche, pour la placer à gauche ou à droite.
+  sirene = 0;
+  sireneX = 0;
+  sireneZ = 0;
 
   constructor(
     scene: THREE.Scene,
@@ -134,7 +138,7 @@ export class Police {
       p.active = false;
       p.groupe.visible = false;
     }
-    this.regLerSirene(0);
+    this.sirene = 0;
   }
 
   update(dt: number, x: number, z: number, vitesseJoueur: number): EvenementPolice {
@@ -156,7 +160,11 @@ export class Police {
     for (const p of this.patrouilles) {
       if (!p.active) continue;
       const distance = Math.hypot(p.x - x, p.z - z);
-      plusProche = Math.min(plusProche, distance);
+      if (distance < plusProche) {
+        plusProche = distance;
+        this.sireneX = p.x;
+        this.sireneZ = p.z;
+      }
       this.conduire(p, dt, x, z, distance);
 
       // Contact avec le joueur : choc s'il roule, arrestation s'il s'arrête.
@@ -185,7 +193,7 @@ export class Police {
         this.niveau = this.gravite;
       }
     }
-    this.regLerSirene(this.niveau > 0 && plusProche < 160 ? Math.max(.15, 1 - plusProche / 160) : 0);
+    this.sirene = this.niveau > 0 && plusProche < 160 ? Math.max(.15, 1 - plusProche / 160) : 0;
     return evenement;
   }
 
@@ -321,32 +329,5 @@ export class Police {
       }
     }
     return [];
-  }
-
-  // Deux-tons de la police française : 435 Hz puis 580 Hz, une demi-seconde
-  // chacun. Synthétisé, aucun fichier.
-  private regLerSirene(volume: number): void {
-    if (volume > 0 && !this.sirene) {
-      try {
-        const contexte = new AudioContext();
-        const oscillateur = contexte.createOscillator();
-        oscillateur.type = 'square';
-        const filtre = contexte.createBiquadFilter();
-        filtre.type = 'lowpass';
-        filtre.frequency.value = 1400;
-        const gain = contexte.createGain();
-        gain.gain.value = 0;
-        oscillateur.connect(filtre).connect(gain).connect(contexte.destination);
-        oscillateur.start();
-        this.sirene = { contexte, gain, oscillateur };
-      } catch {
-        return;
-      }
-    }
-    if (!this.sirene) return;
-    const { contexte, gain, oscillateur } = this.sirene;
-    const instant = contexte.currentTime;
-    gain.gain.setTargetAtTime(volume * .035, instant, .15);
-    oscillateur.frequency.setTargetAtTime(Math.floor(this.temps * 2) % 2 ? 580 : 435, instant, .01);
   }
 }
