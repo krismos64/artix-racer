@@ -96,6 +96,12 @@ converties en JPG 1K par `scripts/preparer-textures.mjs`. https://ambientcg.com
 RoofingTiles003, CorrugatedSteel005, octobre 2026), passées en gris clair
 par `scripts/preparer-bati.mjs` pour être teintées par bâtiment.
 
+**Animated Human, par Quaternius** : `public/models/personnages/humain.glb`
+et ses six palettes de tenues (`tenue-*.png`). Personnage riggé (41 os) avec
+six animations, téléchargé sur OpenGameArt
+(https://opengameart.org/content/animated-human-low-poly), converti en glTF
+par `scripts/blender/personnage.py`. Licence CC0 1.0 (domaine public).
+
 **Free Low Poly Vehicles Pack, par rgsdev** : `public/models/flotte-rgs/*.json`
 (Hatchback, Sedan, SUV, Van), convertis depuis le FBX d'origine par
 `scripts/preparer-flotte.mjs`. Licence CC0 1.0.

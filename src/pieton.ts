@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import type { KeyboardInput } from './car';
+import { Figurant, type ModeleHumain } from './foule';
 import type { ArtixWorld } from './world';
 
 // Le joueur à pied : un personnage articulé (hanches, genoux, épaules,
@@ -39,6 +40,9 @@ export class Marcheur {
   private readonly coudes: THREE.Group[] = [];
   private readonly buste = new THREE.Group();
   private phase = 0;
+  // Personnage animé, quand le modèle est chargé : il remplace l'assemblage
+  // de capsules, qui reste le repli.
+  private figurant: Figurant | null = null;
 
   // Nombre d'appuis au sol depuis le début : il augmente d'un à chaque pas,
   // le jeu s'en sert pour faire entendre la marche.
@@ -128,6 +132,13 @@ export class Marcheur {
     scene.add(this.root);
   }
 
+  // Remplace les capsules par le personnage animé (modèle Quaternius).
+  adopter(modele: ModeleHumain): void {
+    for (const piece of this.root.children) piece.visible = false;
+    this.figurant = new Figurant(modele, 0);
+    this.root.add(this.figurant.root);
+  }
+
   // Pose le personnage en (x, z), tourné vers `cap`.
   placer(x: number, z: number, cap: number): void {
     this.root.position.set(x, this.world.surfaceY(x, z), z);
@@ -175,6 +186,10 @@ export class Marcheur {
     this.allure += (Math.min(1, v / MARCHE) - this.allure) * Math.min(1, dt * 10);
     const foulee = 1.45 + course * 1.15;
     this.phase += (this.vitesse / foulee) * Math.PI * 2 * dt;
+    if (this.figurant) {
+      this.figurant.animer(dt, this.vitesse);
+      return;
+    }
     const amplitude = (.46 + course * .42) * this.allure;
 
     for (let i = 0; i < 2; i++) {

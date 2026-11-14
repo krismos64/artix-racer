@@ -2,6 +2,36 @@
 
 Journal de bord tenu par session de travail. Entrées antéchronologiques.
 
+## 2026-11-14 (suite 9) : personnages animés, et une chaussée trop basse de 17,5 cm
+
+- **Personnage** : « Animated Human » de Quaternius (CC0, OpenGameArt),
+  1 578 polygones, 41 os, animations de repos, marche, course, saut, coup
+  et chute. `scripts/blender/personnage.py` ouvre le .blend d'origine
+  (`--disable-autoexec`), garde six animations et exporte
+  `public/models/personnages/humain.glb` (645 Ko) et ses six palettes de
+  tenues. Les deux packs Kenney regardés ont été écartés : très stylisés,
+  et sans animation de marche.
+- **`src/foule.ts`** : `Figurant` (une copie du modèle avec son squelette,
+  fondu entre allures, cadence réglée sur la vitesse pour que les pieds ne
+  patinent pas) et `Foule`. Le joueur à pied est un figurant ; les 14
+  passants les plus proches (moins de 45 m) aussi, leurs silhouettes
+  instanciées étant alors masquées (`a.masque`, pedestrians.js). Un
+  maillage à squelette ne s'instancie pas : au-delà, les passants restent
+  les silhouettes en capsules. Dix-huit tenues : chaque palette donne deux
+  variantes dont seules les couleurs vives changent de teinte.
+- **Chaussée trop basse** : `ArtixWorld.surfaceY` posait la route 7,5 cm
+  au-dessus du relief (`ROAD_LIFT`), la ville la dessine à 25 cm
+  (`ROAD_Y`). Voiture et marcheur étaient enfoncés de 17,5 cm (lancer de
+  rayon : sol calculé -12,82, chaussée dessinée -12,64). Le bas de caisse
+  le cachait ; les jambes du personnage, coupées au mollet, l'ont montré.
+- **Performances non mesurées proprement** : pendant ces essais, la machine
+  était chargée par d'autres tâches (navigateurs Playwright, serveur Next,
+  machine virtuelle) et `__comparer()` donnait de 12 à 20 ms d'une passe à
+  l'autre. Dernière mesure propre : 7,72 ms, AVANT les personnages. À
+  refaire machine au repos.
+- **Non fait** : animation de chute des passants vue à l'écran, entrée et
+  sortie de voiture animées, passants lointains toujours en capsules.
+
 ## 2026-11-14 (suite 8) : niveaux de détail des arbres, conifère, finitions d'interface
 
 - **Niveaux de détail** : le script Blender sort chaque essence en deux

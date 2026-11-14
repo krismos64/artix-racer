@@ -16,6 +16,7 @@ import { ArcadeCar, KeyboardInput } from './car';
 import { DEFAULT_QUALITY, QUALITY, type QualityName } from './config';
 import { GameSession, type GameMode } from './game';
 import { nearestArtixPlace } from './lieux';
+import { chargerHumain, Foule } from './foule';
 import { Minimap } from './minimap';
 import { Missions } from './missions';
 import { Obstacles, type Mobile, type PlaceGaree } from './obstacles';
@@ -628,6 +629,14 @@ async function start(): Promise<void> {
   // Mode à pied (touche F) : le joueur descend de voiture, marche dans la
   // ville et remonte en revenant près de la portière.
   const marcheur = new Marcheur(scene, world);
+  // Personnage animé pour le joueur et les passants proches. Chargé en
+  // tâche de fond : le jeu démarre sans lui, les silhouettes en tiennent lieu.
+  let foule: Foule | null = null;
+  void chargerHumain().then((modele) => {
+    if (!modele) return;
+    marcheur.adopter(modele);
+    if (ville.passants?.agents?.length) foule = new Foule(scene, modele, ville.passants.agents);
+  });
   let aPied = false;
   const invite = document.createElement('div');
   invite.className = 'invite-action hud hidden';
@@ -953,6 +962,7 @@ async function start(): Promise<void> {
       let sourd = false;
       const renverses = ville.vivant?.update(dtJeu, maintenant / 1000, joueur().x, joueur().z,
         aPied ? 0 : car.vitesseSol, aPied) ?? 0;
+      foule?.update(dtJeu, joueur().x, joueur().z);
       if (renverses > 0) {
         car.impact = Math.max(car.impact, 9);
         // Un corps, pas de la tôle : choc mat.

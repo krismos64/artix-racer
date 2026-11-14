@@ -66,8 +66,9 @@ fictifs et voitures réalistes.
 6. Jeu autour du rendu : `car.ts` (véhicule conduit : Ferrari ou modèle de
    la flotte pris en ville, modèle de conduite à deux essieux avec dérive
    des pneus et transfert de charge, un profil `PROFILS` par modèle),
-   `pieton.ts` (joueur à pied, touche F : personnage articulé, marche
-   calculée), `obstacles.ts` (voitures garées, arbres et mâts solides ;
+   `pieton.ts` (joueur à pied, touche F), `foule.ts` (personnage animé à
+   squelette pour le joueur et les passants proches ; les lointains restent
+   les silhouettes de pedestrians.js), `obstacles.ts` (voitures garées, arbres et mâts solides ;
    `world.bloque` les combine au bâti ; c'est aussi par lui qu'on prend une
    voiture garée), `police.ts` (étoiles de recherche, patrouilles qui
    suivent les voies par A*, arrestation, sirène synthétisée),
@@ -184,6 +185,12 @@ listés dans le premier point.
 - Tone mapping ACES : une texture en gris moyen finit très sombre. Textures
   centrées haut, faible amplitude.
 - `ROAD_Y = 0.25`, `GARDE_SOL = 0.35` (world.js) : altitudes de référence.
+  `ROAD_LIFT` (config.ts) doit rester ÉGAL à `ROAD_Y` : c'est la hauteur de
+  chaussée que l'index spatial renvoie à la voiture et au marcheur. À 0,075
+  ils roulaient 17,5 cm sous l'enrobé pendant des mois.
+- Avant de croire une mesure de `__comparer()`, vérifier que la machine est
+  au repos (`ps -Ao pcpu,command | sort -rn | head`) : d'autres tâches
+  lourdes font varier le résultat de 12 à 20 ms d'une passe à l'autre.
 - Matériaux Babylon : `freeze()` après configuration ; `unfreeze()` avant
   d'animer une propriété (émission des vitrages la nuit).
 - SkyMaterial : au-delà de turbidité 3, le ciel vire au vert moutarde sous
@@ -432,6 +439,7 @@ listés dans le premier point.
 | `audio/music1.mp3` | musique lue en boucle | fournie par l'auteur |
 | `models/flotte-rgs/*.json` | 4 véhicules rgsdev (CC0) en deux lots + palette | `scripts/preparer-flotte.mjs` (depuis le FBX) |
 | `models/arbres/*.json` | 5 essences d'arbres (écorce + feuillage, hauteur 1), en version complète et lointaine | `scripts/blender/arbres.py` (Blender sans interface) |
+| `models/personnages/humain.glb`, `tenue-*.png` | personnage riggé Quaternius (CC0), six animations, palettes de tenues | `scripts/blender/personnage.py` (depuis le .blend d'origine) |
 | `models/ferrari.glb` | véhicule du joueur (Ferrari 458, exemple three.js) | copié depuis three.js |
 
 Caches locaux (gitignorés, `data/` inclus depuis le 19 septembre 2026) :

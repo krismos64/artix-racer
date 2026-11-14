@@ -1,6 +1,12 @@
 export const CHUNK_SIZE = 256;
 export const TERRAIN_GUARD = 0.22;
-export const ROAD_LIFT = 0.075;
+// Hauteur de la chaussée au-dessus du relief terrassé : celle à laquelle la
+// ville la DESSINE (`ROAD_Y` de three-city/world.js). Elle valait 0,075
+// jusqu'au 14 novembre 2026 : tout ce qui roulait ou marchait était enfoncé
+// de 17,5 cm dans l'enrobé (mesuré par lancer de rayon : sol calculé à
+// -12,82, chaussée dessinée à -12,64). Le bas de caisse le cachait sur les
+// voitures ; un personnage aux jambes visibles l'a révélé.
+export const ROAD_LIFT = 0.25;
 
 export type QualityName = 'performance' | 'balanced' | 'quality';
 

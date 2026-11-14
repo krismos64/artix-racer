@@ -438,6 +438,7 @@ export class Pietons {
     // maillage/signe sont figées ici : les recréer à chaque passant allouait
     // deux tableaux et deux sous-tableaux par membre animé.
     this._m = new THREE.Matrix4();
+    this._zero = new THREE.Matrix4().makeScale(0, 0, 0);
     // Travail de la chute d'un passant percuté.
     this._axeChute = new THREE.Vector3();
     this._qChute = new THREE.Quaternion();
@@ -686,6 +687,21 @@ export class Pietons {
         }
       }
       q.setFromAxisAngle(axeY, cap);
+
+      // Pose rendue, lue par src/foule.ts : les passants proches du joueur
+      // sont dessinés par un personnage animé, à cette place et ce cap.
+      a._x = p.x; a._y = base; a._z = p.z; a._cap = cap;
+      if (a.masque) {
+        // Remplacé par un personnage animé : ses pièces instanciées sont
+        // effacées, mais sa chute continue de s'écouler.
+        if (a.chute > 0) a.chute -= dt;
+        const n2 = this.effectifMax;
+        for (const [mesh, rangs] of [[this.corps, [i]], [this.tete, [i]], [this.cheveux, [i]],
+          [this.jambes, [i, n2 + i]], [this.pieds, [i, n2 + i]], [this.bras, [i, n2 + i]]]) {
+          for (const k of rangs) mesh.setMatrixAt(k, this._zero);
+        }
+        continue;
+      }
 
       // Balancement des membres : cadence proportionnelle à la vitesse.
       const cadence = a.etat === 'discute' || a.chute > 0 ? 0
